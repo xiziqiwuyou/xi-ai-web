@@ -1,0 +1,18 @@
+{
+  "name": "xi-ai-web",
+  "short_name": "xi-ai",
+  "description": "Local-first BYOK AI web studio.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#fff8f9",
+  "theme_color": "#ff2442",
+  "icons": [
+    {
+      "src": "/pwa-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

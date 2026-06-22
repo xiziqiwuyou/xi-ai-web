@@ -1,0 +1,25 @@
+{
+  "files.watcherExclude": {
+    "**/.git/**": true,
+    "**/.omx/**": true,
+    "**/data/**": true,
+    "**/dist/**": true,
+    "**/node_modules/**": true,
+    "**/reports/screenshots/**": true,
+    "**/reports/design/*.png": true,
+    "**/plans/**/reference-ui.png": true
+  },
+  "search.exclude": {
+    "**/.omx": true,
+    "**/data": true,
+    "**/dist": true,
+    "**/node_modules": true,
+    "**/reports/screenshots": true,
+    "**/reports/design/*.png": true,
+    "**/plans/**/reference-ui.png": true
+  },
+  "typescript.tsserver.watchOptions": {
+    "watchDirectory": "useFsEvents",
+    "watchFile": "useFsEvents"
+  }
+}

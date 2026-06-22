@@ -1,0 +1,40 @@
+{
+  "name": "xi-ai-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A self-hostable web AI studio inspired by Cherry Studio.",
+  "scripts": {
+    "dev": "node server/index.mjs",
+    "build": "vite build",
+    "check": "tsc --noEmit",
+    "start": "node server/index.mjs --production",
+    "clean:cache": "node scripts/clean-cache.mjs",
+    "smoke": "node scripts/smoke.mjs",
+    "release-check": "npm run build && node scripts/release-check.mjs",
+    "ui-contract": "node scripts/ui-contract.mjs",
+    "ui-runtime": "node scripts/ui-runtime.mjs",
+    "feature-audit": "node scripts/feature-audit.mjs",
+    "provider-contracts": "node scripts/provider-contracts.mjs",
+    "chat-local-contracts": "node scripts/chat-local-contracts.mjs",
+    "privacy": "node scripts/privacy-scan.mjs",
+    "qa": "npm run check && npm run build && npm run privacy && npm run ui-contract && npm run feature-audit && npm run provider-contracts && npm run chat-local-contracts && npm run ui-runtime"
+  },
+  "dependencies": {
+    "express": "^5.2.1",
+    "lucide-react": "^1.16.0",
+    "pptxgenjs": "^4.0.1",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "@types/react": "^19.2.15",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.2",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.14"
+  }
+}

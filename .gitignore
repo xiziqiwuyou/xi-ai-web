@@ -1,0 +1,9 @@
+node_modules
+dist
+data
+reports
+.omx
+.env
+.env.local
+npm-debug.log*
+*.tsbuildinfo

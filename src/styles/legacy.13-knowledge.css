@@ -1,0 +1,201 @@
+.knowledge-form {
+  gap: 12px;
+}
+
+.knowledge-upload-zone,
+.knowledge-docs,
+.knowledge-source-summary {
+  border: 1px solid rgba(255, 255, 255, 0.78);
+  border-radius: var(--radius-card);
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.78), rgba(255, 247, 248, 0.6));
+  box-shadow: var(--card-shadow), var(--inner-highlight);
+}
+
+.knowledge-upload-zone {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  gap: 11px;
+  align-items: center;
+  padding: 12px;
+  transition:
+    transform 0.18s var(--ease-spring),
+    border-color 0.18s ease,
+    background 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.knowledge-upload-zone.dragging,
+.knowledge-upload-zone:hover {
+  transform: translateY(-1px);
+  border-color: rgba(255, 36, 66, 0.28);
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.96), rgba(255, 240, 243, 0.78));
+  box-shadow:
+    0 18px 40px rgba(255, 36, 66, 0.12),
+    var(--inner-highlight);
+}
+
+.knowledge-upload-icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 17px;
+  background: linear-gradient(145deg, #ff6576, var(--red));
+  color: #fff;
+  box-shadow:
+    0 14px 28px rgba(255, 36, 66, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.28);
+}
+
+.knowledge-upload-zone strong,
+.knowledge-docs strong,
+.knowledge-source-summary strong {
+  display: block;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.knowledge-upload-zone p,
+.knowledge-empty-copy,
+.knowledge-source-summary p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.knowledge-docs {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.knowledge-docs header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.knowledge-docs header span,
+.knowledge-source-summary span {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.knowledge-doc-list {
+  display: grid;
+  max-height: 230px;
+  gap: 8px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.knowledge-doc-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  gap: 8px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.74);
+  border-radius: var(--radius-control);
+  background: rgba(255, 255, 255, 0.6);
+  box-shadow: var(--inner-highlight);
+  transition:
+    border-color 0.18s ease,
+    background 0.18s ease,
+    transform 0.18s var(--ease-spring);
+}
+
+.knowledge-doc-item.selected {
+  transform: translateY(-1px);
+  border-color: rgba(255, 36, 66, 0.23);
+  background: rgba(255, 244, 246, 0.82);
+}
+
+.knowledge-doc-item label {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 9px;
+  align-items: center;
+  min-width: 0;
+}
+
+.knowledge-doc-item input {
+  width: 16px;
+  min-height: 16px;
+  accent-color: var(--red);
+}
+
+.knowledge-doc-item span,
+.knowledge-doc-item small {
+  display: block;
+  min-width: 0;
+}
+
+.knowledge-doc-item strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knowledge-doc-item small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 760;
+}
+
+.knowledge-result-stack {
+  display: grid;
+  min-height: 0;
+  flex: 1;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px;
+  overflow: hidden;
+}
+
+.knowledge-source-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px;
+}
+
+.knowledge-source-summary p {
+  max-width: 520px;
+  text-align: right;
+}
+
+.message-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.message-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.64);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 820;
+  box-shadow: var(--inner-highlight);
+}
+
+.message-actions button:hover {
+  color: var(--red-deep);
+  background: #fff;
+}

@@ -1,0 +1,446 @@
+@media (max-width: 1120px) {
+  .rednote-shell {
+    grid-template-columns: 80px minmax(0, 1fr);
+  }
+
+  .top-bar {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .workbench-layout {
+    grid-template-columns: minmax(310px, 380px) minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 760px) {
+  .rednote-shell {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    min-height: 100dvh;
+    height: 100dvh;
+    padding: 8px;
+    padding-bottom: 84px;
+    overflow: hidden;
+  }
+
+  .left-nav {
+    display: none;
+  }
+
+  .workspace-frame {
+    width: 100%;
+    max-width: 100%;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .top-bar {
+    grid-template-columns: minmax(0, 1fr) auto;
+    width: 100%;
+    max-width: 100%;
+    min-height: 68px;
+    padding: 10px 12px;
+    border-radius: 22px;
+  }
+
+  .module-kicker {
+    display: none !important;
+  }
+
+  .module-heading strong {
+    margin-top: 0;
+    font-size: 18px;
+  }
+
+  .module-heading small {
+    white-space: nowrap;
+    font-size: 12px;
+  }
+
+  .global-search {
+    display: none;
+  }
+
+  .api-config-layer {
+    align-items: end;
+    justify-items: start;
+    overflow: hidden;
+    padding: 8px;
+  }
+
+  .api-config-dialog {
+    width: min(100%, 374px);
+    max-width: 374px;
+    min-width: 0;
+    max-height: calc(100dvh - 16px);
+    border-radius: 24px;
+  }
+
+  .api-config-head {
+    grid-template-columns: 44px minmax(0, 1fr) 36px;
+    padding: 14px;
+  }
+
+  .api-config-head > div {
+    min-width: 0;
+  }
+
+  .api-config-mark {
+    width: 44px;
+    height: 44px;
+    border-radius: 17px;
+  }
+
+  .api-config-head h2 {
+    font-size: 20px;
+  }
+
+  .api-config-form {
+    max-height: calc(100dvh - 132px);
+    overflow-x: hidden;
+    padding: 14px;
+  }
+
+  .settings-field-row,
+  .prompt-field-row,
+  .prompt-meta-row,
+  .composer-status-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .api-form-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .api-form-actions .secondary-action {
+    width: 100%;
+  }
+
+  .workspace-canvas {
+    width: 100%;
+    max-width: 100%;
+    min-height: 0;
+    overflow: auto;
+  }
+
+  .mobile-nav {
+    display: flex;
+    position: fixed;
+    right: 8px;
+    bottom: 8px;
+    left: 8px;
+    z-index: 30;
+    gap: 7px;
+    overflow-x: auto;
+    padding: 7px;
+    border: 1px solid rgba(255, 255, 255, 0.82);
+    border-radius: 24px;
+    background:
+      linear-gradient(145deg, rgba(255, 255, 255, 0.92), rgba(255, 244, 246, 0.72));
+    box-shadow: var(--portal-shadow), var(--inner-highlight);
+    scrollbar-width: none;
+  }
+
+  .mobile-nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .mobile-nav-button {
+    display: grid;
+    place-items: center;
+    gap: 3px;
+    min-width: 62px;
+    min-height: 56px;
+    border: 1px solid transparent;
+    border-radius: 18px;
+    background: transparent;
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 850;
+  }
+
+  .mobile-nav-button svg {
+    width: 30px;
+    height: 30px;
+    padding: 6px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.62);
+    color: var(--red);
+  }
+
+  .mobile-nav-button span {
+    max-width: 58px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mobile-nav-button.active {
+    border-color: rgba(255, 36, 66, 0.16);
+    background: rgba(255, 36, 66, 0.08);
+    color: var(--red-deep);
+  }
+
+  .mobile-nav-button.active svg {
+    background: linear-gradient(145deg, #ff6a79, #ff2442);
+    color: #fff;
+  }
+
+  .chat-module,
+  .generation-module {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    overflow: auto;
+  }
+
+  .workbench-layout {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 100%;
+    grid-template-columns: 1fr;
+    grid-template-rows: none;
+    align-content: start;
+    gap: 8px;
+    overflow: visible;
+  }
+
+  .workbench-main {
+    padding: 9px;
+  }
+
+  .workbench-main-tabs {
+    width: 100%;
+    overflow-x: auto;
+  }
+
+  .workbench-main-stage {
+    overflow: visible;
+  }
+
+  .conversation-panel,
+  .chat-stage,
+  .generation-panel,
+  .settings-panel,
+  .workbench-panel {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  .workbench-sidebar {
+    overflow: visible;
+    padding: 14px;
+  }
+
+  .workbench-main,
+  .workbench-result {
+    min-height: 430px;
+  }
+
+  .workbench-result-head {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .workbench-result-meta {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .apps-workbench,
+  .gallery-module {
+    height: auto;
+    min-height: 100%;
+    overflow: visible;
+    padding: 14px;
+  }
+
+  .apps-workbench {
+    grid-template-rows: auto minmax(430px, 1fr);
+  }
+
+  .apps-market-head,
+  .gallery-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .apps-search,
+  .app-categories,
+  .gallery-filters {
+    width: 100%;
+  }
+
+  .app-card-grid,
+  .gallery-grid {
+    grid-template-columns: 1fr;
+    overflow: visible;
+  }
+
+  .workbench-options {
+    grid-template-columns: 1fr;
+  }
+
+  .connection-status {
+    grid-template-columns: 34px minmax(0, 1fr);
+  }
+
+  .connection-status .secondary-action {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .model-picker,
+  .workbench-model-picker {
+    grid-template-columns: 18px minmax(0, 1fr);
+  }
+
+  .model-picker > span {
+    grid-column: auto;
+  }
+
+  .workbench-model-picker > span {
+    grid-column: 2;
+  }
+
+  .workbench-model-picker select {
+    grid-column: 1 / -1;
+  }
+
+  .model-picker-empty {
+    grid-column: 1 / -1;
+    padding-left: 0;
+  }
+
+  .model-select-chip > span {
+    display: none;
+  }
+
+  .new-thread {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .chat-header-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    width: 100%;
+  }
+
+  .assistant-chip,
+  .model-select-chip,
+  .temperature-chip,
+  .connection-control,
+  .connection-pill {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .chat-header-actions > .icon-button {
+    grid-column: auto;
+    grid-row: auto;
+    justify-self: end;
+  }
+
+  .message-list,
+  .composer {
+    min-width: 0;
+  }
+
+  .composer-box {
+    max-width: 100%;
+  }
+
+  .composer-status-row span,
+  .prompt-meta-row span {
+    white-space: normal;
+  }
+
+  .module-placeholder {
+    min-height: 100%;
+    padding: 18px;
+  }
+
+.placeholder-note strong {
+    font-size: 24px;
+  }
+}
+
+@media (min-width: 761px) {
+  .rednote-shell {
+    grid-template-columns: 96px minmax(0, 1fr);
+  }
+
+  .left-nav {
+    border-radius: 32px;
+    box-shadow:
+      0 28px 78px rgba(31, 31, 35, 0.11),
+      0 14px 34px rgba(255, 36, 66, 0.11),
+      var(--inner-highlight);
+  }
+
+  .module-button {
+    min-height: 58px;
+    border-radius: 24px;
+  }
+
+  .module-button svg {
+    width: 48px;
+    height: 44px;
+    border-radius: 19px;
+  }
+
+  .module-button:hover {
+    transform: translateY(-2px) scale(1.01);
+    border-color: rgba(255, 255, 255, 0.86);
+    background:
+      linear-gradient(145deg, rgba(255, 255, 255, 0.88), rgba(255, 246, 248, 0.68));
+    box-shadow:
+      0 14px 30px rgba(255, 36, 66, 0.11),
+      var(--inner-highlight);
+  }
+
+  .api-config-dialog {
+    border-radius: 34px;
+    box-shadow:
+      0 42px 110px rgba(38, 27, 31, 0.2),
+      0 20px 48px rgba(255, 36, 66, 0.16),
+      var(--inner-highlight);
+  }
+
+  .api-config-form {
+    margin: 0 10px 10px;
+    border: 1px solid rgba(255, 255, 255, 0.7);
+    border-radius: 26px;
+    background:
+      linear-gradient(145deg, rgba(255, 255, 255, 0.58), rgba(255, 245, 247, 0.38));
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  }
+}
+
+@media (max-width: 760px) {
+  .knowledge-upload-zone {
+    grid-template-columns: 40px minmax(0, 1fr);
+  }
+
+  .knowledge-upload-zone .secondary-action {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .knowledge-source-summary {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .knowledge-source-summary p {
+    max-width: none;
+    text-align: left;
+  }
+}

@@ -1,0 +1,248 @@
+@media (max-width: 1120px) {
+  .rednote-shell {
+    grid-template-columns: 84px minmax(0, 1fr);
+  }
+
+  .brand-card {
+    justify-content: center;
+  }
+
+  .brand-card div,
+  .module-button small {
+    display: none;
+  }
+
+  .module-button {
+    grid-template-columns: 1fr;
+    place-items: center;
+  }
+
+  .module-button::before {
+    inset: auto 18px 5px 18px;
+    width: auto;
+    height: 3px;
+    transform: translateY(4px) scaleX(0.4);
+  }
+
+  .module-button.active::before {
+    transform: translateY(0) scaleX(1);
+  }
+
+  .top-bar {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .global-search {
+    display: none;
+  }
+
+  .chat-module {
+    grid-template-columns: 260px minmax(0, 1fr);
+  }
+
+  .generation-module {
+    grid-template-columns: minmax(320px, 400px) minmax(0, 1fr);
+  }
+
+  .chat-header {
+    grid-template-columns: 1fr;
+  }
+
+  .chat-header-actions {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .connection-control {
+    justify-self: start;
+  }
+}
+
+@media (max-width: 760px) {
+  .rednote-shell {
+    width: 100vw;
+    max-width: 100vw;
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+    padding: 8px;
+    gap: 8px;
+  }
+
+  .left-nav {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    padding: 9px;
+    border-radius: var(--radius-panel);
+  }
+
+  .brand-card div {
+    display: none;
+  }
+
+  .module-nav {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 0;
+    scrollbar-width: none;
+  }
+
+  .module-nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .module-button {
+    min-width: 68px;
+    min-height: 70px;
+  }
+
+  .top-bar {
+    min-height: auto;
+    padding: 12px;
+  }
+
+  .module-heading strong {
+    font-size: 19px;
+  }
+
+  .module-heading span {
+    white-space: normal;
+  }
+
+  .workspace-canvas {
+    padding-top: 8px;
+  }
+
+  .chat-module {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .generation-module {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(360px, 1fr);
+    gap: 8px;
+    overflow-y: auto;
+  }
+
+  .settings-form {
+    padding: 16px;
+  }
+
+  .settings-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .generation-form {
+    overflow: visible;
+  }
+
+  .generation-options {
+    grid-template-columns: 1fr;
+  }
+
+  .conversation-panel {
+    max-height: 184px;
+  }
+
+  .chat-header {
+    grid-template-columns: 1fr;
+    padding: 12px;
+  }
+
+  .chat-title-block h2 {
+    font-size: 18px;
+  }
+
+  .chat-title-block p {
+    white-space: normal;
+  }
+
+  .chat-header-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr auto;
+    width: 100%;
+    gap: 8px;
+  }
+
+  .assistant-chip,
+  .temperature-chip,
+  .model-select-chip {
+    width: 100%;
+  }
+
+  .connection-control {
+    grid-column: 1 / -1;
+    justify-self: stretch;
+  }
+
+  .chat-header-actions > .icon-button {
+    grid-column: 3;
+    grid-row: 1;
+  }
+
+  .connection-pill {
+    width: 100%;
+    max-width: none;
+  }
+
+  .connection-popover {
+    right: auto;
+    left: 0;
+    width: 100%;
+  }
+
+  .message-list {
+    padding: 14px 10px;
+  }
+
+  .empty-chat h1 {
+    font-size: 28px;
+  }
+
+  .placeholder-note strong {
+    font-size: 28px;
+  }
+
+  .message,
+  .message.user,
+  .message.assistant {
+    width: 100%;
+  }
+
+  .placeholder-grid,
+  .menu-edit-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Phase 02 portal shell refresh */
+:root {
+  --portal-bg:
+    radial-gradient(circle at 12% 8%, rgba(255, 76, 103, 0.12), transparent 30%),
+    radial-gradient(circle at 86% 14%, rgba(38, 117, 185, 0.1), transparent 28%),
+    linear-gradient(135deg, #fff8f8 0%, #f6fbff 44%, #fffaf4 100%);
+  --portal-nav: rgba(255, 255, 255, 0.78);
+  --portal-line: rgba(49, 42, 47, 0.1);
+  --portal-shadow:
+    0 24px 70px rgba(31, 31, 35, 0.1),
+    0 12px 32px rgba(255, 36, 66, 0.1);
+}
+
+body {
+  background: var(--portal-bg);
+  overflow-x: hidden;
+}

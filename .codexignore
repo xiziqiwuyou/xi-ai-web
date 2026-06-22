@@ -1,0 +1,11 @@
+node_modules/
+dist/
+data/
+.git/
+.omx/
+reports/screenshots/
+reports/design/*.png
+plans/**/reference-ui.png
+*.log
+*.tsbuildinfo
+-

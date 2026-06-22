@@ -1,0 +1,208 @@
+.rednote-shell {
+  grid-template-columns: 86px minmax(0, 1fr);
+  gap: 14px;
+  padding: 14px;
+}
+
+.left-nav {
+  padding: 8px 7px;
+  border-color: rgba(255, 255, 255, 0.86);
+  border-radius: 28px;
+  background:
+    linear-gradient(165deg, rgba(255, 255, 255, 0.96), rgba(255, 244, 247, 0.66)),
+    rgba(255, 255, 255, 0.58);
+  box-shadow:
+    0 24px 58px rgba(31, 31, 35, 0.11),
+    0 16px 34px rgba(255, 36, 66, 0.11),
+    inset 0 1px 0 rgba(255, 255, 255, 0.92);
+}
+
+.brand-card {
+  min-height: 62px;
+  padding: 6px;
+  border-radius: 23px;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.98), rgba(255, 239, 243, 0.78));
+}
+
+.brand-badge {
+  width: 48px;
+  height: 48px;
+  border-radius: 18px;
+  font-size: 16px;
+  box-shadow:
+    0 14px 28px rgba(255, 36, 66, 0.3),
+    0 4px 10px rgba(217, 25, 55, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.38);
+}
+
+.module-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 2px 0 8px;
+}
+
+.nav-group {
+  display: grid;
+  gap: 5px;
+}
+
+.nav-group-label {
+  padding: 0 3px;
+  color: rgba(32, 31, 36, 0.42);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-align: center;
+}
+
+.nav-footer {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 7px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(49, 42, 47, 0.08);
+}
+
+.module-button {
+  min-height: 58px;
+  padding: 5px 3px;
+  border-radius: 22px;
+  background:
+    linear-gradient(150deg, rgba(255, 255, 255, 0.42), rgba(255, 244, 246, 0.24));
+}
+
+.module-button svg {
+  width: 46px;
+  height: 44px;
+  padding: 9px;
+  border-radius: 18px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.92),
+    0 10px 22px rgba(38, 27, 31, 0.06);
+}
+
+.module-button span {
+  max-width: 64px;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.module-button.active {
+  background:
+    linear-gradient(155deg, rgba(255, 255, 255, 0.98), rgba(255, 235, 240, 0.95));
+  box-shadow:
+    0 18px 38px rgba(255, 36, 66, 0.22),
+    0 8px 18px rgba(38, 27, 31, 0.07),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95);
+}
+
+.module-button.active svg {
+  width: 50px;
+  background: linear-gradient(145deg, #ff6a79, #ff2442 72%, #d91937);
+  box-shadow:
+    0 13px 26px rgba(255, 36, 66, 0.32),
+    0 5px 12px rgba(217, 25, 55, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.34);
+}
+
+.workspace-frame {
+  gap: 14px;
+}
+
+.top-bar {
+  grid-template-columns: minmax(230px, 1fr) minmax(220px, 420px) auto;
+  min-height: 84px;
+  border-radius: 28px;
+  border-color: rgba(255, 255, 255, 0.82);
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.88), rgba(248, 252, 255, 0.72));
+  box-shadow: var(--portal-shadow), var(--inner-highlight);
+}
+
+.module-kicker {
+  display: inline-flex !important;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 24px;
+  align-items: center;
+  padding: 0 9px;
+  border-radius: var(--radius-pill);
+  background: rgba(255, 36, 66, 0.08);
+  color: var(--red-deep) !important;
+  font-size: 11px !important;
+  font-weight: 900;
+}
+
+.module-heading strong {
+  margin-top: 5px;
+}
+
+.module-heading small {
+  display: block;
+  overflow: hidden;
+  margin-top: 4px;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.workspace-canvas {
+  padding-top: 0;
+}
+
+.module-placeholder {
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  overflow: hidden;
+}
+
+.placeholder-note {
+  display: grid;
+  place-items: center;
+  width: min(620px, 100%);
+  gap: 13px;
+  text-align: center;
+}
+
+.placeholder-mark {
+  display: grid;
+  place-items: center;
+  width: 68px;
+  height: 68px;
+  border-radius: 24px;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.96), rgba(255, 238, 242, 0.88));
+  color: var(--red);
+  box-shadow:
+    0 18px 36px rgba(255, 36, 66, 0.16),
+    var(--inner-highlight);
+}
+
+.placeholder-note small {
+  min-height: 26px;
+  padding: 5px 10px;
+  border-radius: var(--radius-pill);
+  background: rgba(35, 100, 170, 0.08);
+  color: var(--blue);
+  font-weight: 900;
+}
+
+.placeholder-note p {
+  max-width: 520px;
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.placeholder-grid {
+  width: min(520px, 100%);
+}
+
+.mobile-nav {
+  display: none;
+}

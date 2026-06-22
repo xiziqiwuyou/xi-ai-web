@@ -1,0 +1,66 @@
+/* Rednote Flat v2: final visual contract from reports/design/rednote-flat-ui-reference.png. */
+:root {
+  --xhs-bg: #fff8f9;
+  --xhs-page: #fbfbfc;
+  --xhs-surface: #ffffff;
+  --xhs-soft: #fff1f3;
+  --xhs-soft-2: #faf6f7;
+  --xhs-soft-3: #f6f3f4;
+  --xhs-line: #eee3e6;
+  --xhs-line-strong: #ffc9d3;
+  --xhs-ink: #211d24;
+  --xhs-muted: #6f6871;
+  --xhs-faint: #9d969e;
+  --xhs-red: #ff2442;
+  --xhs-red-deep: #d91f3a;
+  --xhs-blue: #356bff;
+  --xhs-green: #18a86b;
+  --xhs-danger: #cf3f4f;
+  --xhs-shadow: 0 2px 10px rgba(38, 24, 28, 0.04);
+  --xhs-shadow-raised: 0 10px 26px rgba(38, 24, 28, 0.075);
+  --xhs-shadow-red: 0 8px 18px rgba(255, 36, 66, 0.16);
+  --radius-shell: 22px;
+  --radius-panel: 20px;
+  --radius-card: 18px;
+  --radius-control: 16px;
+  --radius-icon: 15px;
+  --red: var(--xhs-red);
+  --red-deep: var(--xhs-red-deep);
+  --red-soft: var(--xhs-soft);
+  --ink: var(--xhs-ink);
+  --muted: var(--xhs-muted);
+  --line: var(--xhs-line);
+  --flat-line: var(--xhs-line);
+  --flat-shadow-soft: var(--xhs-shadow);
+  --focus-ring: 0 0 0 3px rgba(255, 36, 66, 0.1);
+}
+
+body {
+  background:
+    linear-gradient(180deg, #fff8f9 0%, #fbfbfd 46%, #fff6f8 100%) !important;
+  color: var(--xhs-ink);
+  font-family:
+    "PingFang SC",
+    "Microsoft YaHei",
+    "Segoe UI",
+    sans-serif;
+  font-size: 14px;
+}
+
+input,
+select,
+textarea {
+  border-color: var(--xhs-line);
+  border-radius: var(--radius-control);
+  background: var(--xhs-soft-2);
+  box-shadow: none;
+  color: var(--xhs-ink);
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--xhs-line-strong);
+  background: #fff;
+  box-shadow: var(--focus-ring);
+}
