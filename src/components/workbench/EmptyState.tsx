@@ -9,11 +9,13 @@ type EmptyStateProps = {
 function EmptyState({ icon: Icon, title, description }: EmptyStateProps) {
   return (
     <div className="workbench-empty">
-      <span>
-        <Icon size={34} />
+      <span aria-hidden="true">
+        <Icon size={22} />
       </span>
-      <strong>{title}</strong>
-      <p>{description}</p>
+      <div>
+        <strong>{title}</strong>
+        <p>{description}</p>
+      </div>
     </div>
   );
 }

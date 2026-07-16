@@ -1,7 +1,24 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState
+} from "react";
 import { api } from "./api";
 import AppShell from "./app/AppShell";
 import ModuleRouter from "./app/ModuleRouter";
+import { cleanMenuLabel } from "./app/moduleRegistry";
+import {
+  isAvailablePublicMenuItem,
+  isVisiblePublicMenuItem,
+  normalizePathname,
+  PRODUCT_NAME,
+  publicModuleFromPath,
+  publicPathForModule,
+  resolvePublicModule
+} from "./app/publicRoutes";
 import { loadGalleryItems, saveGalleryItems } from "./features/gallery/galleryStorage";
 import ApiConnectionModal from "./features/settings/ApiConnectionModal";
 import {
@@ -22,7 +39,6 @@ import type {
 
 const AdminPortal = lazy(() => import("./features/admin/AdminPortal"));
 const fallbackModule: ModuleId = "chat";
-const publicMenuItem = (item: MenuItem) => item.visible;
 
 function ModuleLoading() {
   return (
@@ -33,46 +49,69 @@ function ModuleLoading() {
   );
 }
 
-function chooseInitialModule(payload: PublicBootstrapPayload): ModuleId {
-  const preferred = payload.menuItems.find(
-    (item) => item.id === payload.settings.defaultModule && publicMenuItem(item)
-  );
-  return preferred?.id || payload.menuItems.find(publicMenuItem)?.id || fallbackModule;
+function replacePublicUrl(moduleId: ModuleId) {
+  const path = publicPathForModule(moduleId);
+  if (!path) return;
+  window.history.replaceState({ moduleId }, "", path);
+}
+
+function pushPublicUrl(moduleId: ModuleId) {
+  const path = publicPathForModule(moduleId);
+  if (!path || normalizePathname(window.location.pathname) === path) return;
+  window.history.pushState({ moduleId }, "", path);
 }
 
 function App() {
-  const normalizedPath = window.location.pathname.replace(/\/+$/, "") || "/";
+  const normalizedPath = normalizePathname(window.location.pathname);
   const isAdminRoute = normalizedPath === "/admin";
   const [loading, setLoading] = useState(true);
   const [payload, setPayload] = useState<PublicBootstrapPayload | null>(null);
-  const [activeModule, setActiveModule] = useState<ModuleId>(fallbackModule);
+  const [activeModule, setActiveModule] = useState<ModuleId>(
+    () => publicModuleFromPath(window.location.pathname) || fallbackModule
+  );
   const [userProvider, setUserProvider] = useState<UserProviderConfig>(loadUserProviderConfig);
   const [apiConfigOpen, setApiConfigOpen] = useState(false);
   const [galleryItems, setGalleryItems] = useState<GalleryItem[]>(loadGalleryItems);
   const [error, setError] = useState("");
 
+  const applyActiveModule = useCallback((moduleId: ModuleId) => {
+    setActiveModule(moduleId);
+  }, []);
+
+  const applyPublicBootstrap = useCallback(
+    (nextPayload: PublicBootstrapPayload) => {
+      const requestedModule = publicModuleFromPath(window.location.pathname);
+      const resolvedModule = resolvePublicModule(
+        nextPayload.menuItems,
+        requestedModule,
+        nextPayload.settings.defaultModule
+      );
+      const canonicalPath = publicPathForModule(resolvedModule);
+
+      setPayload(nextPayload);
+      applyActiveModule(resolvedModule);
+      if (canonicalPath && window.location.pathname !== canonicalPath) {
+        replacePublicUrl(resolvedModule);
+      }
+      return nextPayload;
+    },
+    [applyActiveModule]
+  );
+
   const loadPublicBootstrap = useCallback(async () => {
     const nextPayload = await api.publicBootstrap();
-    setPayload(nextPayload);
-    setActiveModule((current) => {
-      const stillVisible = nextPayload.menuItems.some((item) => item.id === current && item.visible);
-      return stillVisible ? current : chooseInitialModule(nextPayload);
-    });
-    return nextPayload;
-  }, []);
+    return applyPublicBootstrap(nextPayload);
+  }, [applyPublicBootstrap]);
 
   useEffect(() => {
     if (isAdminRoute) {
+      document.title = `Admin - ${PRODUCT_NAME}`;
       setLoading(false);
       return;
     }
 
     let alive = true;
     loadPublicBootstrap()
-      .then((nextPayload) => {
-        if (!alive) return;
-        setActiveModule(chooseInitialModule(nextPayload));
-      })
       .catch((err: unknown) => {
         if (!alive) return;
         setError(err instanceof Error ? err.message : "应用启动失败");
@@ -87,6 +126,32 @@ function App() {
   }, [isAdminRoute, loadPublicBootstrap]);
 
   useEffect(() => {
+    if (isAdminRoute || !payload) return;
+
+    const handlePopState = () => {
+      const requestedModule = publicModuleFromPath(window.location.pathname);
+      const resolvedModule = resolvePublicModule(
+        payload.menuItems,
+        requestedModule,
+        payload.settings.defaultModule
+      );
+      applyActiveModule(resolvedModule);
+      if (publicPathForModule(resolvedModule) !== window.location.pathname) {
+        replacePublicUrl(resolvedModule);
+      }
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, [applyActiveModule, isAdminRoute, payload]);
+
+  useEffect(() => {
+    if (isAdminRoute || !payload) return;
+    const item = payload.menuItems.find((menuItem) => menuItem.id === activeModule);
+    document.title = `${cleanMenuLabel(activeModule, item?.label)} - ${PRODUCT_NAME}`;
+  }, [activeModule, isAdminRoute, payload]);
+
+  useEffect(() => {
     saveUserProviderConfig(userProvider);
   }, [userProvider]);
 
@@ -99,6 +164,18 @@ function App() {
     if (isAdminRoute) return;
     saveGalleryItems(galleryItems);
   }, [galleryItems, isAdminRoute]);
+
+  const navigateToModule = useCallback(
+    (moduleId: ModuleId) => {
+      if (!payload) return;
+      const item = payload.menuItems.find((menuItem) => menuItem.id === moduleId);
+      if (!item || !isAvailablePublicMenuItem(item)) return;
+
+      applyActiveModule(moduleId);
+      pushPublicUrl(moduleId);
+    },
+    [applyActiveModule, payload]
+  );
 
   const updateConversations = useCallback((conversations: ConversationSummary[]) => {
     setPayload((current) => (current ? { ...current, conversations } : current));
@@ -134,7 +211,7 @@ function App() {
   }, []);
 
   const visibleMenuItems = useMemo<MenuItem[]>(() => {
-    return payload?.menuItems.filter(publicMenuItem) || [];
+    return payload?.menuItems.filter(isVisiblePublicMenuItem) || [];
   }, [payload?.menuItems]);
 
   if (isAdminRoute) {
@@ -169,7 +246,9 @@ function App() {
         settings={payload.settings}
         menuItems={visibleMenuItems}
         activeModule={activeModule}
-        onModuleChange={setActiveModule}
+        apiReady={isUserProviderReady(userProvider)}
+        onModuleChange={navigateToModule}
+        onRequestApiConfig={() => setApiConfigOpen(true)}
       >
         <Suspense fallback={<ModuleLoading />}>
           <ModuleRouter
@@ -190,7 +269,7 @@ function App() {
             onRemoveGalleryItem={removeGalleryItem}
             onRemoveGalleryItems={removeGalleryItems}
             onUpdateGalleryItem={updateGalleryItem}
-            onModuleChange={setActiveModule}
+            onModuleChange={navigateToModule}
             onRequestApiConfig={() => setApiConfigOpen(true)}
             onConversationsChange={updateConversations}
             onRefresh={loadPublicBootstrap}

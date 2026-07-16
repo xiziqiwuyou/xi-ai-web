@@ -6,7 +6,9 @@ type AppShellProps = {
   settings: SiteSettings;
   menuItems: MenuItem[];
   activeModule: ModuleId;
+  apiReady: boolean;
   onModuleChange: (moduleId: ModuleId) => void;
+  onRequestApiConfig: () => void;
   children: ReactNode;
 };
 
@@ -14,11 +16,13 @@ function AppShell({
   settings,
   menuItems,
   activeModule,
+  apiReady,
   onModuleChange,
+  onRequestApiConfig,
   children
 }: AppShellProps) {
   return (
-    <div className="rednote-shell top-nav-shell">
+    <div className="rednote-shell top-nav-shell" data-active-module={activeModule}>
       <a className="skip-main-link" href="#workspace-main">
         跳到工作区
       </a>
@@ -26,9 +30,17 @@ function AppShell({
         siteName={settings.siteName}
         menuItems={menuItems}
         activeModule={activeModule}
+        apiReady={apiReady}
         onModuleChange={onModuleChange}
+        onRequestApiConfig={onRequestApiConfig}
       />
-      <main id="workspace-main" className="workspace-frame" tabIndex={-1}>
+      <main
+        key={activeModule}
+        id="workspace-main"
+        className="workspace-frame"
+        data-scroll-owner={activeModule === "chat" ? undefined : "public-workspace"}
+        tabIndex={-1}
+      >
         <div className="workspace-canvas">{children}</div>
       </main>
     </div>

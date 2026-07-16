@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { GitFork, Wand2 } from "lucide-react";
+import { GitFork, Settings2, Wand2, X } from "lucide-react";
 import { api } from "../../api";
 import {
   ConnectionStatus,
@@ -47,6 +47,7 @@ function MindmapModule({
   const [notice, setNotice] = useState("");
   const [tab, setTab] = useState<"visual" | "raw">("visual");
   const [selectedModelId, setSelectedModelId] = useState("");
+  const [mobileSettingsOpen, setMobileSettingsOpen] = useState(false);
   const ready = isUserProviderReady(userProvider);
   const chatModels = useMemo(() => modelsForCapability(modelCatalog, "chat"), [modelCatalog]);
   const selectedModel =
@@ -83,6 +84,15 @@ function MindmapModule({
     }
   }, []);
 
+  useEffect(() => {
+    if (!mobileSettingsOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMobileSettingsOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [mobileSettingsOpen]);
+
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (!canSubmit) {
@@ -108,6 +118,7 @@ function MindmapModule({
       setResult(nextResult);
       setSourceDraft(nextResult.text || "");
       setTab("visual");
+      setMobileSettingsOpen(false);
       onGenerationResult({
         ...nextResult,
         sourceModule: "mindmap",
@@ -122,7 +133,19 @@ function MindmapModule({
   };
 
   const sidebar = (
-    <form className="workbench-form" onSubmit={submit}>
+    <form
+      className="workbench-form mindmap-settings-form"
+      onSubmit={submit}
+      role={mobileSettingsOpen ? "dialog" : undefined}
+      aria-modal={mobileSettingsOpen || undefined}
+      aria-label="思维导图生成设置"
+    >
+      <div className="workbench-mobile-sheet-head">
+        <strong>生成设置</strong>
+        <button type="button" className="icon-button" onClick={() => setMobileSettingsOpen(false)} aria-label="关闭生成设置">
+          <X size={18} />
+        </button>
+      </div>
       <ConnectionStatus ready={ready} modelLabel={compactModelLabel(selectedModel)} onOpenSettings={onRequestApiConfig} />
       <ModelPicker
         className="workbench-model-picker"
@@ -157,37 +180,95 @@ function MindmapModule({
   );
 
   return (
-    <WorkbenchLayout title={title} description={description} icon={Wand2} badges={["可视化", "SVG 导出", "源码编辑"]} sidebar={sidebar}>
+    <WorkbenchLayout
+      title={title}
+      description={description}
+      icon={Wand2}
+      badges={["可视化", "SVG 导出", "源码编辑"]}
+      sidebar={sidebar}
+      sidebarTitle="生成设置"
+      className={mobileSettingsOpen ? "mindmap-workbench settings-open" : "mindmap-workbench"}
+      mobileNavigation={
+        mobileSettingsOpen ? (
+          <button
+            type="button"
+            className="mindmap-sheet-scrim"
+            onClick={() => setMobileSettingsOpen(false)}
+            aria-label="关闭生成设置"
+          />
+        ) : null
+      }
+    >
       <section className="mindmap-workspace">
-        <header className="mindmap-tabs">
+        <header className="mindmap-stage-header">
           <div>
             <strong>思维导图</strong>
-            <span>{result ? "已生成" : "等待生成"}</span>
+            <span>{busy ? "正在生成" : result ? "已生成" : "画布就绪"}</span>
           </div>
-          <div className="option-segmented">
-            <button type="button" className={tab === "visual" ? "active" : ""} onClick={() => setTab("visual")}>可视化</button>
-            <button type="button" className={tab === "raw" ? "active" : ""} onClick={() => setTab("raw")}>源码</button>
+          <div className="mindmap-stage-actions">
+            <button
+              type="button"
+              className="secondary-action compact-action mindmap-settings-trigger"
+              onClick={() => setMobileSettingsOpen(true)}
+            >
+              <Settings2 size={16} />
+              生成设置
+            </button>
+            <div className="option-segmented" role="tablist" aria-label="导图视图">
+              <button
+                type="button"
+                role="tab"
+                className={tab === "visual" ? "active" : ""}
+                aria-selected={tab === "visual"}
+                aria-controls="mindmap-visual-panel"
+                onClick={() => setTab("visual")}
+              >
+                可视化
+              </button>
+              <button
+                type="button"
+                role="tab"
+                className={tab === "raw" ? "active" : ""}
+                aria-selected={tab === "raw"}
+                aria-controls="mindmap-source-panel"
+                disabled={!sourceDraft}
+                onClick={() => setTab("raw")}
+              >
+                源码
+              </button>
+            </div>
           </div>
         </header>
-        {sourceDraft && parsed && tab === "visual" ? <MindmapCanvas root={parsed} source={sourceDraft} /> : null}
-        {tab === "raw" && result?.text ? (
-          <section className="artifact-editor-panel">
+        {busy || notice ? (
+          <div className={notice ? "mindmap-status-banner bad" : "mindmap-status-banner"} role="status">
+            {notice || "正在整理节点层级..."}
+          </div>
+        ) : null}
+        <div className="mindmap-stage-content">
+          {sourceDraft && parsed && tab === "visual" ? (
+            <div id="mindmap-visual-panel" className="mindmap-visual-panel" role="tabpanel">
+              <MindmapCanvas root={parsed} source={sourceDraft} />
+            </div>
+          ) : null}
+          {tab === "raw" && sourceDraft ? (
+            <section id="mindmap-source-panel" className="artifact-editor-panel" role="tabpanel">
             <header>
               <strong>导图源码编辑</strong>
               <span>修改后切回可视化即可重新渲染</span>
             </header>
             <textarea value={sourceDraft} onChange={(event) => setSourceDraft(event.target.value)} rows={16} />
-          </section>
-        ) : null}
-        {!result?.text ? (
-          <ResultPanel
-            title="导图源码"
-            result={result}
-            emptyIcon={GitFork}
-            emptyTitle="生成后会显示可视化导图"
-            emptyDescription="模型输出会被解析为节点，并保留 Markdown/Mermaid 源码。"
-          />
-        ) : null}
+            </section>
+          ) : null}
+          {!sourceDraft ? (
+            <ResultPanel
+              title="导图画布"
+              result={result}
+              emptyIcon={GitFork}
+              emptyTitle="从一个主题开始"
+              emptyDescription="打开生成设置，输入主题后即可创建导图。"
+            />
+          ) : null}
+        </div>
       </section>
     </WorkbenchLayout>
   );

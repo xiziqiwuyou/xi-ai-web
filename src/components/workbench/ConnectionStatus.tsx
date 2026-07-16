@@ -13,15 +13,11 @@ function ConnectionStatus({ ready, modelLabel, onOpenSettings }: ConnectionStatu
         {ready ? <CheckCircle2 size={18} /> : <PlugZap size={18} />}
       </div>
       <div>
-        <strong>{ready ? modelLabel || "模型已选择" : "等待 API 配置"}</strong>
-        <span>
-          {ready
-            ? "请求会使用你本次会话填写的 API URL 和 Key。"
-            : "先填写 API URL 和 API Key，再开始调用模型。"}
-        </span>
+        <strong>{ready ? "API 已连接" : "API 未配置"}</strong>
+        <span>{ready ? modelLabel || "可以开始使用" : "填写 URL 与 Key"}</span>
       </div>
       <button type="button" className="secondary-action compact-action" onClick={onOpenSettings}>
-        配置 API
+        {ready ? "更改" : "配置"}
       </button>
     </div>
   );

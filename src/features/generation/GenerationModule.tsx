@@ -8,7 +8,6 @@ import {
   GenerationOptions,
   ModelPicker,
   PromptComposer,
-  ResultPanel,
   WorkbenchLayout,
   compactModelLabel,
   modelsForCapability,
@@ -90,6 +89,9 @@ function GenerationModule({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [selectedModelId, setSelectedModelId] = useState("");
+  const [mobileView, setMobileView] = useState<"input" | "preview" | "history">(() =>
+    galleryItems.some(hasImageAsset) ? "preview" : "input"
+  );
 
   const imageItems = useMemo(() => galleryItems.filter(hasImageAsset), [galleryItems]);
   const selectedImage = imageItems.find((item) => item.id === selectedImageId) || imageItems[0] || null;
@@ -173,6 +175,7 @@ function GenerationModule({
       });
       setResult(nextResult);
       setSelectedImageId(nextResult.id);
+      setMobileView("preview");
       onGenerationResult({
         ...nextResult,
         sourceModule: "image",
@@ -190,10 +193,11 @@ function GenerationModule({
     updateDraft({ prompt: item.prompt || "" });
     if (item.modelId) setSelectedModelId(item.modelId);
     setSelectedImageId(item.id);
+    setMobileView("input");
   };
 
   const sidebar = (
-    <form className="workbench-form" onSubmit={submit}>
+    <form id="drawing-input-panel" className="workbench-form" onSubmit={submit}>
       <ConnectionStatus ready={ready} modelLabel={compactModelLabel(selectedModel)} onOpenSettings={onRequestApiConfig} />
 
       <ModelPicker
@@ -259,6 +263,28 @@ function GenerationModule({
     </form>
   );
 
+  const mobileNavigation = (
+    <div className="option-segmented drawing-mobile-tabs" role="tablist" aria-label="绘画工作区">
+      {([
+        ["input", "输入", "drawing-input-panel"],
+        ["preview", "预览", "drawing-preview-panel"],
+        ["history", "历史", "drawing-history-panel"]
+      ] as const).map(([view, label, controls]) => (
+        <button
+          key={view}
+          type="button"
+          role="tab"
+          className={mobileView === view ? "active" : ""}
+          aria-selected={mobileView === view}
+          aria-controls={controls}
+          onClick={() => setMobileView(view)}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+
   return (
     <WorkbenchLayout
       title={title}
@@ -266,12 +292,15 @@ function GenerationModule({
       icon={Wand2}
       badges={["历史作品", "继续绘画", "画廊保存"]}
       sidebar={sidebar}
+      className={`drawing-workbench mobile-${mobileView}`}
+      sidebarTitle="创作设置"
+      mobileNavigation={mobileNavigation}
     >
       <section className="image-studio">
         <header className="image-studio-head">
           <div>
-            <strong>绘画画廊</strong>
-            <span>{imageItems.length ? `${imageItems.length} 张已生成图片` : "还没有图片"}</span>
+            <strong>图片预览</strong>
+            <span>{busy ? "正在生成" : selectedImage ? "已选择最近作品" : "等待创作"}</span>
           </div>
           {selectedImage ? (
             <button type="button" className="secondary-action compact-action" onClick={() => reusePrompt(selectedImage)}>
@@ -281,74 +310,90 @@ function GenerationModule({
           ) : null}
         </header>
 
-        {result ? <ResultPanel title="本次生成" result={result} emptyIcon={ImageIcon} /> : null}
+        <div id="drawing-preview-panel" className="image-preview-region" role="tabpanel">
+          {selectedImage ? (
+            <article className="image-studio-preview">
+              <header>
+                <div>
+                  <strong>{selectedImage.title}</strong>
+                  <span>{new Date(selectedImage.createdAt).toLocaleString("zh-CN")}</span>
+                </div>
+                <div className="image-studio-actions">
+                  <button
+                    type="button"
+                    className={selectedImage.favorite ? "icon-button active-soft" : "icon-button"}
+                    onClick={() => onUpdateGalleryItem(selectedImage.id, { favorite: !selectedImage.favorite })}
+                    aria-label={selectedImage.favorite ? "取消收藏" : "收藏"}
+                    title={selectedImage.favorite ? "取消收藏" : "收藏"}
+                  >
+                    <Heart size={16} />
+                  </button>
+                  <button
+                    type="button"
+                    className="icon-button danger"
+                    onClick={() => {
+                      if (window.confirm(`确定删除“${selectedImage.title}”吗？`)) {
+                        onRemoveGalleryItem(selectedImage.id);
+                      }
+                    }}
+                    aria-label="删除图片"
+                    title="删除图片"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              </header>
+              <AssetGallery assets={selectedImage.assets || []} />
+              <p>{selectedImage.prompt || "未记录提示词"}</p>
+            </article>
+          ) : (
+            <EmptyState
+              icon={ImageIcon}
+              title="还没有画过的图"
+              description="输入画面描述，生成的图片会直接出现在这里。"
+            />
+          )}
+        </div>
 
-        {selectedImage ? (
-          <article className="image-studio-preview">
-            <header>
-              <div>
-                <strong>{selectedImage.title}</strong>
-                <span>{new Date(selectedImage.createdAt).toLocaleString("zh-CN")}</span>
-              </div>
-              <div className="image-studio-actions">
-                <button
-                  type="button"
-                  className={selectedImage.favorite ? "icon-button active-soft" : "icon-button"}
-                  onClick={() => onUpdateGalleryItem(selectedImage.id, { favorite: !selectedImage.favorite })}
-                  aria-label={selectedImage.favorite ? "取消收藏" : "收藏"}
-                  title={selectedImage.favorite ? "取消收藏" : "收藏"}
-                >
-                  <Heart size={16} />
-                </button>
-                <button
-                  type="button"
-                  className="icon-button danger"
-                  onClick={() => onRemoveGalleryItem(selectedImage.id)}
-                  aria-label="删除图片"
-                  title="删除图片"
-                >
-                  <Trash2 size={16} />
-                </button>
-              </div>
-            </header>
-            <AssetGallery assets={selectedImage.assets || []} />
-            <p>{selectedImage.prompt || "未记录提示词"}</p>
-          </article>
-        ) : (
-          <EmptyState
-            icon={ImageIcon}
-            title="还没有画过的图"
-            description="左侧输入提示词生成第一张图片后，会自动出现在这里。"
-          />
-        )}
-
-        {imageItems.length ? (
-          <div className="image-history-grid" aria-label="已生成图片">
-            {imageItems.map((item) => {
-              const imageUrl = firstImageUrl(item);
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  className={item.id === selectedImage?.id ? "image-history-card active" : "image-history-card"}
-                  onClick={() => setSelectedImageId(item.id)}
-                >
-                  {imageUrl ? (
-                    <img src={imageUrl} alt={item.title} />
-                  ) : (
-                    <span className="image-history-fallback">
-                      <ImageIcon size={20} />
+        <section id="drawing-history-panel" className="image-history-panel" role="tabpanel">
+          <header>
+            <strong>最近生成</strong>
+            <span>{imageItems.length ? `${imageItems.length} 张` : "暂无记录"}</span>
+          </header>
+          {imageItems.length ? (
+            <div className="image-history-grid" aria-label="已生成图片">
+              {imageItems.map((item) => {
+                const imageUrl = firstImageUrl(item);
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={item.id === selectedImage?.id ? "image-history-card active" : "image-history-card"}
+                    aria-pressed={item.id === selectedImage?.id}
+                    onClick={() => {
+                      setSelectedImageId(item.id);
+                      setMobileView("preview");
+                    }}
+                  >
+                    {imageUrl ? (
+                      <img src={imageUrl} alt={item.title} />
+                    ) : (
+                      <span className="image-history-fallback">
+                        <ImageIcon size={20} />
+                      </span>
+                    )}
+                    <span>
+                      <strong>{item.title}</strong>
+                      <small>{item.prompt || "未记录提示词"}</small>
                     </span>
-                  )}
-                  <span>
-                    <strong>{item.title}</strong>
-                    <small>{item.prompt || "未记录提示词"}</small>
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        ) : null}
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <EmptyState icon={ImageIcon} title="暂无历史" description="生成后的图片会保留在这里。" />
+          )}
+        </section>
       </section>
     </WorkbenchLayout>
   );

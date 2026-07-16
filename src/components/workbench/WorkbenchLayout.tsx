@@ -10,38 +10,51 @@ type WorkbenchLayoutProps = {
   badges?: string[];
   sidebar: ReactNode;
   children: ReactNode;
+  className?: string;
+  sidebarTitle?: string;
+  sidebarPosition?: "start" | "end";
+  mobileNavigation?: ReactNode;
 };
 
 function WorkbenchLayout({
   title,
   icon: Icon,
   sidebar,
-  children
+  children,
+  className = "",
+  sidebarTitle,
+  sidebarPosition = "start",
+  mobileNavigation
 }: WorkbenchLayoutProps) {
-  return (
-    <section className="workbench-layout" aria-label={title}>
-      <WorkbenchSidebar>
-        <div className="workbench-sidebar-top compact">
-          <header className="workbench-head">
-            <span className="workbench-mark">
-              <Icon size={20} />
-            </span>
-            <div>
-              <strong>{title}</strong>
-            </div>
-          </header>
-        </div>
+  const sidebarPanel = (
+    <WorkbenchSidebar>
+      <div className="workbench-sidebar-top compact">
+        <header className="workbench-head">
+          <span className="workbench-mark" aria-hidden="true">
+            <Icon size={18} />
+          </span>
+          <strong>{sidebarTitle || title}</strong>
+        </header>
+      </div>
 
-        {sidebar}
-      </WorkbenchSidebar>
-      <WorkbenchMain>
-        <div className="workbench-main-tabs" aria-label={`${title} 结果视图`}>
-          <span className="active">结果</span>
-          <span>任务</span>
-          <span>详情</span>
-        </div>
-        <div className="workbench-main-stage">{children}</div>
-      </WorkbenchMain>
+      {sidebar}
+    </WorkbenchSidebar>
+  );
+
+  const mainPanel = (
+    <WorkbenchMain>
+      <div className="workbench-main-stage">{children}</div>
+    </WorkbenchMain>
+  );
+
+  return (
+    <section
+      className={`workbench-layout sidebar-${sidebarPosition} ${className}`.trim()}
+      aria-label={title}
+    >
+      {mobileNavigation ? <div className="workbench-mobile-navigation">{mobileNavigation}</div> : null}
+      {sidebarPosition === "end" ? mainPanel : sidebarPanel}
+      {sidebarPosition === "end" ? sidebarPanel : mainPanel}
     </section>
   );
 }

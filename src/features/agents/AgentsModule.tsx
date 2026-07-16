@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { BrainCircuit, Wrench } from "lucide-react";
+import { BrainCircuit, CheckCircle2, ChevronLeft, Loader2, PlayCircle, Wrench } from "lucide-react";
 import { api } from "../../api";
 import {
   ConnectionStatus,
@@ -44,6 +44,12 @@ function traceFrom(result: GenerationResult | null): AgentTraceEvent[] {
   return Array.isArray(raw?.toolTrace) ? raw.toolTrace : [];
 }
 
+const riskLabels: Record<ToolSetting["riskLevel"], string> = {
+  low: "低风险",
+  medium: "需确认",
+  high: "高风险"
+};
+
 function AgentsModule({
   title,
   description,
@@ -66,6 +72,7 @@ function AgentsModule({
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [result, setResult] = useState<GenerationResult | null>(null);
+  const [mobileView, setMobileView] = useState<"setup" | "timeline">("setup");
   const ready = isUserProviderReady(userProvider);
   const toolModels = useMemo(
     () => modelsForCapability(modelCatalog, "toolCalling").filter((entry) => entry.capabilities.includes("chat")),
@@ -121,6 +128,7 @@ function AgentsModule({
       setNotice(!ready ? "请先填写 API URL 和 Key" : "请补全任务，并选择支持工具调用的模型");
       return;
     }
+    setMobileView("timeline");
     setBusy(true);
     setNotice("");
     try {
@@ -147,8 +155,18 @@ function AgentsModule({
   };
 
   const sidebar = (
-    <form className="workbench-form" onSubmit={submit}>
+    <form id="agent-setup-panel" className="workbench-form" onSubmit={submit}>
       <ConnectionStatus ready={ready} modelLabel={compactModelLabel(selectedModel)} onOpenSettings={onRequestApiConfig} />
+      <label className="prompt-field agent-role-field">
+        <span>智能体角色</span>
+        <select value={assistantId} onChange={(event) => setAssistantId(event.target.value)}>
+          {assistants.map((assistant) => (
+            <option key={assistant.id} value={assistant.id}>
+              {assistant.name}
+            </option>
+          ))}
+        </select>
+      </label>
       <ModelPicker
         className="workbench-model-picker"
         models={modelCatalog}
@@ -159,16 +177,6 @@ function AgentsModule({
           onUserProviderChange({ lastModelId: modelId });
         }}
       />
-      <label className="prompt-field">
-        <span>智能体角色</span>
-        <select value={assistantId} onChange={(event) => setAssistantId(event.target.value)}>
-          {assistants.map((assistant) => (
-            <option key={assistant.id} value={assistant.id}>
-              {assistant.name}
-            </option>
-          ))}
-        </select>
-      </label>
       <PromptComposer
         label="任务目标"
         value={prompt}
@@ -187,20 +195,30 @@ function AgentsModule({
             <input type="range" min="0" max="1.2" step="0.1" value={temperature} onChange={(event) => setTemperature(Number(event.target.value))} />
           </label>
         </GenerationOptions>
-        <div className="agent-tool-picker">
-          <strong>允许工具</strong>
+        <div className="agent-tool-picker" role="group" aria-labelledby="agent-permissions-title">
+          <header>
+            <strong id="agent-permissions-title">工具权限</strong>
+            <span>{allowedTools.length}/{enabledTools.length} 已开启</span>
+          </header>
           {enabledTools.map((tool) => (
-            <label key={tool.name}>
+            <label key={tool.name} className="agent-permission-row">
+              <span className="agent-permission-copy">
+                <span>
+                  <strong>{tool.label}</strong>
+                  <small className={`tool-risk ${tool.riskLevel}`}>{riskLabels[tool.riskLevel]}</small>
+                </span>
+                <small>{tool.description}</small>
+              </span>
               <input
                 type="checkbox"
                 checked={allowedTools.includes(tool.name)}
+                aria-label={`允许使用${tool.label}`}
                 onChange={(event) =>
                   setAllowedTools((current) =>
                     event.target.checked ? [...current, tool.name] : current.filter((name) => name !== tool.name)
                   )
                 }
               />
-              <span>{tool.label}</span>
             </label>
           ))}
         </div>
@@ -208,18 +226,60 @@ function AgentsModule({
     </form>
   );
 
+  const trace = traceFrom(result);
+  const runStatus = busy ? "执行中" : result?.status === "failed" ? "执行失败" : result ? "已完成" : "等待运行";
+
   return (
-    <WorkbenchLayout title={title} description={description} icon={BrainCircuit} badges={["工具调用", "执行轨迹", "任务模板"]} sidebar={sidebar}>
-      <div className="generation-result-stack">
-        <AgentTracePanel trace={traceFrom(result)} />
+    <WorkbenchLayout
+      title={title}
+      description={description}
+      icon={BrainCircuit}
+      badges={["工具调用", "执行轨迹", "任务模板"]}
+      sidebar={sidebar}
+      sidebarTitle="智能体设置"
+      className={`agents-workbench mobile-${mobileView}`}
+    >
+      <section id="agent-timeline-panel" className="agent-run-timeline" aria-live="polite">
+        <header className="agent-timeline-head">
+          <div>
+            <strong>执行时间线</strong>
+            <span>{runStatus}</span>
+          </div>
+          <button type="button" className="secondary-action compact-action agent-back-setup" onClick={() => setMobileView("setup")}>
+            <ChevronLeft size={16} />
+            返回设置
+          </button>
+        </header>
+
+        <div className="agent-timeline-feed">
+          <article className={busy ? "agent-timeline-event running" : "agent-timeline-event"}>
+            <span className="agent-timeline-marker" aria-hidden="true">
+              {busy ? <Loader2 size={16} className="spin" /> : result ? <CheckCircle2 size={16} /> : <PlayCircle size={16} />}
+            </span>
+            <div>
+              <strong>{busy ? "正在执行任务" : result ? "任务执行完成" : "准备运行"}</strong>
+              <p>{notice || (result ? "模型已返回执行结果。" : "设置角色、模型和权限后运行智能体。")}</p>
+            </div>
+          </article>
+
+          {trace.length ? <AgentTracePanel trace={trace} /> : null}
+
+          <div className="agent-final-result">
+            <span className="agent-timeline-marker" aria-hidden="true">
+              <Wrench size={16} />
+            </span>
+            <div>
         <ResultPanel
-          title="智能体结果"
+                title="最终回答"
           result={result}
           emptyIcon={Wrench}
-          emptyTitle="运行后展示执行结果"
-          emptyDescription="支持工具调用的模型会在这里展示工具轨迹和最终回答。"
+                emptyTitle="等待智能体运行"
+                emptyDescription="运行后会依次展示工具轨迹和最终回答。"
         />
-      </div>
+            </div>
+          </div>
+        </div>
+      </section>
     </WorkbenchLayout>
   );
 }

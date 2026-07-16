@@ -1,8 +1,9 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { LayoutGrid, Search, Sparkles } from "lucide-react";
+import { ChevronLeft, LayoutGrid, Search, Sparkles } from "lucide-react";
 import { api } from "../../api";
 import {
   ConnectionStatus,
+  EmptyState,
   ModelPicker,
   PromptComposer,
   ResultPanel,
@@ -46,6 +47,8 @@ function AppsModule({
   const [result, setResult] = useState<GenerationResult | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [runnerView, setRunnerView] = useState<"setup" | "result">("setup");
+  const [mobileView, setMobileView] = useState<"market" | "runner">("market");
 
   const ready = isUserProviderReady(userProvider);
   const chatModels = useMemo(() => modelsForCapability(modelCatalog, "chat"), [modelCatalog]);
@@ -114,6 +117,7 @@ function AppsModule({
         options: { temperature: 0.4 }
       });
       setResult(nextResult);
+      setRunnerView("result");
       onGenerationResult({
         ...nextResult,
         sourceModule: "apps",
@@ -127,42 +131,105 @@ function AppsModule({
     }
   };
 
+  const selectApp = (appId: string) => {
+    setSelectedAppId(appId);
+    setRunnerView("setup");
+    setMobileView("runner");
+  };
+
   const sidebar = (
-    <form className="workbench-form" onSubmit={submit}>
-      <ConnectionStatus
-        ready={ready}
-        modelLabel={compactModelLabel(selectedModel)}
-        onOpenSettings={onRequestApiConfig}
-      />
-      <ModelPicker
-        className="workbench-model-picker"
-        models={modelCatalog}
-        capability="chat"
-        value={selectedModel?.id || ""}
-        onChange={(modelId) => {
-          setSelectedModelId(modelId);
-          onUserProviderChange({ lastModelId: modelId });
-        }}
-      />
-      {selectedApp ? (
-        <div className="selected-app-summary">
-          <span>{selectedApp.category}</span>
-          <strong>{selectedApp.name}</strong>
-          <p>{selectedApp.description}</p>
+    <div className="apps-runner">
+      <div className="apps-runner-mobile-head">
+        <button type="button" className="secondary-action compact-action" onClick={() => setMobileView("market")}>
+          <ChevronLeft size={16} />
+          返回应用市场
+        </button>
+      </div>
+
+      {result ? (
+        <div className="option-segmented runner-view-switcher" role="tablist" aria-label="应用运行器视图">
+          <button
+            type="button"
+            role="tab"
+            className={runnerView === "setup" ? "active" : ""}
+            aria-selected={runnerView === "setup"}
+            aria-controls="app-runner-setup"
+            onClick={() => setRunnerView("setup")}
+          >
+            设置
+          </button>
+          <button
+            type="button"
+            role="tab"
+            className={runnerView === "result" ? "active" : ""}
+            aria-selected={runnerView === "result"}
+            aria-controls="app-runner-result"
+            onClick={() => setRunnerView("result")}
+          >
+            结果
+          </button>
         </div>
       ) : null}
-      <PromptComposer
-        label="任务内容"
-        value={input}
-        placeholder="输入背景、目标、素材或限制条件"
-        rows={6}
-        submitLabel={selectedApp ? `运行 ${selectedApp.name}` : "运行应用"}
-        busy={busy}
-        disabled={!canSubmit}
-        notice={error}
-        onChange={setInput}
-      />
-    </form>
+
+      {selectedApp ? (
+        <>
+          <form
+            id="app-runner-setup"
+            className={runnerView === "setup" ? "workbench-form" : "workbench-form runner-view-hidden"}
+            onSubmit={submit}
+            role="tabpanel"
+          >
+            <ConnectionStatus
+              ready={ready}
+              modelLabel={compactModelLabel(selectedModel)}
+              onOpenSettings={onRequestApiConfig}
+            />
+            <ModelPicker
+              className="workbench-model-picker"
+              models={modelCatalog}
+              capability="chat"
+              value={selectedModel?.id || ""}
+              onChange={(modelId) => {
+                setSelectedModelId(modelId);
+                onUserProviderChange({ lastModelId: modelId });
+              }}
+            />
+            <div className="selected-app-summary">
+              <span>{selectedApp.category}</span>
+              <strong>{selectedApp.name}</strong>
+              <p>{selectedApp.description}</p>
+            </div>
+            <PromptComposer
+              label="任务内容"
+              value={input}
+              placeholder="输入背景、目标、素材或限制条件"
+              rows={6}
+              submitLabel={`运行 ${selectedApp.name}`}
+              busy={busy}
+              disabled={!canSubmit}
+              notice={error}
+              onChange={setInput}
+            />
+          </form>
+
+          <div
+            id="app-runner-result"
+            className={runnerView === "result" ? "apps-runner-result" : "apps-runner-result runner-view-hidden"}
+            role="tabpanel"
+          >
+            <ResultPanel
+              title={selectedApp.name}
+              result={result}
+              emptyIcon={LayoutGrid}
+              emptyTitle="等待运行结果"
+              emptyDescription="填写任务内容后运行应用。"
+            />
+          </div>
+        </>
+      ) : (
+        <EmptyState icon={LayoutGrid} title="暂无可用应用" description="后台启用应用后会显示在这里。" />
+      )}
+    </div>
   );
 
   return (
@@ -172,26 +239,29 @@ function AppsModule({
       icon={LayoutGrid}
       badges={["应用市场", "场景模板", "智能体运行"]}
       sidebar={sidebar}
+      sidebarTitle="应用运行器"
+      sidebarPosition="end"
+      className={`apps-layout mobile-${mobileView}`}
     >
-      <div className="apps-workbench">
-        <section className="apps-market">
+      <section className="apps-market">
           <header className="apps-market-head">
             <div>
               <strong>应用市场</strong>
               <span>{filteredApps.length} 个可用应用</span>
             </div>
-            <label className="apps-search">
+            <label className="apps-search" aria-label="搜索应用">
               <Search size={16} />
               <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索应用" />
             </label>
           </header>
 
-          <div className="option-segmented app-categories" role="tablist" aria-label="应用分类">
+          <div className="app-categories" role="group" aria-label="应用分类">
             {categories.map((item) => (
               <button
                 key={item}
                 type="button"
                 className={item === category ? "active" : ""}
+                aria-pressed={item === category}
                 onClick={() => setCategory(item)}
               >
                 {item}
@@ -199,27 +269,29 @@ function AppsModule({
             ))}
           </div>
 
-          <div className="app-card-grid">
-            {filteredApps.map((preset) => (
-              <button
-                key={preset.id}
-                type="button"
-                className={preset.id === selectedApp?.id ? "app-preset-card active" : "app-preset-card"}
-                onClick={() => setSelectedAppId(preset.id)}
-              >
-                <span>
-                  <Sparkles size={18} />
-                </span>
-                <strong>{preset.name}</strong>
-                <small>{preset.category}</small>
-                <p>{preset.description}</p>
-              </button>
-            ))}
-          </div>
-        </section>
-
-        <ResultPanel title="应用结果" result={result} emptyIcon={LayoutGrid} />
-      </div>
+          {filteredApps.length ? (
+            <div className="app-card-grid">
+              {filteredApps.map((preset) => (
+                <button
+                  key={preset.id}
+                  type="button"
+                  className={preset.id === selectedApp?.id ? "app-preset-card active" : "app-preset-card"}
+                  aria-pressed={preset.id === selectedApp?.id}
+                  onClick={() => selectApp(preset.id)}
+                >
+                  <span aria-hidden="true">
+                    <Sparkles size={18} />
+                  </span>
+                  <strong>{preset.name}</strong>
+                  <small>{preset.category}</small>
+                  <p>{preset.description}</p>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <EmptyState icon={Search} title="没有匹配的应用" description="调整关键词或分类后重试。" />
+          )}
+      </section>
     </WorkbenchLayout>
   );
 }

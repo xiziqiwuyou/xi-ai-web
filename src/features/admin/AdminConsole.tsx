@@ -7,18 +7,22 @@ import {
   Download,
   Eye,
   FileText,
+  Home,
   Layers3,
+  LogOut,
   Plus,
   RefreshCw,
   RotateCcw,
   Save,
   ServerCog,
+  Settings,
   ShieldCheck,
   ToggleLeft,
   Trash2,
   Upload
 } from "lucide-react";
 import { api, type ModelCatalogPayload } from "../../api";
+import { AdminConfirmDialog } from "./AdminConfirmDialog";
 import { validateModelCatalog } from "./adminValidation";
 import { modelCatalogPresets } from "./modelCatalogPresets";
 import type {
@@ -69,6 +73,80 @@ type PromptPresetDraft = {
   title: string;
   prompt: string;
   enabled: boolean;
+};
+
+type AdminSectionId = "overview" | "site" | "models" | "content" | "audit";
+
+type AdminConfirmation = {
+  title: string;
+  description: string;
+  confirmLabel: string;
+  action: () => Promise<void>;
+};
+
+const adminNavigationGroups: Array<{
+  label: string;
+  items: Array<{
+    id: AdminSectionId;
+    label: string;
+    icon: typeof Activity;
+  }>;
+}> = [
+  {
+    label: "运营",
+    items: [{ id: "overview", label: "概览与运维", icon: Activity }]
+  },
+  {
+    label: "配置",
+    items: [
+      { id: "site", label: "站点与菜单", icon: Settings },
+      { id: "models", label: "模型目录", icon: Layers3 }
+    ]
+  },
+  {
+    label: "内容",
+    items: [{ id: "content", label: "助手与预设", icon: Bot }]
+  },
+  {
+    label: "记录",
+    items: [{ id: "audit", label: "审计记录", icon: FileText }]
+  }
+];
+
+const adminSectionDetails: Record<AdminSectionId, { eyebrow: string; title: string; description: string }> = {
+  overview: {
+    eyebrow: "OVERVIEW",
+    title: "概览与运维",
+    description: "检查运行状态、备份和工具权限。"
+  },
+  site: {
+    eyebrow: "SITE",
+    title: "站点与菜单",
+    description: "维护站点名称和前台功能入口。"
+  },
+  models: {
+    eyebrow: "MODELS",
+    title: "模型目录",
+    description: "配置前台可选择的厂商、模型与能力。"
+  },
+  content: {
+    eyebrow: "CONTENT",
+    title: "助手与预设",
+    description: "维护助手、应用和提示词内容。"
+  },
+  audit: {
+    eyebrow: "AUDIT",
+    title: "审计记录",
+    description: "查询并导出后台操作记录。"
+  }
+};
+
+const adminSectionElementIds: Record<AdminSectionId, string> = {
+  overview: "admin-section-overview",
+  site: "admin-section-site",
+  models: "admin-section-models",
+  content: "admin-section-content",
+  audit: "admin-section-audit"
 };
 
 const vendorOptions: Array<{ value: ProviderKind; label: string }> = [
@@ -239,6 +317,10 @@ export function AdminConsole({
   onLogout: () => Promise<void>;
 }) {
   const importInputRef = useRef<HTMLInputElement | null>(null);
+  const contentScrollRef = useRef<HTMLDivElement | null>(null);
+  const [activeSection, setActiveSection] = useState<AdminSectionId>("overview");
+  const [confirmation, setConfirmation] = useState<AdminConfirmation | null>(null);
+  const [confirmationBusy, setConfirmationBusy] = useState(false);
   const [settingsDraft, setSettingsDraft] = useState<SiteSettings>(bootstrap.settings);
   const [menuDraft, setMenuDraft] = useState<MenuItem[]>(bootstrap.menuItems);
   const [selectedModelId, setSelectedModelId] = useState<string | "new">(
@@ -333,6 +415,33 @@ export function AdminConsole({
       ),
     [bootstrap.promptPresets]
   );
+  const activeSectionDetails = adminSectionDetails[activeSection];
+
+  const openSection = (sectionId: AdminSectionId) => {
+    setActiveSection(sectionId);
+    window.requestAnimationFrame(() => {
+      document.getElementById(adminSectionElementIds[sectionId])?.scrollIntoView({ block: "start" });
+    });
+  };
+
+  const requestConfirmation = (nextConfirmation: AdminConfirmation) => {
+    setConfirmation(nextConfirmation);
+  };
+
+  const closeConfirmation = () => {
+    if (!confirmationBusy) setConfirmation(null);
+  };
+
+  const runConfirmedAction = async () => {
+    if (!confirmation || confirmationBusy) return;
+    setConfirmationBusy(true);
+    try {
+      await confirmation.action();
+      setConfirmation(null);
+    } finally {
+      setConfirmationBusy(false);
+    }
+  };
 
   const saveSettings = async () => {
     onError("");
@@ -393,24 +502,25 @@ export function AdminConsole({
     try {
       const payload = JSON.parse(await file.text()) as Partial<AdminBootstrapPayload>;
       const preview = await api.previewAdminMetadataImport(payload);
-      const confirmed = window.confirm(
-        [
-          "导入预检已通过，是否应用？",
-          `菜单 ${preview.counts.menuItems || 0}、模型 ${preview.counts.modelCatalog || 0}、助手 ${preview.counts.assistants || 0}`,
-          preview.changed.length ? `变化：${preview.changed.join("；")}` : "数量无明显变化",
-          preview.warnings.length ? `警告：${preview.warnings.join("；")}` : ""
-        ]
-          .filter(Boolean)
-          .join("\n")
-      );
-      if (!confirmed) {
-        onNotice("已取消导入，当前数据未改变");
-        return;
-      }
-      const nextBootstrap = await api.importAdminMetadata(payload);
-      onBootstrapChange(nextBootstrap);
-      await onPublicRefresh();
-      onNotice("后台元数据已导入");
+      requestConfirmation({
+        title: "应用导入数据？",
+        description: [
+          `将导入菜单 ${preview.counts.menuItems || 0} 项、模型 ${preview.counts.modelCatalog || 0} 项、助手 ${preview.counts.assistants || 0} 项。`,
+          preview.changed.length ? `变化：${preview.changed.join("；")}` : "数量无明显变化。",
+          preview.warnings.length ? `警告：${preview.warnings.join("；")}` : "应用前会自动创建备份。"
+        ].join("\n"),
+        confirmLabel: "确认导入",
+        action: async () => {
+          try {
+            const nextBootstrap = await api.importAdminMetadata(payload);
+            onBootstrapChange(nextBootstrap);
+            await onPublicRefresh();
+            onNotice("后台元数据已导入");
+          } catch (err: unknown) {
+            onError(err instanceof Error ? err.message : "元数据导入失败");
+          }
+        }
+      });
     } catch (err: unknown) {
       onError(err instanceof Error ? err.message : "元数据导入失败");
     }
@@ -465,8 +575,6 @@ export function AdminConsole({
   const restoreBackup = async (backup: AdminBackupItem) => {
     onError("");
     onNotice("");
-    const confirmed = window.confirm(`确认恢复备份 ${backup.name}？当前数据会先自动保存一份 pre-restore 备份。`);
-    if (!confirmed) return;
     try {
       const nextBootstrap = await api.restoreAdminBackup(backup.name);
       const { restored, restoredBackup, ...metadata } = nextBootstrap;
@@ -478,6 +586,15 @@ export function AdminConsole({
     } catch (err: unknown) {
       onError(err instanceof Error ? err.message : "备份恢复失败");
     }
+  };
+
+  const requestBackupRestore = (backup: AdminBackupItem) => {
+    requestConfirmation({
+      title: "恢复此备份？",
+      description: `将使用“${backup.name}”覆盖当前后台配置，并立即影响前台菜单和模型。系统会先创建一份 pre-restore 备份。`,
+      confirmLabel: "恢复备份",
+      action: () => restoreBackup(backup)
+    });
   };
 
   const exportVisibleAuditLog = () => {
@@ -519,13 +636,12 @@ export function AdminConsole({
     }
   };
 
-  const deleteModelEntry = async () => {
-    if (selectedModelId === "new") return;
+  const deleteModelEntry = async (modelId: string) => {
     onError("");
     onNotice("");
     try {
-      await api.deleteModelEntry(selectedModelId);
-      const modelCatalog = bootstrap.modelCatalog.filter((entry) => entry.id !== selectedModelId);
+      await api.deleteModelEntry(modelId);
+      const modelCatalog = bootstrap.modelCatalog.filter((entry) => entry.id !== modelId);
       onBootstrapChange({ ...bootstrap, modelCatalog });
       setSelectedModelId(modelCatalog[0]?.id || "new");
       await onPublicRefresh();
@@ -533,6 +649,16 @@ export function AdminConsole({
     } catch (err: unknown) {
       onError(err instanceof Error ? err.message : "模型删除失败");
     }
+  };
+
+  const requestModelDelete = () => {
+    if (selectedModelId === "new" || !selectedModel) return;
+    requestConfirmation({
+      title: `删除模型“${selectedModel.label}”？`,
+      description: "删除后，该模型会立即从前台模型选择器移除，且无法在后台直接撤销。",
+      confirmLabel: "删除模型",
+      action: () => deleteModelEntry(selectedModel.id)
+    });
   };
 
   const saveAssistant = async (event: FormEvent) => {
@@ -557,13 +683,12 @@ export function AdminConsole({
     }
   };
 
-  const deleteAssistant = async () => {
-    if (selectedAssistantId === "new") return;
+  const deleteAssistant = async (assistantId: string) => {
     onError("");
     onNotice("");
     try {
-      await api.deleteAssistant(selectedAssistantId);
-      const assistants = bootstrap.assistants.filter((entry) => entry.id !== selectedAssistantId);
+      await api.deleteAssistant(assistantId);
+      const assistants = bootstrap.assistants.filter((entry) => entry.id !== assistantId);
       onBootstrapChange({ ...bootstrap, assistants });
       setSelectedAssistantId(assistants[0]?.id || "new");
       await onPublicRefresh();
@@ -571,6 +696,16 @@ export function AdminConsole({
     } catch (err: unknown) {
       onError(err instanceof Error ? err.message : "助手删除失败");
     }
+  };
+
+  const requestAssistantDelete = () => {
+    if (selectedAssistantId === "new" || !selectedAssistant) return;
+    requestConfirmation({
+      title: `删除助手“${selectedAssistant.name}”？`,
+      description: "删除后，该助手将不再出现在前台助手选择中，且无法在后台直接撤销。",
+      confirmLabel: "删除助手",
+      action: () => deleteAssistant(selectedAssistant.id)
+    });
   };
 
   const saveAppPreset = async (event: FormEvent) => {
@@ -595,13 +730,12 @@ export function AdminConsole({
     }
   };
 
-  const deleteAppPreset = async () => {
-    if (selectedAppId === "new") return;
+  const deleteAppPreset = async (appId: string) => {
     onError("");
     onNotice("");
     try {
-      await api.deleteAppPreset(selectedAppId);
-      const appPresets = bootstrap.appPresets.filter((entry) => entry.id !== selectedAppId);
+      await api.deleteAppPreset(appId);
+      const appPresets = bootstrap.appPresets.filter((entry) => entry.id !== appId);
       onBootstrapChange({ ...bootstrap, appPresets });
       setSelectedAppId(appPresets[0]?.id || "new");
       await onPublicRefresh();
@@ -609,6 +743,16 @@ export function AdminConsole({
     } catch (err: unknown) {
       onError(err instanceof Error ? err.message : "应用删除失败");
     }
+  };
+
+  const requestAppPresetDelete = () => {
+    if (selectedAppId === "new" || !selectedApp) return;
+    requestConfirmation({
+      title: `删除应用“${selectedApp.name}”？`,
+      description: "删除后，该应用预设会立即从前台应用列表移除，且无法在后台直接撤销。",
+      confirmLabel: "删除应用",
+      action: () => deleteAppPreset(selectedApp.id)
+    });
   };
 
   const savePromptPreset = async (event: FormEvent) => {
@@ -633,13 +777,12 @@ export function AdminConsole({
     }
   };
 
-  const deletePromptPreset = async () => {
-    if (selectedPromptId === "new") return;
+  const deletePromptPreset = async (promptId: string) => {
     onError("");
     onNotice("");
     try {
-      await api.deletePromptPreset(selectedPromptId);
-      const promptPresets = bootstrap.promptPresets.filter((entry) => entry.id !== selectedPromptId);
+      await api.deletePromptPreset(promptId);
+      const promptPresets = bootstrap.promptPresets.filter((entry) => entry.id !== promptId);
       onBootstrapChange({ ...bootstrap, promptPresets });
       setSelectedPromptId(promptPresets[0]?.id || "new");
       await onPublicRefresh();
@@ -649,12 +792,110 @@ export function AdminConsole({
     }
   };
 
+  const requestPromptPresetDelete = () => {
+    if (selectedPromptId === "new" || !selectedPrompt) return;
+    requestConfirmation({
+      title: `删除提示词“${selectedPrompt.title}”？`,
+      description: "删除后，该提示词预设会立即从对应前台功能移除，且无法在后台直接撤销。",
+      confirmLabel: "删除预设",
+      action: () => deletePromptPreset(selectedPrompt.id)
+    });
+  };
+
   return (
-    <div className="admin-console">
-      <section className="admin-section admin-ops-panel">
+    <div className="admin-console-shell">
+      <header className="admin-console-header">
+        <div className="admin-console-brand">
+          <span className="admin-brand-mark" aria-hidden="true">
+            <ShieldCheck size={18} />
+          </span>
+          <span>
+            <strong>xi-ai-web</strong>
+            <small>开发者后台</small>
+          </span>
+        </div>
+        <div className="admin-console-header-actions">
+          <a href="/" className="admin-home-link" aria-label="返回前台" title="返回前台">
+            <Home size={16} />
+            <span className="admin-action-label">返回前台</span>
+          </a>
+          <button
+            type="button"
+            className="secondary-action admin-logout-button"
+            onClick={() => void onLogout()}
+            aria-label="退出后台"
+            title="退出后台"
+          >
+            <LogOut size={16} />
+            <span className="admin-action-label">退出</span>
+          </button>
+        </div>
+      </header>
+
+      <div className="admin-console-layout">
+        <aside className="admin-sidebar">
+          <nav className="admin-sidebar-nav" aria-label="后台管理分区">
+            {adminNavigationGroups.map((group) => (
+              <div key={group.label} className="admin-nav-group">
+                <p>{group.label}</p>
+                {group.items.map((item) => {
+                  const Icon = item.icon;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className={activeSection === item.id ? "is-active" : undefined}
+                      aria-current={activeSection === item.id ? "page" : undefined}
+                      onClick={() => openSection(item.id)}
+                    >
+                      <Icon size={17} />
+                      <span>{item.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
+          </nav>
+        </aside>
+
+        <div ref={contentScrollRef} className="admin-console" data-scroll-owner>
+          <div className="admin-console-inner">
+            <label className="admin-mobile-section-picker">
+              <span>管理分区</span>
+              <select
+                value={activeSection}
+                onChange={(event) => openSection(event.target.value as AdminSectionId)}
+              >
+                {adminNavigationGroups.map((group) => (
+                  <optgroup key={group.label} label={group.label}>
+                    {group.items.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.label}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+            </label>
+
+            <header className="admin-page-header">
+              <span>{activeSectionDetails.eyebrow}</span>
+              <h1>{activeSectionDetails.title}</h1>
+              <p>{activeSectionDetails.description}</p>
+            </header>
+
+            {notice ? (
+              <p className="admin-notice" role="status" aria-live="polite">
+                <CheckCircle2 size={15} />
+                {notice}
+              </p>
+            ) : null}
+            {error ? <p className="form-error" role="alert">{error}</p> : null}
+
+      <section id="admin-section-overview" className="admin-section admin-ops-panel">
         <div className="section-title">
           <ServerCog size={17} />
-          <strong>运营工具</strong>
+          <h2>运营工具</h2>
         </div>
         <input
           ref={importInputRef}
@@ -744,7 +985,7 @@ export function AdminConsole({
                   {formatBytes(backup.size)} · {new Date(backup.modifiedAt).toLocaleString("zh-CN")}
                 </span>
               </div>
-              <button type="button" className="secondary-action compact-action" onClick={() => void restoreBackup(backup)}>
+              <button type="button" className="secondary-action compact-action" onClick={() => requestBackupRestore(backup)}>
                 <RotateCcw size={15} />
                 恢复
               </button>
@@ -753,84 +994,42 @@ export function AdminConsole({
         </div>
       </section>
 
-      <section className="admin-section">
+      <section className="admin-section admin-tools-section">
         <div className="section-title">
           <ServerCog size={17} />
-          <strong>工具权限</strong>
+          <h2>工具权限</h2>
         </div>
-        <div className="admin-chip-group">
-          {toolDraft.map((tool) => (
-            <label key={tool.name} className="admin-chip-check">
-              <input
-                type="checkbox"
-                checked={tool.enabled}
-                onChange={(event) =>
-                  setToolDraft((current) =>
-                    current.map((item) =>
-                      item.name === tool.name ? { ...item, enabled: event.target.checked } : item
+        <fieldset className="admin-option-fieldset">
+          <legend>可用工具</legend>
+          <div className="admin-chip-group">
+            {toolDraft.map((tool) => (
+              <label key={tool.name} className="admin-chip-check">
+                <input
+                  type="checkbox"
+                  checked={tool.enabled}
+                  onChange={(event) =>
+                    setToolDraft((current) =>
+                      current.map((item) =>
+                        item.name === tool.name ? { ...item, enabled: event.target.checked } : item
+                      )
                     )
-                  )
-                }
-              />
-              {tool.label}
-            </label>
-          ))}
-        </div>
+                  }
+                />
+                {tool.label}
+              </label>
+            ))}
+          </div>
+        </fieldset>
         <button type="button" className="primary-action" onClick={() => void saveToolSettings()} disabled={!toolDraft.length}>
           <Save size={16} />
           保存工具权限
         </button>
       </section>
 
-      <section className="admin-section">
-        <div className="section-title">
-          <FileText size={17} />
-          <strong>审计记录</strong>
-        </div>
-        <div className="admin-filter-row">
-          <label>
-            Action
-            <input
-              value={auditActionFilter}
-              placeholder="model-update"
-              onChange={(event) => setAuditActionFilter(event.target.value)}
-            />
-          </label>
-          <label>
-            Limit
-            <input
-              type="number"
-              min={1}
-              max={1000}
-              value={auditLimit}
-              onChange={(event) => setAuditLimit(Number(event.target.value) || 80)}
-            />
-          </label>
-          <button type="button" className="secondary-action compact-action" onClick={() => void loadAuditLog()}>
-            查询
-          </button>
-          <button type="button" className="secondary-action compact-action" onClick={exportVisibleAuditLog} disabled={!auditLog.length}>
-            <Download size={15} />
-            导出
-          </button>
-        </div>
-        {auditLog.length ? (
-          <div className="admin-audit-list">
-            {auditLog.slice(0, 12).map((item) => (
-              <p key={item.id}>
-                <strong>{item.action}</strong>
-                <span>{new Date(item.createdAt).toLocaleString("zh-CN")}</span>
-                <code>{JSON.stringify(item.details).slice(0, 120)}</code>
-              </p>
-            ))}
-          </div>
-        ) : null}
-      </section>
-
-      <section className="admin-section">
+      <section id="admin-section-site" className="admin-section">
         <div className="section-title">
           <ServerCog size={17} />
-          <strong>系统设置</strong>
+          <h2>系统设置</h2>
         </div>
         <label>
           站点名称
@@ -860,24 +1059,29 @@ export function AdminConsole({
         </button>
       </section>
 
-      <section className="admin-section">
+      <section className="admin-section admin-menu-section">
         <div className="section-title">
           <ToggleLeft size={17} />
-          <strong>菜单管理</strong>
+          <h2>菜单管理</h2>
         </div>
         <div className="menu-editor">
           {sortedMenus.map((item) => (
             <article key={item.id} className="menu-edit-row">
-              <input
-                value={item.label}
-                onChange={(event) =>
-                  setMenuDraft((current) =>
-                    current.map((menu) =>
-                      menu.id === item.id ? { ...menu, label: event.target.value } : menu
+              <label className="menu-name-field">
+                <span>
+                  菜单名称 <code>{item.id}</code>
+                </span>
+                <input
+                  value={item.label}
+                  onChange={(event) =>
+                    setMenuDraft((current) =>
+                      current.map((menu) =>
+                        menu.id === item.id ? { ...menu, label: event.target.value } : menu
+                      )
                     )
-                  )
-                }
-              />
+                  }
+                />
+              </label>
               <label>
                 <input
                   type="checkbox"
@@ -915,10 +1119,10 @@ export function AdminConsole({
         </button>
       </section>
 
-      <section className="admin-section">
+      <section id="admin-section-models" className="admin-section">
         <div className="section-title">
           <Layers3 size={17} />
-          <strong>模型目录</strong>
+          <h2>模型目录</h2>
         </div>
         {modelIssues.length ? (
           <div className="admin-validation">
@@ -959,20 +1163,26 @@ export function AdminConsole({
           </div>
         </details>
         <div className="provider-picker">
-          <select
-            value={selectedModelId}
-            onChange={(event) => setSelectedModelId(event.target.value)}
-          >
-            {sortedCatalog.map((entry) => (
-              <option key={entry.id} value={entry.id}>
-                {vendorLabel(entry.vendor)} · {entry.label}
-              </option>
-            ))}
-            <option value="new">新增模型</option>
-          </select>
+          <label htmlFor="admin-model-picker">
+            <span>选择模型</span>
+            <select
+              id="admin-model-picker"
+              value={selectedModelId}
+              onChange={(event) => setSelectedModelId(event.target.value)}
+            >
+              {sortedCatalog.map((entry) => (
+                <option key={entry.id} value={entry.id}>
+                  {vendorLabel(entry.vendor)} · {entry.label}
+                </option>
+              ))}
+              <option value="new">新增模型</option>
+            </select>
+          </label>
           <button
             type="button"
             className="icon-button"
+            aria-label="新增模型"
+            title="新增模型"
             onClick={() => {
               setSelectedModelId("new");
               setModelForm(emptyModelDraft);
@@ -1022,41 +1232,47 @@ export function AdminConsole({
             />
           </label>
 
-          <div className="admin-chip-group" aria-label="模型能力">
-            {capabilityOptions.map((option) => (
-              <label key={option.value} className="admin-chip-check">
-                <input
-                  type="checkbox"
-                  checked={modelForm.capabilities.includes(option.value)}
-                  onChange={() =>
-                    setModelForm((current) => ({
-                      ...current,
-                      capabilities: toggleArrayValue(current.capabilities, option.value)
-                    }))
-                  }
-                />
-                {option.label}
-              </label>
-            ))}
-          </div>
+          <fieldset className="admin-option-fieldset">
+            <legend>模型能力</legend>
+            <div className="admin-chip-group">
+              {capabilityOptions.map((option) => (
+                <label key={option.value} className="admin-chip-check">
+                  <input
+                    type="checkbox"
+                    checked={modelForm.capabilities.includes(option.value)}
+                    onChange={() =>
+                      setModelForm((current) => ({
+                        ...current,
+                        capabilities: toggleArrayValue(current.capabilities, option.value)
+                      }))
+                    }
+                  />
+                  {option.label}
+                </label>
+              ))}
+            </div>
+          </fieldset>
 
-          <div className="admin-chip-group" aria-label="默认用途">
-            {defaultForOptions.map((option) => (
-              <label key={option.value} className="admin-chip-check">
-                <input
-                  type="checkbox"
-                  checked={modelForm.defaultFor.includes(option.value)}
-                  onChange={() =>
-                    setModelForm((current) => ({
-                      ...current,
-                      defaultFor: toggleArrayValue(current.defaultFor, option.value)
-                    }))
-                  }
-                />
-                {option.label}
-              </label>
-            ))}
-          </div>
+          <fieldset className="admin-option-fieldset">
+            <legend>默认用途</legend>
+            <div className="admin-chip-group">
+              {defaultForOptions.map((option) => (
+                <label key={option.value} className="admin-chip-check">
+                  <input
+                    type="checkbox"
+                    checked={modelForm.defaultFor.includes(option.value)}
+                    onChange={() =>
+                      setModelForm((current) => ({
+                        ...current,
+                        defaultFor: toggleArrayValue(current.defaultFor, option.value)
+                      }))
+                    }
+                  />
+                  {option.label}
+                </label>
+              ))}
+            </div>
+          </fieldset>
 
           <label className="inline-check">
             <input
@@ -1149,7 +1365,7 @@ export function AdminConsole({
               <button
                 type="button"
                 className="secondary-action danger-action"
-                onClick={() => void deleteModelEntry()}
+                onClick={requestModelDelete}
               >
                 <Trash2 size={16} />
                 删除
@@ -1159,23 +1375,32 @@ export function AdminConsole({
         </form>
       </section>
 
-      <section className="admin-section">
+      <section id="admin-section-content" className="admin-section">
         <div className="section-title">
           <Bot size={17} />
-          <strong>助手库</strong>
+          <h2>助手库</h2>
         </div>
         <div className="provider-picker">
-          <select value={selectedAssistantId} onChange={(event) => setSelectedAssistantId(event.target.value)}>
-            {sortedAssistants.map((assistant) => (
-              <option key={assistant.id} value={assistant.id}>
-                {assistant.name}
-              </option>
-            ))}
-            <option value="new">新增助手</option>
-          </select>
+          <label htmlFor="admin-assistant-picker">
+            <span>选择助手</span>
+            <select
+              id="admin-assistant-picker"
+              value={selectedAssistantId}
+              onChange={(event) => setSelectedAssistantId(event.target.value)}
+            >
+              {sortedAssistants.map((assistant) => (
+                <option key={assistant.id} value={assistant.id}>
+                  {assistant.name}
+                </option>
+              ))}
+              <option value="new">新增助手</option>
+            </select>
+          </label>
           <button
             type="button"
             className="icon-button"
+            aria-label="新增助手"
+            title="新增助手"
             onClick={() => {
               setSelectedAssistantId("new");
               setAssistantForm(emptyAssistantDraft);
@@ -1221,7 +1446,7 @@ export function AdminConsole({
               保存助手
             </button>
             {selectedAssistantId !== "new" ? (
-              <button type="button" className="secondary-action danger-action" onClick={() => void deleteAssistant()}>
+              <button type="button" className="secondary-action danger-action" onClick={requestAssistantDelete}>
                 <Trash2 size={16} />
                 删除
               </button>
@@ -1230,23 +1455,28 @@ export function AdminConsole({
         </form>
       </section>
 
-      <section className="admin-section">
+      <section className="admin-section admin-app-section">
         <div className="section-title">
           <Layers3 size={17} />
-          <strong>应用预设</strong>
+          <h2>应用预设</h2>
         </div>
         <div className="provider-picker">
-          <select value={selectedAppId} onChange={(event) => setSelectedAppId(event.target.value)}>
-            {sortedApps.map((preset) => (
-              <option key={preset.id} value={preset.id}>
-                {preset.category} / {preset.name}
-              </option>
-            ))}
-            <option value="new">新增应用</option>
-          </select>
+          <label htmlFor="admin-app-picker">
+            <span>选择应用</span>
+            <select id="admin-app-picker" value={selectedAppId} onChange={(event) => setSelectedAppId(event.target.value)}>
+              {sortedApps.map((preset) => (
+                <option key={preset.id} value={preset.id}>
+                  {preset.category} / {preset.name}
+                </option>
+              ))}
+              <option value="new">新增应用</option>
+            </select>
+          </label>
           <button
             type="button"
             className="icon-button"
+            aria-label="新增应用"
+            title="新增应用"
             onClick={() => {
               setSelectedAppId("new");
               setAppForm(emptyAppPresetDraft);
@@ -1293,7 +1523,7 @@ export function AdminConsole({
               保存应用
             </button>
             {selectedAppId !== "new" ? (
-              <button type="button" className="secondary-action danger-action" onClick={() => void deleteAppPreset()}>
+              <button type="button" className="secondary-action danger-action" onClick={requestAppPresetDelete}>
                 <Trash2 size={16} />
                 删除
               </button>
@@ -1302,23 +1532,32 @@ export function AdminConsole({
         </form>
       </section>
 
-      <section className="admin-section">
+      <section className="admin-section admin-prompt-section">
         <div className="section-title">
           <FileText size={17} />
-          <strong>提示词预设</strong>
+          <h2>提示词预设</h2>
         </div>
         <div className="provider-picker">
-          <select value={selectedPromptId} onChange={(event) => setSelectedPromptId(event.target.value)}>
-            {sortedPromptPresets.map((preset) => (
-              <option key={preset.id} value={preset.id}>
-                {preset.moduleId} / {preset.title}
-              </option>
-            ))}
-            <option value="new">新增预设</option>
-          </select>
+          <label htmlFor="admin-prompt-picker">
+            <span>选择提示词</span>
+            <select
+              id="admin-prompt-picker"
+              value={selectedPromptId}
+              onChange={(event) => setSelectedPromptId(event.target.value)}
+            >
+              {sortedPromptPresets.map((preset) => (
+                <option key={preset.id} value={preset.id}>
+                  {preset.moduleId} / {preset.title}
+                </option>
+              ))}
+              <option value="new">新增预设</option>
+            </select>
+          </label>
           <button
             type="button"
             className="icon-button"
+            aria-label="新增提示词预设"
+            title="新增提示词预设"
             onClick={() => {
               setSelectedPromptId("new");
               setPromptForm(emptyPromptPresetDraft);
@@ -1372,7 +1611,7 @@ export function AdminConsole({
               保存预设
             </button>
             {selectedPromptId !== "new" ? (
-              <button type="button" className="secondary-action danger-action" onClick={() => void deletePromptPreset()}>
+              <button type="button" className="secondary-action danger-action" onClick={requestPromptPresetDelete}>
                 <Trash2 size={16} />
                 删除
               </button>
@@ -1381,17 +1620,64 @@ export function AdminConsole({
         </form>
       </section>
 
-      {notice ? (
-        <p className="admin-notice">
-          <CheckCircle2 size={15} />
-          {notice}
-        </p>
-      ) : null}
-      {error ? <p className="form-error">{error}</p> : null}
+      <section id="admin-section-audit" className="admin-section">
+        <div className="section-title">
+          <FileText size={17} />
+          <h2>审计记录</h2>
+        </div>
+        <div className="admin-filter-row">
+          <label>
+            操作类型
+            <input
+              value={auditActionFilter}
+              placeholder="model-update"
+              onChange={(event) => setAuditActionFilter(event.target.value)}
+            />
+          </label>
+          <label>
+            记录数量
+            <input
+              type="number"
+              min={1}
+              max={1000}
+              value={auditLimit}
+              onChange={(event) => setAuditLimit(Number(event.target.value) || 80)}
+            />
+          </label>
+          <button type="button" className="secondary-action compact-action" onClick={() => void loadAuditLog()}>
+            查询
+          </button>
+          <button type="button" className="secondary-action compact-action" onClick={exportVisibleAuditLog} disabled={!auditLog.length}>
+            <Download size={15} />
+            导出
+          </button>
+        </div>
+        {auditLog.length ? (
+          <div className="admin-audit-list">
+            {auditLog.slice(0, 12).map((item) => (
+              <p key={item.id}>
+                <strong>{item.action}</strong>
+                <span>{new Date(item.createdAt).toLocaleString("zh-CN")}</span>
+                <code>{JSON.stringify(item.details).slice(0, 120)}</code>
+              </p>
+            ))}
+          </div>
+        ) : null}
+      </section>
 
-      <button type="button" className="secondary-action" onClick={() => void onLogout()}>
-        退出后台
-      </button>
+          </div>
+        </div>
+      </div>
+
+      <AdminConfirmDialog
+        open={Boolean(confirmation)}
+        title={confirmation?.title || ""}
+        description={confirmation?.description || ""}
+        confirmLabel={confirmation?.confirmLabel || "确认"}
+        busy={confirmationBusy}
+        onCancel={closeConfirmation}
+        onConfirm={() => void runConfirmedAction()}
+      />
     </div>
   );
 }

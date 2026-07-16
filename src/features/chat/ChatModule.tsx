@@ -11,8 +11,10 @@ import {
   Edit3,
   FileText,
   Image,
+  MoreHorizontal,
   MessageSquarePlus,
   Mic,
+  PanelLeft,
   Paperclip,
   Pin,
   PinOff,
@@ -23,6 +25,7 @@ import {
   Square,
   RotateCcw,
   Trash2,
+  Undo2,
   Upload,
   UserRound,
   X
@@ -34,6 +37,7 @@ import {
   modelsForCapability,
   preferredModelFor
 } from "../../components/workbench";
+import { ConfirmationDialog } from "../../components/ui";
 import { attachmentSummary, createChatAttachment } from "./attachmentUtils";
 import { isUserProviderReady, userConnectionPayload } from "../settings/userProviderConfig";
 import {
@@ -70,6 +74,11 @@ import type {
 import type { ComponentPropsWithoutRef } from "react";
 
 type Notice = { tone: "good" | "bad"; message: string } | null;
+
+type DeletedConversation = {
+  conversation: Conversation;
+  wasActive: boolean;
+};
 
 type ChatModuleProps = {
   enabled: boolean;
@@ -201,9 +210,15 @@ function ChatModule({
   const [selectedModelId, setSelectedModelId] = useState("");
   const [editingMessageId, setEditingMessageId] = useState("");
   const [activeSummary, setActiveSummary] = useState("");
+  const [mobileConversationsOpen, setMobileConversationsOpen] = useState(false);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [recentlyDeleted, setRecentlyDeleted] = useState<DeletedConversation | null>(null);
+  const localConversationsRef = useRef(localConversationList);
   const abortRef = useRef<AbortController | null>(null);
   const streamingMessageIdRef = useRef<string | null>(null);
   const importInputRef = useRef<HTMLInputElement | null>(null);
+  const conversationSearchRef = useRef<HTMLInputElement | null>(null);
+  const conversationTriggerRef = useRef<HTMLButtonElement | null>(null);
 
   const assistantById = useMemo(() => {
     return new Map(assistants.map((assistant) => [assistant.id, assistant]));
@@ -213,7 +228,7 @@ function ChatModule({
     [assistants, appPresets, promptPresets]
   );
 
-const selectedAssistant = assistants.find((assistant) => assistant.id === selectedAssistantId);
+  const selectedAssistant = assistants.find((assistant) => assistant.id === selectedAssistantId);
   const chatModels = useMemo(() => modelsForCapability(modelCatalog, "chat"), [modelCatalog]);
   const sttModels = useMemo(() => modelsForCapability(modelCatalog, "stt"), [modelCatalog]);
   const selectedModel =
@@ -226,6 +241,8 @@ const selectedAssistant = assistants.find((assistant) => assistant.id === select
   const providerReady = connectionReady && Boolean(selectedModel);
   const activeConversation =
     localConversationList.find((conversation) => conversation.id === activeConversationId) || null;
+  const pendingDeleteConversation =
+    localConversationList.find((conversation) => conversation.id === pendingDeleteId) || null;
   const localToolBadges = useMemo(() => {
     const tools = ["联网搜索", "文件分析", "图片理解", "语音输入", "代码整理"];
     return tools;
@@ -248,15 +265,19 @@ const selectedAssistant = assistants.find((assistant) => assistant.id === select
 
   const commitLocalConversations = useCallback(
     (updater: Conversation[] | ((current: Conversation[]) => Conversation[])) => {
-      setLocalConversationList((current) => {
-        const next = sortConversations(typeof updater === "function" ? updater(current) : updater);
-        saveLocalConversations(next);
-        onConversationsChange(localSummaries(next));
-        return next;
-      });
+      const current = localConversationsRef.current;
+      const next = sortConversations(typeof updater === "function" ? updater(current) : updater);
+      localConversationsRef.current = next;
+      saveLocalConversations(next);
+      setLocalConversationList(next);
+      onConversationsChange(localSummaries(next));
     },
     [onConversationsChange]
   );
+
+  useEffect(() => {
+    localConversationsRef.current = localConversationList;
+  }, [localConversationList]);
 
   useEffect(() => {
     if (!selectedAssistantId && assistants[0]) setSelectedAssistantId(assistants[0].id);
@@ -284,6 +305,56 @@ const selectedAssistant = assistants.find((assistant) => assistant.id === select
     if (activeConversation) setSelectedAssistantId(activeConversation.assistantId);
   }, [activeConversation]);
 
+  const closeMobileConversations = useCallback(() => {
+    setMobileConversationsOpen(false);
+  }, []);
+
+  useEffect(() => {
+    if (!mobileConversationsOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const focusFrame = window.requestAnimationFrame(() => conversationSearchRef.current?.focus());
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.body.style.overflow = previousOverflow;
+      window.requestAnimationFrame(() => conversationTriggerRef.current?.focus());
+    };
+  }, [mobileConversationsOpen]);
+
+  useEffect(() => {
+    const desktopQuery = window.matchMedia("(min-width: 821px)");
+    const closeOnDesktop = (event: MediaQueryListEvent) => {
+      if (event.matches) setMobileConversationsOpen(false);
+    };
+    desktopQuery.addEventListener("change", closeOnDesktop);
+    return () => desktopQuery.removeEventListener("change", closeOnDesktop);
+  }, []);
+
+  const handleConversationSheetKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    if (!mobileConversationsOpen) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeMobileConversations();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const focusable = Array.from(
+      event.currentTarget.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      )
+    );
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+
   const filteredConversations = useMemo(() => {
     const term = query.trim().toLowerCase();
     if (!term) return conversations;
@@ -306,6 +377,16 @@ const selectedAssistant = assistants.find((assistant) => assistant.id === select
     return conversation;
   }, [assistants, commitLocalConversations, selectedAssistantId]);
 
+  const handleCreateConversation = useCallback(async () => {
+    await createConversation();
+    setMobileConversationsOpen(false);
+  }, [createConversation]);
+
+  const handleSelectConversation = useCallback((id: string) => {
+    setActiveConversationId(id);
+    setMobileConversationsOpen(false);
+  }, []);
+
   const deleteConversation = useCallback(
     async (id: string) => {
       const nextConversations = localConversationList.filter((conversation) => conversation.id !== id);
@@ -316,6 +397,31 @@ const selectedAssistant = assistants.find((assistant) => assistant.id === select
     },
     [activeConversationId, commitLocalConversations, localConversationList]
   );
+
+  const confirmDeleteConversation = useCallback(async () => {
+    if (!pendingDeleteConversation) {
+      setPendingDeleteId(null);
+      return;
+    }
+    const deleted: DeletedConversation = {
+      conversation: pendingDeleteConversation,
+      wasActive: activeConversationId === pendingDeleteConversation.id
+    };
+    await deleteConversation(pendingDeleteConversation.id);
+    setPendingDeleteId(null);
+    setRecentlyDeleted(deleted);
+  }, [activeConversationId, deleteConversation, pendingDeleteConversation]);
+
+  const undoConversationDeletion = useCallback(() => {
+    if (!recentlyDeleted) return;
+    commitLocalConversations((current) => {
+      if (current.some((conversation) => conversation.id === recentlyDeleted.conversation.id)) return current;
+      return [recentlyDeleted.conversation, ...current];
+    });
+    if (recentlyDeleted.wasActive) setActiveConversationId(recentlyDeleted.conversation.id);
+    setRecentlyDeleted(null);
+    setNotice({ tone: "good", message: "会话已恢复" });
+  }, [commitLocalConversations, recentlyDeleted]);
 
   const togglePin = useCallback(
     async (conversation: ConversationSummary) => {
@@ -648,7 +754,10 @@ const selectedAssistant = assistants.find((assistant) => assistant.id === select
   }
 
   return (
-    <section className="chat-module" data-testid="chat-module">
+    <section
+      className={mobileConversationsOpen ? "chat-module conversation-sheet-open" : "chat-module"}
+      data-testid="chat-module"
+    >
       <input
         ref={importInputRef}
         type="file"
@@ -660,8 +769,39 @@ const selectedAssistant = assistants.find((assistant) => assistant.id === select
           event.currentTarget.value = "";
         }}
       />
-      <aside className="conversation-panel">
-        <button type="button" className="new-thread" onClick={() => void createConversation()}>
+      {mobileConversationsOpen ? (
+        <button
+          type="button"
+          className="conversation-scrim"
+          onClick={closeMobileConversations}
+          aria-label="关闭会话列表"
+          tabIndex={-1}
+        />
+      ) : null}
+      <aside
+        className={mobileConversationsOpen ? "conversation-panel mobile-open" : "conversation-panel"}
+        role={mobileConversationsOpen ? "dialog" : undefined}
+        aria-modal={mobileConversationsOpen ? "true" : undefined}
+        aria-labelledby="conversation-panel-title"
+        onKeyDown={handleConversationSheetKeyDown}
+        inert={pendingDeleteConversation ? true : undefined}
+      >
+        <div className="conversation-panel-header">
+          <div>
+            <strong id="conversation-panel-title">会话</strong>
+            <span>{conversations.length} 个本地会话</span>
+          </div>
+          <button
+            type="button"
+            className="icon-button conversation-panel-close"
+            onClick={closeMobileConversations}
+            aria-label="关闭会话列表"
+          >
+            <X size={17} />
+          </button>
+        </div>
+
+        <button type="button" className="new-thread" onClick={() => void handleCreateConversation()}>
           <MessageSquarePlus size={18} />
           新建对话
         </button>
@@ -669,13 +809,18 @@ const selectedAssistant = assistants.find((assistant) => assistant.id === select
         <label className="thread-search">
           <Search size={16} />
           <input
+            ref={conversationSearchRef}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="搜索会话"
+            aria-label="搜索会话"
           />
         </label>
 
-        <div className="thread-list">
+        <div
+          className="thread-list"
+          data-scroll-owner={mobileConversationsOpen ? "conversation-list" : undefined}
+        >
           {filteredConversations.length ? (
             filteredConversations.map((conversation) => {
               const assistant = assistantById.get(conversation.assistantId);
@@ -689,7 +834,7 @@ const selectedAssistant = assistants.find((assistant) => assistant.id === select
                   <button
                     type="button"
                     className="thread-main"
-                    onClick={() => setActiveConversationId(conversation.id)}
+                    onClick={() => handleSelectConversation(conversation.id)}
                     aria-current={conversation.id === activeConversationId ? "true" : undefined}
                   >
                     <strong>{conversation.title}</strong>
@@ -708,9 +853,9 @@ const selectedAssistant = assistants.find((assistant) => assistant.id === select
                     <button
                       type="button"
                       className="icon-button danger"
-                      onClick={() => void deleteConversation(conversation.id)}
+                      onClick={() => setPendingDeleteId(conversation.id)}
                       title="删除"
-                      aria-label="删除会话"
+                      aria-label={`删除会话 ${conversation.title}`}
                     >
                       <Trash2 size={14} />
                     </button>
@@ -719,12 +864,15 @@ const selectedAssistant = assistants.find((assistant) => assistant.id === select
               );
             })
           ) : (
-            <p className="empty-copy">还没有会话。</p>
+            <p className="empty-copy">{conversations.length ? "没有匹配会话。" : "还没有会话。"}</p>
           )}
         </div>
       </aside>
 
-      <div className="chat-stage">
+      <div
+        className="chat-stage"
+        inert={mobileConversationsOpen || pendingDeleteConversation ? true : undefined}
+      >
         <ChatHeader
           conversation={activeConversation}
           assistant={selectedAssistant}
@@ -749,22 +897,28 @@ const selectedAssistant = assistants.find((assistant) => assistant.id === select
           onShareCard={exportShareCard}
           onImportClick={() => importInputRef.current?.click()}
           onSummarize={summarizeActiveConversation}
+          onOpenConversations={() => setMobileConversationsOpen(true)}
+          conversationTriggerRef={conversationTriggerRef}
         />
 
-        {notice ? (
-          <div className={`notice ${notice.tone}`}>
-            {notice.tone === "good" ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
-            <span>{notice.message}</span>
-            <button type="button" className="icon-button" onClick={() => setNotice(null)} aria-label="关闭提示">
-              <X size={15} />
-            </button>
-          </div>
-        ) : null}
-        {activeSummary ? (
-          <div className="summary-context-banner">
-            <Sparkles size={15} />
-            <span>本地摘要已作为下一次请求上下文</span>
-            <button type="button" onClick={() => setActiveSummary("")}>移除</button>
+        {notice || activeSummary ? (
+          <div className="chat-status-stack">
+            {notice ? (
+              <div className={`notice ${notice.tone}`} role={notice.tone === "bad" ? "alert" : "status"}>
+                {notice.tone === "good" ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
+                <span>{notice.message}</span>
+                <button type="button" className="icon-button" onClick={() => setNotice(null)} aria-label="关闭提示">
+                  <X size={15} />
+                </button>
+              </div>
+            ) : null}
+            {activeSummary ? (
+              <div className="summary-context-banner" role="status">
+                <Sparkles size={15} />
+                <span>本地摘要已加入下一次请求</span>
+                <button type="button" onClick={() => setActiveSummary("")}>移除</button>
+              </div>
+            ) : null}
           </div>
         ) : null}
 
@@ -781,6 +935,7 @@ const selectedAssistant = assistants.find((assistant) => assistant.id === select
             setDraft(content);
             setNotice({ tone: "good", message: "已放入输入框，发送或重试时才会生成新的分支" });
           }}
+          scrollActive={!mobileConversationsOpen && !pendingDeleteConversation}
         />
 
         <Composer
@@ -800,6 +955,28 @@ const selectedAssistant = assistants.find((assistant) => assistant.id === select
           onVoiceInput={transcribeVoice}
         />
       </div>
+      {recentlyDeleted ? (
+        <div className="chat-undo-toast" role="status" aria-live="polite">
+          <span>已删除“{recentlyDeleted.conversation.title}”</span>
+          <button type="button" onClick={undoConversationDeletion}>
+            <Undo2 size={15} />
+            撤销
+          </button>
+          <button type="button" className="icon-button" onClick={() => setRecentlyDeleted(null)} aria-label="关闭撤销提示">
+            <X size={15} />
+          </button>
+        </div>
+      ) : null}
+      {pendingDeleteConversation ? (
+        <ConfirmationDialog
+          open
+          title="删除这个会话？"
+          description={`“${pendingDeleteConversation.title}”及其本地消息将被移除，删除后仍可立即撤销。`}
+          confirmLabel="删除会话"
+          onCancel={() => setPendingDeleteId(null)}
+          onConfirm={() => void confirmDeleteConversation()}
+        />
+      ) : null}
     </section>
   );
 }
@@ -824,7 +1001,9 @@ function ChatHeader({
   onExportAll,
   onShareCard,
   onImportClick,
-  onSummarize
+  onSummarize,
+  onOpenConversations,
+  conversationTriggerRef
 }: {
   conversation: Conversation | null;
   assistant?: Assistant;
@@ -846,19 +1025,60 @@ function ChatHeader({
   onShareCard: () => void;
   onImportClick: () => void;
   onSummarize: () => void;
+  onOpenConversations: () => void;
+  conversationTriggerRef: { current: HTMLButtonElement | null };
 }) {
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const actionsRef = useRef<HTMLDivElement | null>(null);
+  const actionsTriggerRef = useRef<HTMLButtonElement | null>(null);
   const title = conversation?.title || "新的对话";
   const subtitle = assistant?.description || "选择角色后开始创作";
 
+  useEffect(() => {
+    if (!actionsOpen) return;
+    const focusFrame = window.requestAnimationFrame(() => {
+      actionsRef.current?.querySelector<HTMLButtonElement>('button[role="menuitem"]:not([disabled])')?.focus();
+    });
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!actionsRef.current?.contains(event.target as Node)) setActionsOpen(false);
+    };
+    const handleEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setActionsOpen(false);
+      actionsTriggerRef.current?.focus();
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [actionsOpen]);
+
+  const runAction = (action: () => void) => {
+    setActionsOpen(false);
+    action();
+    window.requestAnimationFrame(() => actionsTriggerRef.current?.focus());
+  };
+
   return (
     <header className="chat-header">
-      <div className="chat-title-block">
-        <span>
-          <Sparkles size={14} />
-          AI 创作
-        </span>
-        <h2>{title}</h2>
-        <p>{subtitle}</p>
+      <div className="chat-title-row">
+        <button
+          ref={conversationTriggerRef}
+          type="button"
+          className="icon-button conversation-trigger"
+          onClick={onOpenConversations}
+          aria-label="打开会话列表"
+          title="会话列表"
+        >
+          <PanelLeft size={18} />
+        </button>
+        <div className="chat-title-block">
+          <h2 title={title}>{title}</h2>
+          <p>{subtitle}</p>
+        </div>
       </div>
 
       <div className="chat-header-actions">
@@ -885,93 +1105,85 @@ function ChatHeader({
           onChange={onModelChange}
           disabled={!chatModels.length}
         />
-        <label className="temperature-chip">
-          <span>温度 {temperature.toFixed(1)}</span>
-          <input
-            aria-label="温度"
-            type="range"
-            min="0"
-            max="1.5"
-            step="0.1"
-            value={temperature}
-            onChange={(event) => onTemperatureChange(Number(event.target.value))}
-          />
-        </label>
-
         <div className="connection-control">
-        <button
-          type="button"
-          className={connectionReady ? "connection-pill ready" : "connection-pill"}
-          onClick={onRequestApiConfig}
-          data-testid="model-connection-button"
-        >
-          <PlugZap size={16} />
-          <span>{connectionReady ? selectedModel?.model || "API 已连接" : "配置 API"}</span>
-        </button>
+          <button
+            type="button"
+            className={connectionReady ? "connection-pill ready" : "connection-pill"}
+            onClick={onRequestApiConfig}
+            data-testid="model-connection-button"
+            title={connectionReady ? selectedModel?.model || "API 已连接" : "配置 API"}
+          >
+            <PlugZap size={16} />
+            <span>{connectionReady ? "已连接" : "配置 API"}</span>
+          </button>
         </div>
-
-        <button
-          type="button"
-          className={conversation?.pinned ? "icon-button active-soft" : "icon-button"}
-          onClick={() => void onTogglePin()}
-          disabled={!conversation}
-          title={conversation?.pinned ? "取消置顶" : "置顶"}
-          aria-label={conversation?.pinned ? "取消置顶" : "置顶"}
-        >
-          {conversation?.pinned ? <PinOff size={15} /> : <Pin size={15} />}
-        </button>
-        <button type="button" className="icon-button" onClick={onImportClick} title="导入对话" aria-label="导入对话">
-          <Upload size={15} />
-        </button>
-        <button
-          type="button"
-          className="icon-button"
-          onClick={onExportJson}
-          disabled={!conversation}
-          title="导出 JSON"
-          aria-label="导出 JSON"
-        >
-          <Download size={15} />
-        </button>
-        <button
-          type="button"
-          className="icon-button"
-          onClick={onExportMarkdown}
-          disabled={!conversation}
-          title="导出 Markdown"
-          aria-label="导出 Markdown"
-        >
-          <FileText size={15} />
-        </button>
-        <button
-          type="button"
-          className="icon-button"
-          onClick={onExportAll}
-          title="批量导出"
-          aria-label="批量导出"
-        >
-          <Download size={15} />
-        </button>
-        <button
-          type="button"
-          className="icon-button"
-          onClick={onShareCard}
-          disabled={!conversation}
-          title="分享卡片"
-          aria-label="分享卡片"
-        >
-          <Copy size={15} />
-        </button>
-        <button
-          type="button"
-          className="icon-button"
-          onClick={onSummarize}
-          disabled={!conversation}
-          title="本地摘要"
-          aria-label="本地摘要"
-        >
-          <Sparkles size={15} />
-        </button>
+        <div className="chat-overflow" ref={actionsRef}>
+          <button
+            ref={actionsTriggerRef}
+            type="button"
+            className="icon-button chat-overflow-trigger"
+            onClick={() => setActionsOpen((open) => !open)}
+            aria-label="更多对话操作"
+            aria-haspopup="menu"
+            aria-expanded={actionsOpen}
+            title="更多操作"
+          >
+            <MoreHorizontal size={18} />
+          </button>
+          {actionsOpen ? (
+            <div className="chat-overflow-menu" role="menu" aria-label="对话操作">
+              <label className="overflow-temperature">
+                <span>
+                  回复温度
+                  <strong>{temperature.toFixed(1)}</strong>
+                </span>
+                <input
+                  aria-label="回复温度"
+                  type="range"
+                  min="0"
+                  max="1.5"
+                  step="0.1"
+                  value={temperature}
+                  onChange={(event) => onTemperatureChange(Number(event.target.value))}
+                />
+              </label>
+              <div className="overflow-menu-divider" role="separator" />
+              <button
+                type="button"
+                role="menuitem"
+                disabled={!conversation}
+                onClick={() => runAction(() => void onTogglePin())}
+              >
+                {conversation?.pinned ? <PinOff size={16} /> : <Pin size={16} />}
+                {conversation?.pinned ? "取消置顶" : "置顶会话"}
+              </button>
+              <button type="button" role="menuitem" onClick={() => runAction(onImportClick)}>
+                <Upload size={16} />
+                导入对话
+              </button>
+              <button type="button" role="menuitem" disabled={!conversation} onClick={() => runAction(onExportJson)}>
+                <Download size={16} />
+                导出 JSON
+              </button>
+              <button type="button" role="menuitem" disabled={!conversation} onClick={() => runAction(onExportMarkdown)}>
+                <FileText size={16} />
+                导出 Markdown
+              </button>
+              <button type="button" role="menuitem" onClick={() => runAction(onExportAll)}>
+                <Download size={16} />
+                导出全部对话
+              </button>
+              <button type="button" role="menuitem" disabled={!conversation} onClick={() => runAction(onShareCard)}>
+                <Copy size={16} />
+                导出分享卡片
+              </button>
+              <button type="button" role="menuitem" disabled={!conversation} onClick={() => runAction(onSummarize)}>
+                <Sparkles size={16} />
+                生成本地摘要
+              </button>
+            </div>
+          ) : null}
+        </div>
       </div>
     </header>
   );
@@ -985,7 +1197,8 @@ function MessageList({
   onMaskPick,
   onPromptPick,
   onRetryPrompt,
-  onEditPrompt
+  onEditPrompt,
+  scrollActive
 }: {
   conversation: Conversation | null;
   assistant?: Assistant;
@@ -995,16 +1208,18 @@ function MessageList({
   onPromptPick: (prompt: string) => void;
   onRetryPrompt: (messageId: string, prompt: string) => void;
   onEditPrompt: (messageId: string, prompt: string) => void;
+  scrollActive: boolean;
 }) {
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const promptStarters = [
-    "帮我梳理一个执行清单",
-    "对比三种方案的优缺点",
-    "把这段内容改得更清晰"
+    "梳理执行步骤",
+    "对比三个方案",
+    "润色这段内容"
   ];
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    bottomRef.current?.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "end" });
   }, [conversation?.messages]);
 
   const copyMessage = async (content: string) => {
@@ -1024,27 +1239,32 @@ function MessageList({
 
   if (!conversation || conversation.messages.length === 0) {
     return (
-      <section className="empty-chat">
-        <div className="assistant-orbit" style={{ background: assistant?.color || "#ff2442" }}>
-          <Bot size={32} />
+      <section className="empty-chat" data-scroll-owner={scrollActive ? "chat-messages" : undefined}>
+        <div className="empty-chat-intro">
+          <div className="assistant-orbit" style={{ background: assistant?.color || "#ff2442" }}>
+            <Bot size={22} />
+          </div>
+          <div>
+            <h1>{assistant ? assistant.name : "选择助手开始"}</h1>
+            <p>{assistant?.description || "选择一个角色后开始创作。"}</p>
+          </div>
         </div>
-        <h1>{assistant ? assistant.name : "选择助手开始"}</h1>
-        <p>{assistant?.description || "选择一个角色后开始创作。"}</p>
         <div className="prompt-starters">
           {promptStarters.map((prompt) => (
             <button key={prompt} type="button" onClick={() => onPromptPick(prompt)}>
+              <Sparkles size={15} />
               {prompt}
             </button>
           ))}
         </div>
-        <MaskStrip masks={masks} onPick={onMaskPick} />
-        <ToolStrip tools={tools} />
+        <MaskStrip masks={masks} onPick={onMaskPick} compact />
+        <ToolStrip tools={tools} compact />
       </section>
     );
   }
 
   return (
-    <section className="message-list">
+    <section className="message-list" data-scroll-owner={scrollActive ? "chat-messages" : undefined}>
       <MaskStrip masks={masks.slice(0, 8)} onPick={onMaskPick} compact />
       <ToolStrip tools={tools} compact />
       {conversation.messages.map((message) => (
@@ -1226,9 +1446,17 @@ function Composer({
   const canSend = value.trim().length > 0 && connectionReady && !streaming;
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const [recording, setRecording] = useState(false);
+
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = "auto";
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 120)}px`;
+  }, [value]);
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key !== "Enter" || !(event.ctrlKey || event.metaKey)) return;
@@ -1318,8 +1546,10 @@ function Composer({
           }}
         />
         <textarea
+          ref={textareaRef}
           data-testid="composer-input"
           value={value}
+          aria-label="消息内容"
           aria-describedby="composer-input-help"
           onChange={(event) => onChange(event.target.value)}
           onKeyDown={handleKeyDown}

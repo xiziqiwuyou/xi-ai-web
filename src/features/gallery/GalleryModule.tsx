@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { Copy, Download, FileText, Heart, Images, Search, Star, Trash2, X } from "lucide-react";
+import { ConfirmationDialog, Dialog } from "../../components/ui";
 import AssetGallery from "../../components/workbench/AssetGallery";
 import EmptyState from "../../components/workbench/EmptyState";
 import { moduleMeta, portalModuleOrder } from "../../app/moduleRegistry";
@@ -68,6 +69,7 @@ function GalleryModule({
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [detailId, setDetailId] = useState("");
+  const [deleteRequest, setDeleteRequest] = useState<"all" | "batch" | { id: string } | null>(null);
   const filters = useMemo(() => {
     const usedIds = new Set(items.map((item) => item.sourceModule));
     return portalModuleOrder.filter((id) => usedIds.has(id));
@@ -101,6 +103,21 @@ function GalleryModule({
     if (detailItem && selectedIds.includes(detailItem.id)) setDetailId("");
   };
 
+  const confirmDelete = () => {
+    if (deleteRequest === "all") {
+      onClearGallery();
+      setSelectedIds([]);
+      setDetailId("");
+    } else if (deleteRequest === "batch") {
+      batchDelete();
+    } else if (deleteRequest) {
+      onRemoveGalleryItem(deleteRequest.id);
+      setSelectedIds((current) => current.filter((id) => id !== deleteRequest.id));
+      if (detailId === deleteRequest.id) setDetailId("");
+    }
+    setDeleteRequest(null);
+  };
+
   const replayItem = (item: GalleryItem) => {
     if (!portalModuleOrder.includes(item.sourceModule)) return;
     saveReplayDraft(item);
@@ -113,10 +130,10 @@ function GalleryModule({
         <div>
           <span>本地保存</span>
           <strong>作品画廊</strong>
-          <p>生成结果只保存在当前浏览器，可收藏、导出、删除或回到对应功能继续创作。</p>
+          <p>跨功能管理当前浏览器中的生成结果。</p>
         </div>
         <div className="gallery-head-actions">
-          <button type="button" className="secondary-action compact-action" onClick={onClearGallery} disabled={!items.length}>
+          <button type="button" className="secondary-action compact-action" onClick={() => setDeleteRequest("all")} disabled={!items.length}>
             <Trash2 size={16} />
             清空
           </button>
@@ -130,14 +147,14 @@ function GalleryModule({
               <Search size={16} />
               <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索标题、提示词、结果" />
             </label>
-            <div className="option-segmented gallery-filters" role="tablist" aria-label="画廊筛选">
-              <button type="button" className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>全部</button>
+            <div className="option-segmented gallery-filters" role="group" aria-label="画廊筛选">
+              <button type="button" aria-pressed={filter === "all"} className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>全部</button>
               {filters.map((moduleId) => (
-                <button key={moduleId} type="button" className={filter === moduleId ? "active" : ""} onClick={() => setFilter(moduleId)}>
+                <button key={moduleId} type="button" aria-pressed={filter === moduleId} className={filter === moduleId ? "active" : ""} onClick={() => setFilter(moduleId)}>
                   {moduleLabel(moduleId)}
                 </button>
               ))}
-              <button type="button" className={favoritesOnly ? "active" : ""} onClick={() => setFavoritesOnly((value) => !value)}>
+              <button type="button" aria-pressed={favoritesOnly} className={favoritesOnly ? "active" : ""} onClick={() => setFavoritesOnly((value) => !value)}>
                 收藏
               </button>
             </div>
@@ -147,7 +164,7 @@ function GalleryModule({
                 <Download size={15} />
                 导出
               </button>
-              <button type="button" className="secondary-action compact-action danger-action" disabled={!selectedIds.length} onClick={batchDelete}>
+              <button type="button" className="secondary-action compact-action danger-action" disabled={!selectedIds.length} onClick={() => setDeleteRequest("batch")}>
                 <Trash2 size={15} />
                 删除
               </button>
@@ -167,7 +184,11 @@ function GalleryModule({
                     </label>
                     <time>{new Date(item.createdAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</time>
                   </div>
-                  <button type="button" className="gallery-title-button" onClick={() => setDetailId(item.id)}>
+                  <button
+                    type="button"
+                    className="gallery-title-button"
+                    onClick={() => setDetailId(item.id)}
+                  >
                     <strong>{item.title}</strong>
                   </button>
                   <p>{item.prompt}</p>
@@ -189,7 +210,7 @@ function GalleryModule({
                     <button type="button" className="icon-button" onClick={() => exportGalleryItem(item)} title="导出 Markdown" aria-label="导出 Markdown">
                       <Download size={16} />
                     </button>
-                    <button type="button" className="icon-button danger" onClick={() => onRemoveGalleryItem(item.id)} title="删除" aria-label="删除">
+                    <button type="button" className="icon-button danger" onClick={() => setDeleteRequest({ id: item.id })} title="删除" aria-label="删除">
                       <Trash2 size={16} />
                     </button>
                   </div>
@@ -207,13 +228,17 @@ function GalleryModule({
       ) : null}
 
       {detailItem ? (
-        <div className="gallery-detail-layer" role="dialog" aria-modal="true">
-          <button type="button" className="gallery-detail-scrim" onClick={() => setDetailId("")} aria-label="关闭详情" />
-          <aside className="gallery-detail">
+        <Dialog
+          open
+          labelledBy="gallery-detail-title"
+          onClose={() => setDetailId("")}
+          variant="side"
+          className="gallery-detail"
+        >
             <header>
               <div>
                 <span>{moduleLabel(detailItem.sourceModule)}</span>
-                <strong>{detailItem.title}</strong>
+                <strong id="gallery-detail-title">{detailItem.title}</strong>
               </div>
               <button type="button" className="icon-button" onClick={() => setDetailId("")} aria-label="关闭详情">
                 <X size={16} />
@@ -243,9 +268,23 @@ function GalleryModule({
                 回到功能
               </button>
             </div>
-          </aside>
-        </div>
+        </Dialog>
       ) : null}
+
+      <ConfirmationDialog
+        open={Boolean(deleteRequest)}
+        title={
+          deleteRequest === "all"
+            ? "清空全部作品？"
+            : deleteRequest === "batch"
+              ? `删除选中的 ${selectedIds.length} 项？`
+              : "删除这个作品？"
+        }
+        description="删除后无法恢复，请确认是否继续。"
+        confirmLabel="确认删除"
+        onCancel={() => setDeleteRequest(null)}
+        onConfirm={confirmDelete}
+      />
     </section>
   );
 }
