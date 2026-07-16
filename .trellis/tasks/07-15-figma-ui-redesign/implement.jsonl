@@ -1,0 +1,9 @@
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Frontend component composition and accessibility context"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Frontend quality and testing context"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Preserve current local, root, URL, and persistence ownership"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"Keep route and component contracts typed"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Reuse shared workbench, asset, and overlay behavior without duplication"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Protect menu, API, storage, and frontend/server boundaries"}
+{"file":".trellis/tasks/07-15-figma-ui-redesign/research/current-ui-audit.md","reason":"Current behavior, usability defects, and viewport evidence"}
+{"file":".trellis/tasks/07-15-figma-ui-redesign/research/figma-ready-design-system.md","reason":"Authoritative design and interaction handoff"}
+{"file":".trellis/tasks/07-15-figma-ui-redesign/research/frontend-architecture-map.md","reason":"Current ownership, CSS cascade, test surface, and regression risks"}

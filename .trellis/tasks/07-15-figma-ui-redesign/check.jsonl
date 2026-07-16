@@ -1,0 +1,7 @@
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Review composition, semantics, labels, focus, and reusable controls"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Review implementation quality and verification coverage"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Check that root, feature, URL, and persisted state boundaries remain intact"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Check menu, storage, API, and admin/public contract preservation"}
+{"file":".trellis/tasks/07-15-figma-ui-redesign/research/current-ui-audit.md","reason":"Verify audited defects are closed without feature regression"}
+{"file":".trellis/tasks/07-15-figma-ui-redesign/research/figma-ready-design-system.md","reason":"Verify visual, responsive, interaction, and accessibility acceptance"}
+{"file":".trellis/tasks/07-15-figma-ui-redesign/research/frontend-architecture-map.md","reason":"Review edits against known high-risk files and validation commands"}
