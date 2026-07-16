@@ -115,8 +115,10 @@ try {
   assert(topBar.includes("className=\"top-module-nav\""), "Top navigation should render the module nav");
   assert(topBar.includes("top-module-button active"), "Top navigation should expose active module styling");
   assert(!topBar.includes("global-search-input"), "Top search should remain removed from TopBar");
-  assert(shellCss.includes("flex: 1 0 104px"), "Top module buttons should be wide enough to fill the row");
-  assert(shellCss.includes("border-radius: 18px"), "Top module buttons should use rounded styling");
+  assert(shellCss.includes("flex: 0 0 auto"), "Top module buttons should use compact content-width sizing");
+  assert(shellCss.includes("border-radius: 8px"), "Top module buttons should use the small-radius design contract");
+  assert(topBar.includes('className="mobile-nav"'), "TopBar should render the mobile primary navigation");
+  assert(topBar.includes('variant="sheet"'), "Mobile More navigation should use an accessible sheet");
   assert(responsiveCss.includes("topButton") === false, "Responsive CSS should not depend on old runtime-only markers");
 
   console.log("Runtime UI checks passed");

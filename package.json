@@ -17,6 +17,8 @@
     "feature-audit": "node scripts/feature-audit.mjs",
     "provider-contracts": "node scripts/provider-contracts.mjs",
     "chat-local-contracts": "node scripts/chat-local-contracts.mjs",
+    "test:e2e": "playwright test",
+    "test:e2e:install": "playwright install chromium",
     "privacy": "node scripts/privacy-scan.mjs",
     "qa": "npm run check && npm run build && npm run privacy && npm run ui-contract && npm run feature-audit && npm run provider-contracts && npm run chat-local-contracts && npm run ui-runtime"
   },
@@ -30,6 +32,7 @@
     "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
+    "@playwright/test": "1.61.1",
     "@types/node": "^25.9.1",
     "@types/react": "^19.2.15",
     "@types/react-dom": "^19.2.3",

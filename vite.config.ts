@@ -14,8 +14,7 @@ export default defineConfig({
         "**/dist/**",
         "**/node_modules/**",
         "**/plans/**",
-        "**/reports/screenshots/**",
-        "**/reports/design/*.png"
+        "**/reports/**"
       ]
     }
   },

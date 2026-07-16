@@ -2129,8 +2129,7 @@ if (isProduction) {
             "**/dist/**",
             "**/node_modules/**",
             "**/plans/**",
-            "**/reports/screenshots/**",
-            "**/reports/design/*.png"
+            "**/reports/**"
           ]
         }
       },
