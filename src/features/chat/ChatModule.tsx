@@ -140,6 +140,8 @@ type SessionSettingsSnapshot = {
   skillIds: string[];
 };
 
+type PersistedSessionSettings = Omit<SessionSettingsSnapshot, "skillIds">;
+
 const assistantAvatarPresets = [
   { id: "akira", name: "霓虹主角", image: "/assets/figma/avatar-akira.jpg" },
   { id: "mika", name: "蓝发旅人", image: "/assets/figma/avatar-mika.jpg" },
@@ -148,6 +150,67 @@ const assistantAvatarPresets = [
 ] as const;
 
 const modelVendorTabs: ModelVendorTab[] = ["OpenAI", "Claude", "Gemini", "Kimi", "DeepSeek", "通义千问"];
+
+const chatSettingsStorageKey = "xi-ai-web-chat-session-settings";
+const chatContextSizeValues = ["4", "16", "32", "128"] as const;
+const chatMaxTokenValues = ["1024", "2048", "4096", "8192"] as const;
+const chatContextSizeOptions = chatContextSizeValues.map((value) => ({ value, label: `${value}K tokens` }));
+const chatMaxTokenOptions = [
+  { value: "1024", label: "1,024" },
+  { value: "2048", label: "2,048" },
+  { value: "4096", label: "4,096" },
+  { value: "8192", label: "8,192" }
+] as const;
+const chatToolModeOptions = ["\u81ea\u52a8", "\u8be2\u95ee\u540e\u8c03\u7528", "\u7981\u7528"] as const;
+
+function clampSettingNumber(value: unknown, fallback: number, min: number, max: number) {
+  const number = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.min(max, Math.max(min, number));
+}
+
+function cleanSettingChoice<T extends string>(value: unknown, choices: readonly T[], fallback: T) {
+  return choices.includes(value as T) ? value as T : fallback;
+}
+
+function loadPersistedSessionSettings(): PersistedSessionSettings | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(chatSettingsStorageKey);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<PersistedSessionSettings>;
+    const avatarIds = assistantAvatarPresets.map((preset) => preset.id);
+    return {
+      assistantAvatarId: cleanSettingChoice(parsed.assistantAvatarId, avatarIds, "akira"),
+      userAvatar: typeof parsed.userAvatar === "string" && parsed.userAvatar.startsWith("data:image/")
+        ? parsed.userAvatar
+        : null,
+      messageStyle: cleanSettingChoice(parsed.messageStyle, ["bubble", "list"], "bubble"),
+      temperature: clampSettingNumber(parsed.temperature, 0.7, 0, 1),
+      topP: clampSettingNumber(parsed.topP, 0.9, 0.1, 1),
+      contextSize: cleanSettingChoice(parsed.contextSize, chatContextSizeValues, "16"),
+      maxTokens: cleanSettingChoice(parsed.maxTokens, chatMaxTokenValues, "4096"),
+      streamOutput: typeof parsed.streamOutput === "boolean" ? parsed.streamOutput : true,
+      toolMode: cleanSettingChoice(
+        parsed.toolMode,
+        chatToolModeOptions,
+        "\u81ea\u52a8"
+      )
+    };
+  } catch {
+    window.sessionStorage.removeItem(chatSettingsStorageKey);
+    return null;
+  }
+}
+
+function savePersistedSessionSettings(settings: PersistedSessionSettings) {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(chatSettingsStorageKey, JSON.stringify(settings));
+  } catch {
+    // Session-only settings remain usable in memory when storage is unavailable.
+  }
+}
 
 function vendorTabForModel(model?: ModelCatalogEntry): ModelVendorTab {
   if (model?.vendor === "openai" || model?.vendor === "openai-compatible") return "OpenAI";
@@ -257,6 +320,20 @@ function ChatModule({
   const connectionReady = isUserProviderReady(userProvider);
   const searchReady = isSearchServiceReady(searchService);
   const assistantAvatarUrl = assistantAvatarPresets.find((preset) => preset.id === assistantAvatarId)?.image || assistantAvatarPresets[0].image;
+
+  useEffect(() => {
+    const restored = loadPersistedSessionSettings();
+    if (!restored) return;
+    setAssistantAvatarId(restored.assistantAvatarId);
+    setUserAvatar(restored.userAvatar);
+    setMessageStyle(restored.messageStyle);
+    setTemperature(restored.temperature);
+    setTopP(restored.topP);
+    setContextSize(restored.contextSize);
+    setMaxTokens(restored.maxTokens);
+    setStreamOutput(restored.streamOutput);
+    setToolMode(restored.toolMode);
+  }, []);
 
   const commitConversations = useCallback(
     (updater: Conversation[] | ((current: Conversation[]) => Conversation[])) => {
@@ -747,6 +824,17 @@ function ChatModule({
     if (settingsConversationId) {
       patchSessionUi(settingsConversationId, { skillIds: [...settingsSkillIds] });
     }
+    savePersistedSessionSettings({
+      assistantAvatarId,
+      userAvatar,
+      messageStyle,
+      temperature,
+      topP,
+      contextSize,
+      maxTokens,
+      streamOutput,
+      toolMode
+    });
     settingsSnapshotRef.current = null;
     setSettingsConversationId("");
     setSettingsOpen(false);
@@ -1008,19 +1096,17 @@ function ChatModule({
           <label>
             <span>上下文数</span>
             <select value={contextSize} onChange={(event) => setContextSize(event.target.value)}>
-              <option value="4">4K tokens</option>
-              <option value="16">16K tokens</option>
-              <option value="32">32K tokens</option>
-              <option value="128">128K tokens</option>
+              {chatContextSizeOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
             </select>
           </label>
           <label>
             <span>最大 Token 数</span>
             <select value={maxTokens} onChange={(event) => setMaxTokens(event.target.value)}>
-              <option value="1024">1,024</option>
-              <option value="2048">2,048</option>
-              <option value="4096">4,096</option>
-              <option value="8192">8,192</option>
+              {chatMaxTokenOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
             </select>
           </label>
           <div className="figma-setting-toggle">
@@ -1030,7 +1116,7 @@ function ChatModule({
           <fieldset className="figma-tool-mode">
             <legend>工具调用方式</legend>
             <div className="figma-segmented">
-              {["自动", "询问后调用", "禁用"].map((mode) => (
+              {chatToolModeOptions.map((mode) => (
                 <button key={mode} type="button" className={toolMode === mode ? "active" : ""} onClick={() => setToolMode(mode)} aria-pressed={toolMode === mode}>{mode}</button>
               ))}
             </div>

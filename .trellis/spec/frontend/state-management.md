@@ -9,6 +9,7 @@
 | Public bootstrap and menu/catalog metadata | `App` | Server response only |
 | Active public destination | `App` + History API | URL path |
 | API URL/key and last model | `App` provider state | `sessionStorage` only |
+| Saved Chat UI/session settings | `ChatModule` | Dedicated `sessionStorage` record only |
 | Independent GLM/Kimi search URL/key/options | `App` search-service state | Dedicated `sessionStorage` record only |
 | One-shot Assistant launch intent | Assistant library + Chat | Versioned `sessionStorage` envelope, consumed once |
 | Private workspace data | Feature owners + workspace repository | `xi-ai-web-workspace` IndexedDB |
@@ -122,9 +123,64 @@ type UserProviderConfig = {
 - Never copy these values to `localStorage`, backend metadata, URL state, logs, or public bootstrap.
 - The backend receives connection data only in the user-initiated request payload required to call a provider.
 
+Saved Chat UI/session settings use `xi-ai-web-chat-session-settings`. This record may contain only avatar/style/sampling/context/stream/tool-mode UI values, never API URL/key, search credentials, document contents, or server-owned catalog data. Sanitizers for persisted select values must reuse the same option constants that render the controls so unsupported stale values fall back before React mounts a mismatched `<select>`.
+
 Independent network search uses `xi-ai-web-search-service` with `SearchServiceConfig`. It is optional, is not part of the required first-use API dialog, and is sent only when the exact request includes `web_search`. Its URL, key, model, engine, and result options must never enter IndexedDB, workspace archives, backend metadata, logs, URL state, or public bootstrap data.
 
 Assistant launch uses `xi-ai-web-assistant-launch` with `{ version, assistantId, starterPrompt?, requestedAt }`. Chat consumes it only after conversation hydration, removes it before creating state, validates an exact enabled public assistant, creates one independent conversation, and leaves all existing conversation bindings unchanged. The legacy `aistudio-selected-assistant` key is read once for compatibility and removed. Invalid, stale, disabled, or missing IDs are reported and never rebound to the first assistant.
+
+## Scenario: Saved Chat Session Settings
+
+### 1. Scope / Trigger
+
+- Trigger: any change to Chat settings persistence, settings defaults, select options, or outbound Chat sampling/context/tool behavior.
+
+### 2. Signatures
+
+```ts
+const chatSettingsStorageKey = "xi-ai-web-chat-session-settings";
+type PersistedSessionSettings = Omit<SessionSettingsSnapshot, "skillIds">;
+```
+
+### 3. Contracts
+
+- Persist only in `window.sessionStorage`; never use `localStorage`, IndexedDB, server settings, URLs, or bootstrap payloads.
+- Persist only UI/session fields: assistant avatar, user avatar data URL, message style, temperature, Top-P, context size, max tokens, stream output, and tool mode.
+- Do not persist per-conversation Skill selections in this record. Skill IDs stay on each conversation's `SessionUiState`.
+- Persisted select values must be sanitized against the same constants that render their `<option>` elements.
+- Save writes the record. Cancel restores the in-memory snapshot and does not update the record.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| Malformed JSON | Remove the settings record and keep defaults |
+| Unknown avatar/style/context/max-token/tool-mode value | Fall back to the current supported default |
+| User avatar is not a `data:image/` URL | Ignore it |
+| `sessionStorage` write fails | Keep the live React state usable and continue without persistence |
+| Missing API URL/key | Do not infer or copy credentials from this settings record |
+
+### 5. Good/Base/Bad Cases
+
+- Good: saving `contextSize="128"` and `maxTokens="8192"` survives reload and the next request carries the matching context slice and max token value.
+- Base: a fresh session opens with defaults and no settings record.
+- Bad: accepting a stale `contextSize="64"` while the `<select>` no longer renders that option, or storing BYOK credentials beside UI settings.
+
+### 6. Tests Required
+
+- E2E asserts the record is in `sessionStorage`, absent from `localStorage`, survives reload, and restores visible controls.
+- Chat request tests assert saved `temperature`, `topP`, `maxTokens`, context slicing, and tool-mode behavior reach the outbound request path.
+- Static contracts assert the storage key, `sessionStorage` usage, select-option sanitizers, and no Markdown fallback for unrelated generated artifacts.
+
+### 7. Wrong vs Correct
+
+```ts
+// Wrong: sanitizer accepts values the UI cannot render.
+cleanSettingChoice(parsed.contextSize, ["16", "32", "64", "128"], "16");
+
+// Correct: sanitizer and rendered options share the same constants.
+cleanSettingChoice(parsed.contextSize, chatContextSizeValues, "16");
+```
 
 ## Scenario: Browser Workspace Persistence And Restore
 

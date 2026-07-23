@@ -116,6 +116,12 @@ for (const modelMenuLabel of ["PPT 生成模型", "思维导图生成模型", "�
   assert(studioModule.includes(`ariaLabel="${modelMenuLabel}"`), `Active Studio workbench must expose ${modelMenuLabel}`);
 }
 assert((studioModule.match(/modelId: selectedModel\.id/g) || []).length >= 4, "Active Studio generation requests must carry the selected model ID");
+assert(studioModule.includes('import { exportPptxFromMarkdown } from "../generation/pptxExport";'), "PPT workbench must import the PPTX exporter");
+assert(studioModule.includes("await exportPptxFromMarkdown(result.text, topic.trim() || result.title)"), "PPT workbench must export a real PPTX deck");
+assert(!studioModule.includes("downloadOutline"), "PPT workbench must not fall back to Markdown outline downloads");
+assert(studioModule.includes("const [activeBranchId, setActiveBranchId]"), "Mind Map must track the active branch by stable ID");
+assert(studioModule.includes("const branchSource = useMemo"), "Mind Map must derive branch cards from one normalized branch source");
+assert(!studioModule.includes("activeBranchIndex"), "Mind Map must not track active branches by rotated visual index");
 assert(chatModule.includes("streamChat("), "Chat module must use streaming chat");
 assert(chatModule.includes("ChatSkillManagerDialog"), "Chat must manage local Skills inside the Chat workspace");
 assert(chatModule.includes("skillInstructions: selectedSkills.map"), "Chat must send resolved Skill instructions, not storage records");
@@ -140,6 +146,11 @@ assert(
   "Chat model picker must expose the six named vendor labels"
 );
 assert(chatModule.includes("topP,") && chatModule.includes("maxTokens: Math.max(1, Number(maxTokens) || 4096)"), "Chat requests must carry topP and maxTokens");
+assert(chatModule.includes('const chatSettingsStorageKey = "xi-ai-web-chat-session-settings"'), "Chat settings must use the session-scoped settings key");
+assert(chatModule.includes("window.sessionStorage.getItem(chatSettingsStorageKey)") && chatModule.includes("window.sessionStorage.setItem(chatSettingsStorageKey"), "Chat settings must persist through sessionStorage only");
+assert(!chatModule.includes("localStorage.getItem(chatSettingsStorageKey)") && !chatModule.includes("localStorage.setItem(chatSettingsStorageKey"), "Chat settings must not use localStorage");
+assert(chatModule.includes("history: requestConversation.messages.slice(-Math.max(1, Number(contextSize) || 16))"), "Chat requests must honor the saved context size");
+assert(chatModule.includes('toolMode === "\u7981\u7528"') && chatModule.includes('toolMode === "\u8be2\u95ee\u540e\u8c03\u7528"'), "Chat tool mode must change truthful request behavior");
 assert(!chatModule.includes("ChevronRight"), "Chat model options must not render trailing chevrons");
 assert(chatModule.includes('className="figma-model-option-mark"'), "Chat model options must reserve stable trailing alignment");
 const figmaMenuOptions = figmaMenu.slice(

@@ -723,7 +723,7 @@ test("PPT matches the options, creation stages, and prompt ideas contract", asyn
   await chooseFigmaMenu(module, "\u89c6\u89c9\u6c14\u8d28", "\u4e13\u4e1a\u5546\u52a1");
   await expect(visualTone).toContainText("\u4e13\u4e1a\u5546\u52a1");
   await expect(module.getByRole("button", { name: "\u8ba9 AI \u5f00\u59cb\u521b\u4f5c", exact: true })).toBeEnabled();
-  await expect(module.getByText("\u9884\u8ba1 40 \u79d2 \u00b7 \u7ea6 8 \u9875\u5185\u5bb9 \u00b7 \u652f\u6301\u540e\u7eed\u5bfc\u51fa PDF", { exact: true })).toBeVisible();
+  await expect(module.getByText("\u9884\u8ba1 40 \u79d2 \u00b7 \u7ea6 8 \u9875\u5185\u5bb9 \u00b7 \u652f\u6301\u5bfc\u51fa PPTX", { exact: true })).toBeVisible();
 
   const stages = module.locator(".figma-ppt-stages");
   await expect(stages.getByText("WHAT AI CREATES", { exact: true })).toBeVisible();

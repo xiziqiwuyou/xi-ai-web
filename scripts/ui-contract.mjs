@@ -208,6 +208,11 @@ assertInOrder(
   "Chat requests must carry saved sampling and maximum-token settings"
 );
 assert(types.includes("topP?: number;") && types.includes("maxTokens?: number;"), "Chat request types must include topP and maxTokens");
+assert(chatModule.includes('const chatSettingsStorageKey = "xi-ai-web-chat-session-settings"'), "Saved Chat settings must use the session-only storage key");
+assert(chatModule.includes("window.sessionStorage.getItem(chatSettingsStorageKey)") && chatModule.includes("window.sessionStorage.setItem(chatSettingsStorageKey"), "Saved Chat settings must use sessionStorage");
+assert(!chatModule.includes("localStorage.getItem(chatSettingsStorageKey)") && !chatModule.includes("localStorage.setItem(chatSettingsStorageKey"), "Saved Chat settings must not use localStorage");
+assert(chatRequestBlock.includes("history: requestConversation.messages.slice(-Math.max(1, Number(contextSize) || 16))"), "Chat requests must honor the selected context window");
+assert(chatModule.includes('toolMode === "\u7981\u7528"') && chatModule.includes('toolMode === "\u8be2\u95ee\u540e\u8c03\u7528"'), "Chat tool mode must affect outbound tool behavior truthfully");
 for (const requiredChatContract of [
   'className="figma-model-trigger"',
   'className="figma-model-popover"',
@@ -347,7 +352,7 @@ for (const exactStudioCopy of [
   "\u4e00\u5ea7\u6f02\u6d6e\u5728\u6df1\u6d77\u4e2d\u7684\u672a\u6765\u56fe\u4e66\u9986\uff0c\u84dd\u7d2b\u8272\u751f\u7269\u8367\u5149\uff0c\u7535\u5f71\u611f",
   "\u6362\u4e00\u6279 \u2192",
   "\u751f\u6210\u5f0f AI \u5982\u4f55\u91cd\u5851\u4f01\u4e1a\u521b\u65b0",
-  "\u9884\u8ba1 40 \u79d2 \u00b7 \u7ea6 8 \u9875\u5185\u5bb9 \u00b7 \u652f\u6301\u540e\u7eed\u5bfc\u51fa PDF",
+  "\u9884\u8ba1 40 \u79d2 \u00b7 \u7ea6 8 \u9875\u5185\u5bb9 \u00b7 \u652f\u6301\u5bfc\u51fa PPTX",
   "\u53d1\u73b0\u53d9\u4e8b\u4e3b\u7ebf",
   "\u751f\u6210\u9875\u9762\u7ed3\u6784",
   "\u5339\u914d\u89c6\u89c9\u7d20\u6750",
@@ -385,6 +390,12 @@ assert(!/<select[^>]+aria-label="(?:\u56fe\u50cf\u751f\u6210\u6a21\u578b|\u753b\
 for (const zoomContract of ['aria-label="\u7f29\u5c0f"', 'aria-label="\u653e\u5927"', "Math.round(zoom * 100)"]) {
   assert(studioModule.includes(zoomContract), `Mind Map zoom contract is missing ${zoomContract}`);
 }
+assert(studioModule.includes('import { exportPptxFromMarkdown } from "../generation/pptxExport";'), "PPT must import the real PPTX exporter");
+assert(studioModule.includes("await exportPptxFromMarkdown(result.text, topic.trim() || result.title)"), "PPT download must create a real PPTX file");
+assert(studioModule.includes("\u4e0b\u8f7d PPT") && !studioModule.includes("downloadOutline"), "PPT UI must expose PPT download and avoid Markdown-outline fallback");
+assert(studioModule.includes("const [activeBranchId, setActiveBranchId]"), "Mind Map must preserve branch selection by ID");
+assert(studioModule.includes("const branchSource = useMemo"), "Mind Map branches must come from one normalized source");
+assert(!studioModule.includes("activeBranchIndex"), "Mind Map must not use rotated visual index as branch identity");
 
 for (const imageUiContract of [
   "\u6587\u751f\u56fe",

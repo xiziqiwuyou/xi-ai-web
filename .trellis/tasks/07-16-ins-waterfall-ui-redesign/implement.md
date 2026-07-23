@@ -140,10 +140,10 @@
 ### Phase 13 Follow-Up Semantics
 
 - [x] Carry Image count through typed provider requests and render every returned image asset.
-- [ ] Normalize generated Mind Maps without mixing generated and reference fallback branches; preserve stable branch identity through reorganization and export.
-- [ ] Align PPT generation/download output with the promised presentation format.
-- [ ] Wire Chat Top-P, context, max-token, and tool-mode settings to truthful provider behavior.
-- [ ] Decide and test session-lifetime persistence for saved Chat settings.
+- [x] Normalize generated Mind Maps without mixing generated and reference fallback branches; preserve stable branch identity through reorganization and export.
+- [x] Align PPT generation/download output with the promised presentation format.
+- [x] Wire Chat Top-P, context, max-token, and tool-mode settings to truthful provider behavior.
+- [x] Decide and test session-lifetime persistence for saved Chat settings.
 
 ## Phase 14 - Dark Typography And Range-Control Legibility
 

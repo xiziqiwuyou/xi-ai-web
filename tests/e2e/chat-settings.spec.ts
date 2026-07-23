@@ -15,6 +15,8 @@ test.beforeEach(async ({ page }) => {
   await seedChatConversations(page);
 });
 
+const chatSettingsStorageKey = "xi-ai-web-chat-session-settings";
+
 test("independent web search config works with a model that has no hosted-search capability", async ({ page, apiHarness }) => {
   await page.goto("/chat");
   await waitForPublicModule(page, publicDestinations[0]);
@@ -279,4 +281,44 @@ test("saved sampling settings are sent with the next Chat request", async ({ pag
     maxTokens: 8192,
     modelId: "test-chat"
   });
+});
+
+test("saved Chat settings are scoped to sessionStorage and survive reload", async ({ page }) => {
+  await page.goto("/chat");
+  await waitForPublicModule(page, publicDestinations[0]);
+
+  await page.getByRole("button", { name: "\u4f1a\u8bdd\u8bbe\u7f6e", exact: true }).first().click();
+  const dialog = page.getByRole("dialog", { name: "\u4f1a\u8bdd\u8bbe\u7f6e", exact: true });
+  await dialog.getByRole("button", { name: "\u5217\u8868\u5f0f", exact: true }).click();
+  await dialog.getByRole("slider", { name: "\u6a21\u578b\u6e29\u5ea6 \u00b7 Temperature", exact: true }).fill("0.2");
+  await dialog.getByRole("slider", { name: "TOP-P", exact: true }).fill("0.5");
+  await dialog.getByRole("combobox", { name: "\u4e0a\u4e0b\u6587\u6570", exact: true }).selectOption("128");
+  await dialog.getByRole("combobox", { name: "\u6700\u5927 Token \u6570", exact: true }).selectOption("8192");
+  await dialog.getByRole("button", { name: "\u6d41\u5f0f\u8f93\u51fa", exact: true }).click();
+  await dialog.getByRole("button", { name: "\u4fdd\u5b58\u8bbe\u7f6e", exact: true }).click();
+
+  const storage = await page.evaluate((key) => ({
+    session: window.sessionStorage.getItem(key),
+    local: window.localStorage.getItem(key)
+  }), chatSettingsStorageKey);
+  expect(storage.local).toBeNull();
+  expect(JSON.parse(storage.session || "{}")).toMatchObject({
+    messageStyle: "list",
+    temperature: 0.2,
+    topP: 0.5,
+    contextSize: "128",
+    maxTokens: "8192",
+    streamOutput: false
+  });
+
+  await page.reload();
+  await waitForPublicModule(page, publicDestinations[0]);
+  await page.getByRole("button", { name: "\u4f1a\u8bdd\u8bbe\u7f6e", exact: true }).first().click();
+  const reloadedDialog = page.getByRole("dialog", { name: "\u4f1a\u8bdd\u8bbe\u7f6e", exact: true });
+  await expect(reloadedDialog.getByRole("button", { name: "\u5217\u8868\u5f0f", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(reloadedDialog.getByRole("slider", { name: "\u6a21\u578b\u6e29\u5ea6 \u00b7 Temperature", exact: true })).toHaveValue("0.2");
+  await expect(reloadedDialog.getByRole("slider", { name: "TOP-P", exact: true })).toHaveValue("0.5");
+  await expect(reloadedDialog.getByRole("combobox", { name: "\u4e0a\u4e0b\u6587\u6570", exact: true })).toHaveValue("128");
+  await expect(reloadedDialog.getByRole("combobox", { name: "\u6700\u5927 Token \u6570", exact: true })).toHaveValue("8192");
+  await expect(reloadedDialog.getByRole("button", { name: "\u6d41\u5f0f\u8f93\u51fa", exact: true })).toHaveAttribute("aria-pressed", "false");
 });

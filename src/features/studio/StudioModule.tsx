@@ -34,6 +34,7 @@ import { api } from "../../api";
 import { compactModelLabel, modelsForCapability, preferredModelFor, vendorLabels } from "../../components/workbench";
 import { Dialog, FigmaMenu, type FigmaMenuOption } from "../../components/ui";
 import { queueAssistantLaunch } from "../assistants/assistantLaunch";
+import { exportPptxFromMarkdown } from "../generation/pptxExport";
 import { downloadText, mindmapToSvg } from "../mindmap/mindmapExport";
 import { parseMindmap } from "../mindmap/mindmapParser";
 import { isUserProviderReady, userConnectionPayload } from "../settings/userProviderConfig";
@@ -791,6 +792,7 @@ function PptStudio({
   const [duration, setDuration] = useState("8–10 分钟");
   const [visualTone, setVisualTone] = useState("未来专业");
   const [busy, setBusy] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [notice, setNotice] = useState("");
   const [result, setResult] = useState<GenerationResult | null>(null);
   const { models, selectedModel, chooseModel } = useStudioModel(modelCatalog, "chat", userProvider, onUserProviderChange);
@@ -823,14 +825,17 @@ function PptStudio({
     }
   };
 
-  const downloadOutline = () => {
-    if (!result?.text) return;
-    const url = URL.createObjectURL(new Blob([result.text], { type: "text/markdown;charset=utf-8" }));
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = "presentation-outline.md";
-    anchor.click();
-    URL.revokeObjectURL(url);
+  const downloadDeck = async () => {
+    if (!result?.text || exporting) return;
+    setExporting(true);
+    setNotice("");
+    try {
+      await exportPptxFromMarkdown(result.text, topic.trim() || result.title);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "PPT export failed");
+    } finally {
+      setExporting(false);
+    }
   };
 
   return (
@@ -898,7 +903,7 @@ function PptStudio({
               {busy ? <Loader2 className="spin" size={16} /> : <Sparkles size={16} />}
               {busy ? "正在创作" : "让 AI 开始创作"}
             </button>
-            <p className="figma-ppt-support">预计 40 秒 · 约 8 页内容 · 支持后续导出 PDF</p>
+            <p className="figma-ppt-support">预计 40 秒 · 约 8 页内容 · 支持导出 PPTX</p>
           </div>
         </section>
 
@@ -929,7 +934,10 @@ function PptStudio({
         <section className="figma-ppt-result" aria-labelledby="ppt-result-title">
           <header>
             <div><small>PRESENTATION OUTLINE</small><h2 id="ppt-result-title">演示大纲</h2></div>
-            <button type="button" onClick={downloadOutline}><Download size={14} />下载大纲</button>
+            <button type="button" onClick={() => void downloadDeck()} disabled={exporting}>
+              {exporting ? <Loader2 className="spin" size={14} /> : <Download size={14} />}
+              {exporting ? "导出中" : "下载 PPT"}
+            </button>
           </header>
           <div><FileText size={22} /><pre>{result.text}</pre></div>
         </section>
@@ -946,7 +954,7 @@ function MindmapStudio({
   onRequestApiConfig
 }: StudioModuleProps) {
   const [topic, setTopic] = useState("构建 AI 驱动的产品增长体系");
-  const [activeBranchIndex, setActiveBranchIndex] = useState(-1);
+  const [activeBranchId, setActiveBranchId] = useState("");
   const [branchOrderOffset, setBranchOrderOffset] = useState(0);
   const [zoom, setZoom] = useState(1);
   const [busy, setBusy] = useState(false);
@@ -955,16 +963,33 @@ function MindmapStudio({
   const { models, selectedModel, chooseModel } = useStudioModel(modelCatalog, "chat", userProvider, onUserProviderChange);
   const canvasSource = result?.text || defaultMindmapSource;
   const parsed = useMemo(() => parseMindmap(canvasSource, topic || "思维导图"), [canvasSource, topic]);
-  const branchCards = useMemo(() => {
-    const cards = mindmapBranches.map((fallback, index) => {
-      const node = parsed.children[index];
-      return {
-        label: node?.label || fallback,
-        count: node?.children.length || 3
-      };
-    });
-    return cards.map((_, index) => cards[(index + branchOrderOffset) % cards.length]);
-  }, [branchOrderOffset, parsed]);
+  const branchSource = useMemo(() => {
+    const generated = parsed.children
+      .filter((node) => node.label.trim())
+      .slice(0, 4)
+      .map((node) => ({
+        id: node.id,
+        label: node.label,
+        count: node.children.length
+      }));
+    if (generated.length) return generated;
+    return mindmapBranches.map((label, index) => ({
+      id: `fallback-${index}`,
+      label,
+      count: 3
+    }));
+  }, [parsed]);
+  const branchCards = useMemo(
+    () => branchSource.map((_, index) => branchSource[(index + branchOrderOffset) % branchSource.length]),
+    [branchOrderOffset, branchSource]
+  );
+
+  useEffect(() => {
+    setBranchOrderOffset((value) => branchSource.length ? value % branchSource.length : 0);
+    setActiveBranchId((current) => (
+      current && branchSource.some((branch) => branch.id === current) ? current : ""
+    ));
+  }, [branchSource]);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -1047,10 +1072,10 @@ function MindmapStudio({
           {branchCards.map((branch, index) => (
             <button
               type="button"
-              key={`${branch.label}-${index}`}
-              className={`figma-map-branch branch-${index + 1}${activeBranchIndex === index ? " active" : ""}`}
-              aria-pressed={activeBranchIndex === index}
-              onClick={() => setActiveBranchIndex(index)}
+              key={branch.id}
+              className={`figma-map-branch branch-${index + 1}${activeBranchId === branch.id ? " active" : ""}`}
+              aria-pressed={activeBranchId === branch.id}
+              onClick={() => setActiveBranchId(branch.id)}
             >
               <strong>{branch.label}</strong>
               <small>AI 已扩展 {branch.count} 个节点</small>
@@ -1077,8 +1102,9 @@ function MindmapStudio({
               key={item.title}
               onClick={() => {
                 if (index === 0) {
-                  const nextIndex = (activeBranchIndex + 1) % branchCards.length;
-                  setActiveBranchIndex(nextIndex);
+                  const currentIndex = branchCards.findIndex((branch) => branch.id === activeBranchId);
+                  const nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % branchCards.length;
+                  setActiveBranchId(branchCards[nextIndex].id);
                   setNotice(`已展开“${branchCards[nextIndex].label}”分支。`);
                   return;
                 }
