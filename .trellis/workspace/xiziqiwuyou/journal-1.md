@@ -109,3 +109,36 @@ Archived the completed workspace persistence, backup, automation, workflow, assi
 ### Next Steps
 
 - None - task complete
+
+
+## Session 4: Bootstrap guideline closure
+
+**Date**: 2026-07-23
+**Task**: Bootstrap guideline closure
+**Branch**: `master`
+
+### Summary
+
+Verified backend and frontend Trellis specs are populated with real project examples, marked the bootstrap checklist complete, and archived the initial guidelines task.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ceee007` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
