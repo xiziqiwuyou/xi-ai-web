@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Copy, Download, FileText, Heart, Images, Search, Star, Trash2, X } from "lucide-react";
-import { ConfirmationDialog, Dialog } from "../../components/ui";
+import { ConfirmationDialog, Dialog, MasonryGrid } from "../../components/ui";
 import AssetGallery from "../../components/workbench/AssetGallery";
 import EmptyState from "../../components/workbench/EmptyState";
 import { moduleMeta, portalModuleOrder } from "../../app/moduleRegistry";
@@ -171,12 +171,13 @@ function GalleryModule({
             </div>
           </div>
 
-          <div className="gallery-grid">
+          <MasonryGrid className="gallery-grid" label="画廊作品">
             {visibleItems.map((item) => {
               const checked = selectedIds.includes(item.id);
               const canReplay = portalModuleOrder.includes(item.sourceModule);
               return (
-                <article key={item.id} className={checked ? "gallery-card selected" : "gallery-card"}>
+                <div key={item.id} className="masonry-item" role="listitem">
+                <article className={checked ? "gallery-card selected" : "gallery-card"}>
                   <div className="gallery-card-head">
                     <label className="gallery-select">
                       <input type="checkbox" checked={checked} onChange={() => toggleSelected(item.id)} />
@@ -215,9 +216,10 @@ function GalleryModule({
                     </button>
                   </div>
                 </article>
+                </div>
               );
             })}
-          </div>
+          </MasonryGrid>
         </>
       ) : (
         <EmptyState icon={Images} title="还没有生成作品" description="使用绘画、思维导图、智能体或应用生成结果后，会自动出现在这里。" />

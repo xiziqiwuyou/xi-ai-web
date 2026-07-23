@@ -2,12 +2,17 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   AlertCircle,
+  ArrowRight,
   Bot,
   CheckCircle2,
+  ChevronDown,
+  Database,
   Download,
   Eye,
   FileText,
+  Gauge,
   Home,
+  KeyRound,
   Layers3,
   LogOut,
   Plus,
@@ -19,10 +24,16 @@ import {
   ShieldCheck,
   ToggleLeft,
   Trash2,
-  Upload
+  Upload,
+  Users
 } from "lucide-react";
 import { api, type ModelCatalogPayload } from "../../api";
+import { vendorLabels } from "../../components/workbench";
 import { AdminConfirmDialog } from "./AdminConfirmDialog";
+import {
+  KnowledgeAdminSection,
+  type KnowledgeAdminSectionId
+} from "./KnowledgeAdminSection";
 import { validateModelCatalog } from "./adminValidation";
 import { modelCatalogPresets } from "./modelCatalogPresets";
 import type {
@@ -56,8 +67,12 @@ type ModelDraft = {
 type AssistantDraft = {
   name: string;
   description: string;
+  category: string;
+  tags: string;
+  starterPrompts: string;
   color: string;
   systemPrompt: string;
+  enabled: boolean;
 };
 
 type AppPresetDraft = {
@@ -75,7 +90,19 @@ type PromptPresetDraft = {
   enabled: boolean;
 };
 
-type AdminSectionId = "overview" | "site" | "models" | "content" | "audit";
+type AdminSectionId =
+  | "overview"
+  | "tools"
+  | "site"
+  | "menus"
+  | "models"
+  | "assistants"
+  | "apps"
+  | "prompts"
+  | "audit"
+  | KnowledgeAdminSectionId;
+
+type AdminNavigationGroupId = "operations" | "configuration" | "models" | "content" | "knowledge" | "audit";
 
 type AdminConfirmation = {
   title: string;
@@ -85,6 +112,7 @@ type AdminConfirmation = {
 };
 
 const adminNavigationGroups: Array<{
+  id: AdminNavigationGroupId;
   label: string;
   items: Array<{
     id: AdminSectionId;
@@ -93,22 +121,50 @@ const adminNavigationGroups: Array<{
   }>;
 }> = [
   {
-    label: "运营",
-    items: [{ id: "overview", label: "概览与运维", icon: Activity }]
-  },
-  {
-    label: "配置",
+    id: "operations",
+    label: "运行管理",
     items: [
-      { id: "site", label: "站点与菜单", icon: Settings },
-      { id: "models", label: "模型目录", icon: Layers3 }
+      { id: "overview", label: "运行概览", icon: Activity },
+      { id: "tools", label: "工具权限", icon: ServerCog }
     ]
   },
   {
-    label: "内容",
-    items: [{ id: "content", label: "助手与预设", icon: Bot }]
+    id: "configuration",
+    label: "系统配置",
+    items: [
+      { id: "site", label: "站点设置", icon: Settings },
+      { id: "menus", label: "前台菜单", icon: ToggleLeft }
+    ]
   },
   {
-    label: "记录",
+    id: "models",
+    label: "模型管理",
+    items: [{ id: "models", label: "模型目录", icon: Layers3 }]
+  },
+  {
+    id: "content",
+    label: "内容管理",
+    items: [
+      { id: "assistants", label: "助手库", icon: Bot },
+      { id: "apps", label: "应用预设", icon: Layers3 },
+      { id: "prompts", label: "提示词预设", icon: FileText }
+    ]
+  },
+  {
+    id: "knowledge",
+    label: "知识库运营",
+    items: [
+      { id: "knowledge-overview", label: "知识库概览", icon: Database },
+      { id: "knowledge-accounts", label: "知识库账号", icon: Users },
+      { id: "knowledge-registration", label: "注册与邀请码", icon: KeyRound },
+      { id: "knowledge-limits", label: "运行限额", icon: Gauge },
+      { id: "knowledge-jobs", label: "任务与存储", icon: Activity },
+      { id: "knowledge-audit", label: "知识库审计", icon: FileText }
+    ]
+  },
+  {
+    id: "audit",
+    label: "审计",
     items: [{ id: "audit", label: "审计记录", icon: FileText }]
   }
 ];
@@ -116,43 +172,106 @@ const adminNavigationGroups: Array<{
 const adminSectionDetails: Record<AdminSectionId, { eyebrow: string; title: string; description: string }> = {
   overview: {
     eyebrow: "OVERVIEW",
-    title: "概览与运维",
-    description: "检查运行状态、备份和工具权限。"
+    title: "运行概览",
+    description: "检查服务状态、配置完整性和元数据备份。"
+  },
+  tools: {
+    eyebrow: "TOOLS",
+    title: "工具权限",
+    description: "控制应用工具、独立联网搜索和厂商托管工具。"
   },
   site: {
     eyebrow: "SITE",
-    title: "站点与菜单",
-    description: "维护站点名称和前台功能入口。"
+    title: "站点设置",
+    description: "维护站点名称和访客使用策略。"
+  },
+  menus: {
+    eyebrow: "NAVIGATION",
+    title: "前台菜单",
+    description: "配置前台功能入口的名称、可见性和启用状态。"
   },
   models: {
     eyebrow: "MODELS",
     title: "模型目录",
-    description: "配置前台可选择的厂商、模型与能力。"
+    description: "维护前台显示名称、实际请求模型名和模型能力。"
   },
-  content: {
-    eyebrow: "CONTENT",
-    title: "助手与预设",
-    description: "维护助手、应用和提示词内容。"
+  assistants: {
+    eyebrow: "ASSISTANTS",
+    title: "助手库",
+    description: "维护前台可使用的助手分类、提示词和开场问题。"
+  },
+  apps: {
+    eyebrow: "APPLICATIONS",
+    title: "应用预设",
+    description: "维护可通过对话命令启动的应用提示词。"
+  },
+  prompts: {
+    eyebrow: "PROMPTS",
+    title: "提示词预设",
+    description: "维护各功能页面可直接使用的提示词预设。"
   },
   audit: {
     eyebrow: "AUDIT",
     title: "审计记录",
     description: "查询并导出后台操作记录。"
+  },
+  "knowledge-overview": {
+    eyebrow: "KNOWLEDGE / OVERVIEW",
+    title: "知识库概览",
+    description: "查看知识账号、容量、文档和任务的安全运营摘要。"
+  },
+  "knowledge-accounts": {
+    eyebrow: "KNOWLEDGE / ACCOUNTS",
+    title: "知识库账号",
+    description: "搜索账号、管理冻结状态、会话和一次性重置流程。"
+  },
+  "knowledge-registration": {
+    eyebrow: "KNOWLEDGE / REGISTRATION",
+    title: "注册与邀请码",
+    description: "控制注册模式并维护只显示一次的邀请码。"
+  },
+  "knowledge-limits": {
+    eyebrow: "KNOWLEDGE / LIMITS",
+    title: "运行限额",
+    description: "调整全局容量、数量、并发和检索上限。"
+  },
+  "knowledge-jobs": {
+    eyebrow: "KNOWLEDGE / JOBS",
+    title: "任务与存储",
+    description: "查看解析、清理、对账和索引任务状态。"
+  },
+  "knowledge-audit": {
+    eyebrow: "KNOWLEDGE / AUDIT",
+    title: "知识库审计",
+    description: "查询不可修改的知识库后台操作记录。"
   }
 };
 
-const adminSectionElementIds: Record<AdminSectionId, string> = {
-  overview: "admin-section-overview",
-  site: "admin-section-site",
-  models: "admin-section-models",
-  content: "admin-section-content",
-  audit: "admin-section-audit"
+const adminCapabilityLabels: Record<ModelCapability, string> = {
+  chat: "对话",
+  vision: "图片理解",
+  image: "图片生成",
+  imageEdit: "图片编辑",
+  tts: "语音合成",
+  stt: "语音识别",
+  audio: "音频理解",
+  video: "视频生成",
+  embedding: "向量嵌入",
+  fileSearch: "文件检索",
+  toolCalling: "函数工具调用",
+  webSearch: "联网搜索",
+  urlContext: "网页读取",
+  codeExecution: "代码执行",
+  streaming: "流式输出"
 };
 
 const vendorOptions: Array<{ value: ProviderKind; label: string }> = [
   { value: "openai", label: "OpenAI" },
   { value: "anthropic", label: "Claude" },
   { value: "gemini", label: "Gemini" },
+  { value: "kimi", label: "Kimi" },
+  { value: "deepseek", label: "DeepSeek" },
+  { value: "qwen", label: "通义千问（Qwen）" },
   { value: "openai-compatible", label: "OpenAI Compatible" }
 ];
 
@@ -160,6 +279,7 @@ const capabilityOptions: Array<{ value: ModelCapability; label: string }> = [
   { value: "chat", label: "对话" },
   { value: "vision", label: "多模态" },
   { value: "image", label: "画图" },
+  { value: "imageEdit", label: "图片编辑" },
   { value: "tts", label: "语音合成" },
   { value: "stt", label: "语音识别" },
   { value: "audio", label: "音频" },
@@ -167,6 +287,9 @@ const capabilityOptions: Array<{ value: ModelCapability; label: string }> = [
   { value: "embedding", label: "向量" },
   { value: "fileSearch", label: "检索" },
   { value: "toolCalling", label: "工具" },
+  { value: "webSearch", label: "托管搜索" },
+  { value: "urlContext", label: "网页读取" },
+  { value: "codeExecution", label: "代码执行" },
   { value: "streaming", label: "流式" }
 ];
 
@@ -181,8 +304,8 @@ const defaultForOptions: Array<{ value: ModelDefaultFor; label: string }> = [
 
 const emptyModelDraft: ModelDraft = {
   vendor: "openai",
-  model: "gpt-4.1-mini",
-  label: "GPT-4.1 Mini",
+  model: "gpt-5.6-luna",
+  label: "GPT-5.6 Luna",
   capabilities: ["chat", "vision", "toolCalling", "streaming"],
   defaultFor: [],
   enabled: true,
@@ -192,8 +315,12 @@ const emptyModelDraft: ModelDraft = {
 const emptyAssistantDraft: AssistantDraft = {
   name: "新助手",
   description: "适合一个具体场景的助手。",
+  category: "通用效率",
+  tags: "问答, 效率",
+  starterPrompts: "帮我开始处理这个任务",
   color: "#ff2442",
-  systemPrompt: "你是一个可靠的中文 AI 助手。回答要清晰、准确、可执行。"
+  systemPrompt: "你是一个可靠的中文 AI 助手。回答要清晰、准确、可执行。",
+  enabled: true
 };
 
 const emptyAppPresetDraft: AppPresetDraft = {
@@ -238,8 +365,25 @@ function assistantDraft(entry?: Assistant): AssistantDraft {
   return {
     name: entry.name,
     description: entry.description,
+    category: entry.category,
+    tags: entry.tags.join(", "),
+    starterPrompts: entry.starterPrompts.join("\n"),
     color: entry.color,
-    systemPrompt: entry.systemPrompt
+    systemPrompt: entry.systemPrompt,
+    enabled: entry.enabled
+  };
+}
+
+function assistantPayload(draft: AssistantDraft): Partial<Assistant> {
+  return {
+    name: draft.name,
+    description: draft.description,
+    category: draft.category,
+    tags: [...new Set(draft.tags.split(/[,，\r\n]+/).map((tag) => tag.trim()).filter(Boolean))],
+    starterPrompts: [...new Set(draft.starterPrompts.split(/[\r\n]+/).map((prompt) => prompt.trim()).filter(Boolean))],
+    color: draft.color,
+    systemPrompt: draft.systemPrompt,
+    enabled: draft.enabled
   };
 }
 
@@ -319,6 +463,9 @@ export function AdminConsole({
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const contentScrollRef = useRef<HTMLDivElement | null>(null);
   const [activeSection, setActiveSection] = useState<AdminSectionId>("overview");
+  const [expandedNavigationGroups, setExpandedNavigationGroups] = useState<AdminNavigationGroupId[]>([
+    "operations"
+  ]);
   const [confirmation, setConfirmation] = useState<AdminConfirmation | null>(null);
   const [confirmationBusy, setConfirmationBusy] = useState(false);
   const [settingsDraft, setSettingsDraft] = useState<SiteSettings>(bootstrap.settings);
@@ -328,6 +475,7 @@ export function AdminConsole({
   );
   const selectedModel = bootstrap.modelCatalog.find((entry) => entry.id === selectedModelId);
   const [modelForm, setModelForm] = useState<ModelDraft>(modelDraft(selectedModel));
+  const [showModelFieldErrors, setShowModelFieldErrors] = useState(false);
   const [selectedAssistantId, setSelectedAssistantId] = useState<string | "new">(
     bootstrap.assistants[0]?.id || "new"
   );
@@ -358,8 +506,10 @@ export function AdminConsole({
   }, [bootstrap]);
 
   useEffect(() => {
+    if (selectedModelId === "new") return;
     setModelForm(modelDraft(selectedModel));
-  }, [selectedModel]);
+    setShowModelFieldErrors(false);
+  }, [selectedModel, selectedModelId]);
 
   useEffect(() => {
     setAssistantForm(assistantDraft(selectedAssistant));
@@ -401,7 +551,9 @@ export function AdminConsole({
     return [...groups.entries()];
   }, [bootstrap.modelCatalog]);
   const sortedAssistants = useMemo(
-    () => [...bootstrap.assistants].sort((a, b) => a.name.localeCompare(b.name)),
+    () => [...bootstrap.assistants].sort((a, b) =>
+      `${a.category}-${a.name}`.localeCompare(`${b.category}-${b.name}`, "zh-CN")
+    ),
     [bootstrap.assistants]
   );
   const sortedApps = useMemo(
@@ -416,12 +568,30 @@ export function AdminConsole({
     [bootstrap.promptPresets]
   );
   const activeSectionDetails = adminSectionDetails[activeSection];
+  const modelDisplayNameMissing = !modelForm.label.trim();
+  const modelRequestNameMissing = !modelForm.model.trim();
 
   const openSection = (sectionId: AdminSectionId) => {
+    const group = adminNavigationGroups.find((item) =>
+      item.items.some((navigationItem) => navigationItem.id === sectionId)
+    );
+    if (group) {
+      setExpandedNavigationGroups((current) =>
+        current.includes(group.id) ? current : [...current, group.id]
+      );
+    }
     setActiveSection(sectionId);
     window.requestAnimationFrame(() => {
-      document.getElementById(adminSectionElementIds[sectionId])?.scrollIntoView({ block: "start" });
+      contentScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
     });
+  };
+
+  const toggleNavigationGroup = (groupId: AdminNavigationGroupId) => {
+    setExpandedNavigationGroups((current) =>
+      current.includes(groupId)
+        ? current.filter((item) => item !== groupId)
+        : [...current, groupId]
+    );
   };
 
   const requestConfirmation = (nextConfirmation: AdminConfirmation) => {
@@ -473,6 +643,7 @@ export function AdminConsole({
     const preset = modelCatalogPresets.find((item) => item.id === presetId);
     if (!preset) return;
     setSelectedModelId("new");
+    setShowModelFieldErrors(false);
     setModelForm({
       vendor: preset.vendor,
       model: preset.model,
@@ -612,8 +783,23 @@ export function AdminConsole({
     event.preventDefault();
     onError("");
     onNotice("");
+    setShowModelFieldErrors(true);
+    const label = modelForm.label.trim();
+    const model = modelForm.model.trim();
+    if (!label || !model) {
+      onError(
+        !label && !model
+          ? "请填写前台显示名称和实际请求模型名"
+          : !label
+            ? "请填写前台显示名称"
+            : "请填写实际请求模型名"
+      );
+      return;
+    }
     const payload: ModelCatalogPayload = {
       ...modelForm,
+      label,
+      model,
       capabilities: modelForm.capabilities.length ? modelForm.capabilities : ["chat"],
       defaultFor: modelForm.defaultFor
     };
@@ -629,6 +815,7 @@ export function AdminConsole({
           : bootstrap.modelCatalog.map((item) => (item.id === entry.id ? entry : item));
       onBootstrapChange({ ...bootstrap, modelCatalog });
       setSelectedModelId(entry.id);
+      setShowModelFieldErrors(false);
       await onPublicRefresh();
       onNotice("模型目录已保存");
     } catch (err: unknown) {
@@ -668,8 +855,8 @@ export function AdminConsole({
     try {
       const assistant =
         selectedAssistantId === "new"
-          ? await api.createAssistant(assistantForm)
-          : await api.updateAssistant(selectedAssistantId, assistantForm);
+          ? await api.createAssistant(assistantPayload(assistantForm))
+          : await api.updateAssistant(selectedAssistantId, assistantPayload(assistantForm));
       const assistants =
         selectedAssistantId === "new"
           ? [assistant, ...bootstrap.assistants]
@@ -835,26 +1022,42 @@ export function AdminConsole({
       <div className="admin-console-layout">
         <aside className="admin-sidebar">
           <nav className="admin-sidebar-nav" aria-label="后台管理分区">
-            {adminNavigationGroups.map((group) => (
-              <div key={group.label} className="admin-nav-group">
-                <p>{group.label}</p>
-                {group.items.map((item) => {
-                  const Icon = item.icon;
-                  return (
-                    <button
-                      key={item.id}
-                      type="button"
-                      className={activeSection === item.id ? "is-active" : undefined}
-                      aria-current={activeSection === item.id ? "page" : undefined}
-                      onClick={() => openSection(item.id)}
-                    >
-                      <Icon size={17} />
-                      <span>{item.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            ))}
+            {adminNavigationGroups.map((group) => {
+              const expanded = expandedNavigationGroups.includes(group.id);
+              const containsActiveSection = group.items.some((item) => item.id === activeSection);
+              const groupItemsId = `admin-nav-items-${group.id}`;
+              return (
+                <div key={group.id} className="admin-nav-group">
+                  <button
+                    type="button"
+                    className={`admin-nav-group-toggle${containsActiveSection ? " has-active" : ""}`}
+                    aria-expanded={expanded}
+                    aria-controls={groupItemsId}
+                    onClick={() => toggleNavigationGroup(group.id)}
+                  >
+                    <span>{group.label}</span>
+                    <ChevronDown size={15} aria-hidden="true" />
+                  </button>
+                  <div id={groupItemsId} className="admin-nav-items" hidden={!expanded}>
+                    {group.items.map((item) => {
+                      const Icon = item.icon;
+                      return (
+                        <button
+                          key={item.id}
+                          type="button"
+                          className={activeSection === item.id ? "is-active" : undefined}
+                          aria-current={activeSection === item.id ? "page" : undefined}
+                          onClick={() => openSection(item.id)}
+                        >
+                          <Icon size={17} />
+                          <span>{item.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
           </nav>
         </aside>
 
@@ -892,6 +1095,16 @@ export function AdminConsole({
             ) : null}
             {error ? <p className="form-error" role="alert">{error}</p> : null}
 
+      {activeSection.startsWith("knowledge-") ? (
+        <KnowledgeAdminSection
+          section={activeSection as KnowledgeAdminSectionId}
+          onNotice={onNotice}
+          onError={onError}
+          requestConfirmation={requestConfirmation}
+        />
+      ) : null}
+
+      {activeSection === "overview" ? (
       <section id="admin-section-overview" className="admin-section admin-ops-panel">
         <div className="section-title">
           <ServerCog size={17} />
@@ -993,17 +1206,19 @@ export function AdminConsole({
           ))}
         </div>
       </section>
+      ) : null}
 
-      <section className="admin-section admin-tools-section">
+      {activeSection === "tools" ? (
+      <section id="admin-section-tools" className="admin-section admin-tools-section">
         <div className="section-title">
           <ServerCog size={17} />
           <h2>工具权限</h2>
         </div>
         <fieldset className="admin-option-fieldset">
           <legend>可用工具</legend>
-          <div className="admin-chip-group">
+          <div className="admin-tool-grid">
             {toolDraft.map((tool) => (
-              <label key={tool.name} className="admin-chip-check">
+              <label key={tool.name} className="admin-tool-card">
                 <input
                   type="checkbox"
                   checked={tool.enabled}
@@ -1015,7 +1230,18 @@ export function AdminConsole({
                     )
                   }
                 />
-                {tool.label}
+                <span className="admin-tool-card-copy">
+                  <span className="admin-tool-card-heading">
+                    <strong>{tool.label}</strong>
+                    <b>{tool.execution === "search" ? "独立搜索" : tool.execution === "provider" ? "厂商托管" : "应用执行"}</b>
+                  </span>
+                  <small>{tool.description}</small>
+                  <span className="admin-tool-card-meta">
+                    <em>{tool.execution === "search" ? "不依赖主模型能力" : adminCapabilityLabels[tool.requiredCapability || "toolCalling"]}</em>
+                    <em>{tool.execution === "search" ? "独立搜索服务" : (tool.supportedVendors || []).map((vendor) => vendorLabels[vendor] || vendor).join(" / ") || "全部厂商"}</em>
+                    {tool.requiresContext ? <em>需要请求上下文</em> : null}
+                  </span>
+                </span>
               </label>
             ))}
           </div>
@@ -1025,7 +1251,9 @@ export function AdminConsole({
           保存工具权限
         </button>
       </section>
+      ) : null}
 
+      {activeSection === "site" ? (
       <section id="admin-section-site" className="admin-section">
         <div className="section-title">
           <ServerCog size={17} />
@@ -1058,8 +1286,10 @@ export function AdminConsole({
           保存系统设置
         </button>
       </section>
+      ) : null}
 
-      <section className="admin-section admin-menu-section">
+      {activeSection === "menus" ? (
+      <section id="admin-section-menus" className="admin-section admin-menu-section">
         <div className="section-title">
           <ToggleLeft size={17} />
           <h2>菜单管理</h2>
@@ -1118,7 +1348,9 @@ export function AdminConsole({
           保存菜单
         </button>
       </section>
+      ) : null}
 
+      {activeSection === "models" ? (
       <section id="admin-section-models" className="admin-section">
         <div className="section-title">
           <Layers3 size={17} />
@@ -1140,14 +1372,21 @@ export function AdminConsole({
             <span>模型目录校验通过</span>
           </div>
         )}
-        <div className="model-preset-strip">
-          {modelCatalogPresets.map((preset) => (
-            <button key={preset.id} type="button" onClick={() => applyModelPreset(preset.id)}>
-              <Plus size={14} />
-              {preset.label}
-            </button>
-          ))}
-        </div>
+        <details className="admin-model-presets">
+          <summary>
+            <Plus size={15} />
+            添加模型预设
+            <span>{modelCatalogPresets.length}</span>
+          </summary>
+          <div className="model-preset-strip">
+            {modelCatalogPresets.map((preset) => (
+              <button key={preset.id} type="button" onClick={() => applyModelPreset(preset.id)}>
+                <Plus size={14} />
+                {preset.label}
+              </button>
+            ))}
+          </div>
+        </details>
         <details className="admin-public-preview">
           <summary>
             <Eye size={15} />
@@ -1168,7 +1407,12 @@ export function AdminConsole({
             <select
               id="admin-model-picker"
               value={selectedModelId}
-              onChange={(event) => setSelectedModelId(event.target.value)}
+              onChange={(event) => {
+                const modelId = event.target.value;
+                setSelectedModelId(modelId);
+                setShowModelFieldErrors(false);
+                if (modelId === "new") setModelForm(emptyModelDraft);
+              }}
             >
               {sortedCatalog.map((entry) => (
                 <option key={entry.id} value={entry.id}>
@@ -1185,6 +1429,7 @@ export function AdminConsole({
             title="新增模型"
             onClick={() => {
               setSelectedModelId("new");
+              setShowModelFieldErrors(false);
               setModelForm(emptyModelDraft);
             }}
           >
@@ -1192,9 +1437,9 @@ export function AdminConsole({
           </button>
         </div>
 
-        <form className="provider-form" onSubmit={saveModelEntry}>
-          <label>
-            厂商协议
+        <form className="provider-form" onSubmit={saveModelEntry} noValidate>
+          <label className="admin-model-vendor-field">
+            模型厂商
             <select
               value={modelForm.vendor}
               onChange={(event) =>
@@ -1211,26 +1456,60 @@ export function AdminConsole({
               ))}
             </select>
           </label>
-          <label>
-            展示名称
+          <label htmlFor="admin-model-display-name">
+            前台显示名称
             <input
+              id="admin-model-display-name"
+              aria-label="前台显示名称"
               value={modelForm.label}
               onChange={(event) =>
                 setModelForm((current) => ({ ...current, label: event.target.value }))
               }
-              placeholder="例如 GPT-4.1 Mini"
+              placeholder="例如 GPT-5.6 Luna"
+              required
+              aria-invalid={showModelFieldErrors && modelDisplayNameMissing}
+              aria-describedby={showModelFieldErrors && modelDisplayNameMissing ? "admin-model-label-error" : undefined}
             />
+            {showModelFieldErrors && modelDisplayNameMissing ? (
+              <small id="admin-model-label-error" className="admin-field-error">
+                前台显示名称不能为空
+              </small>
+            ) : null}
           </label>
-          <label>
-            模型名称
+          <label htmlFor="admin-model-request-name">
+            实际请求模型名
             <input
+              id="admin-model-request-name"
+              aria-label="实际请求模型名"
               value={modelForm.model}
               onChange={(event) =>
                 setModelForm((current) => ({ ...current, model: event.target.value }))
               }
-              placeholder="例如 gpt-4.1-mini"
+              placeholder="例如 gpt-5.6-luna"
+              required
+              aria-invalid={showModelFieldErrors && modelRequestNameMissing}
+              aria-describedby={showModelFieldErrors && modelRequestNameMissing ? "admin-model-name-error" : undefined}
             />
+            {showModelFieldErrors && modelRequestNameMissing ? (
+              <small id="admin-model-name-error" className="admin-field-error">
+                实际请求模型名不能为空
+              </small>
+            ) : null}
           </label>
+
+          <div className="admin-model-mapping-preview" aria-label="模型名称映射预览">
+            <span>
+              <small>前台显示</small>
+              <strong>{modelForm.label.trim() || "未填写"}</strong>
+            </span>
+            <ArrowRight size={17} aria-hidden="true" />
+            <span>
+              <small>实际请求</small>
+              <strong>
+                {vendorLabel(modelForm.vendor)} / <code>{modelForm.model.trim() || "未填写"}</code>
+              </strong>
+            </span>
+          </div>
 
           <fieldset className="admin-option-fieldset">
             <legend>模型能力</legend>
@@ -1374,8 +1653,10 @@ export function AdminConsole({
           </div>
         </form>
       </section>
+      ) : null}
 
-      <section id="admin-section-content" className="admin-section">
+      {activeSection === "assistants" ? (
+      <section id="admin-section-assistants" className="admin-section">
         <div className="section-title">
           <Bot size={17} />
           <h2>助手库</h2>
@@ -1390,7 +1671,7 @@ export function AdminConsole({
             >
               {sortedAssistants.map((assistant) => (
                 <option key={assistant.id} value={assistant.id}>
-                  {assistant.name}
+                  {assistant.category} / {assistant.name}{assistant.enabled ? "" : "（停用）"}
                 </option>
               ))}
               <option value="new">新增助手</option>
@@ -1425,6 +1706,23 @@ export function AdminConsole({
             />
           </label>
           <label>
+            分类
+            <input
+              aria-label="助手分类"
+              value={assistantForm.category}
+              onChange={(event) => setAssistantForm((current) => ({ ...current, category: event.target.value }))}
+            />
+          </label>
+          <label>
+            标签
+            <input
+              aria-label="助手标签"
+              value={assistantForm.tags}
+              onChange={(event) => setAssistantForm((current) => ({ ...current, tags: event.target.value }))}
+              placeholder="写作, 营销, 润色"
+            />
+          </label>
+          <label>
             颜色
             <input
               type="color"
@@ -1440,6 +1738,24 @@ export function AdminConsole({
               rows={5}
             />
           </label>
+          <label>
+            开场问题
+            <textarea
+              aria-label="助手开场问题"
+              value={assistantForm.starterPrompts}
+              onChange={(event) => setAssistantForm((current) => ({ ...current, starterPrompts: event.target.value }))}
+              rows={4}
+              placeholder="每行一个可直接使用的问题"
+            />
+          </label>
+          <label className="inline-check">
+            <input
+              type="checkbox"
+              checked={assistantForm.enabled}
+              onChange={(event) => setAssistantForm((current) => ({ ...current, enabled: event.target.checked }))}
+            />
+            前台启用
+          </label>
           <div className="admin-form-actions">
             <button type="submit" className="primary-action">
               <Save size={16} />
@@ -1454,8 +1770,10 @@ export function AdminConsole({
           </div>
         </form>
       </section>
+      ) : null}
 
-      <section className="admin-section admin-app-section">
+      {activeSection === "apps" ? (
+      <section id="admin-section-apps" className="admin-section admin-app-section">
         <div className="section-title">
           <Layers3 size={17} />
           <h2>应用预设</h2>
@@ -1531,8 +1849,10 @@ export function AdminConsole({
           </div>
         </form>
       </section>
+      ) : null}
 
-      <section className="admin-section admin-prompt-section">
+      {activeSection === "prompts" ? (
+      <section id="admin-section-prompts" className="admin-section admin-prompt-section">
         <div className="section-title">
           <FileText size={17} />
           <h2>提示词预设</h2>
@@ -1619,7 +1939,9 @@ export function AdminConsole({
           </div>
         </form>
       </section>
+      ) : null}
 
+      {activeSection === "audit" ? (
       <section id="admin-section-audit" className="admin-section">
         <div className="section-title">
           <FileText size={17} />
@@ -1664,6 +1986,7 @@ export function AdminConsole({
           </div>
         ) : null}
       </section>
+      ) : null}
 
           </div>
         </div>

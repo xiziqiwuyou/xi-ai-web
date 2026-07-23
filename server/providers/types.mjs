@@ -1,29 +1,47 @@
-export const providerKinds = new Set(["openai", "anthropic", "gemini", "openai-compatible"]);
+export const providerKinds = new Set([
+  "openai",
+  "anthropic",
+  "gemini",
+  "kimi",
+  "deepseek",
+  "qwen",
+  "openai-compatible"
+]);
 
 export const providerCapabilities = {
   openai: [
     "chat",
     "vision",
     "image",
+    "imageEdit",
     "tts",
     "stt",
     "embedding",
     "fileSearch",
     "toolCalling",
+    "webSearch",
+    "codeExecution",
     "streaming"
   ],
-  anthropic: ["chat", "vision", "toolCalling", "streaming"],
+  anthropic: ["chat", "vision", "toolCalling", "webSearch", "urlContext", "codeExecution", "streaming"],
   gemini: [
     "chat",
     "vision",
     "image",
+    "imageEdit",
     "tts",
     "stt",
     "embedding",
     "fileSearch",
     "toolCalling",
+    "webSearch",
+    "urlContext",
+    "codeExecution",
     "streaming"
   ],
+  kimi: ["chat", "vision", "toolCalling", "streaming"],
+  deepseek: ["chat", "toolCalling", "streaming"],
+  qwen: ["chat", "vision", "audio", "embedding", "toolCalling", "webSearch", "codeExecution", "streaming"],
   "openai-compatible": ["chat", "image", "tts", "stt", "embedding", "video", "toolCalling", "streaming"]
 };
 
@@ -32,9 +50,9 @@ export const providerDefaults = {
     name: "OpenAI",
     baseUrl: "https://api.openai.com/v1",
     models: {
-      chat: "gpt-4.1-mini",
-      vision: "gpt-4.1-mini",
-      image: "gpt-image-1",
+      chat: "gpt-5.6-luna",
+      vision: "gpt-5.6-luna",
+      image: "gpt-image-2",
       tts: "gpt-4o-mini-tts",
       stt: "gpt-4o-transcribe",
       embedding: "text-embedding-3-small"
@@ -44,20 +62,44 @@ export const providerDefaults = {
     name: "Claude",
     baseUrl: "https://api.anthropic.com/v1",
     models: {
-      chat: "claude-sonnet-4-5",
-      vision: "claude-sonnet-4-5"
+      chat: "claude-opus-4-8",
+      vision: "claude-opus-4-8"
     }
   },
   gemini: {
     name: "Gemini",
     baseUrl: "https://generativelanguage.googleapis.com/v1beta",
     models: {
-      chat: "gemini-2.5-flash",
-      vision: "gemini-2.5-flash",
-      image: "gemini-2.5-flash-image",
+      chat: "gemini-3.5-flash",
+      vision: "gemini-3.5-flash",
+      image: "gemini-3.1-flash-image",
       tts: "gemini-2.5-flash-preview-tts",
-      stt: "gemini-2.5-flash",
-      embedding: "gemini-embedding-001"
+      stt: "gemini-3.5-flash",
+      embedding: "gemini-embedding-2"
+    }
+  },
+  kimi: {
+    name: "Kimi",
+    baseUrl: "https://api.moonshot.ai/v1",
+    models: {
+      chat: "kimi-k3",
+      vision: "kimi-k2.6"
+    }
+  },
+  deepseek: {
+    name: "DeepSeek",
+    baseUrl: "https://api.deepseek.com",
+    models: {
+      chat: "deepseek-v4-flash"
+    }
+  },
+  qwen: {
+    name: "Qwen",
+    baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    models: {
+      chat: "qwen3.7-plus",
+      vision: "qwen3.5-omni-plus",
+      embedding: "text-embedding-v4"
     }
   },
   "openai-compatible": {
@@ -116,6 +158,7 @@ export async function fetchJson(url, { headers, body, signal }) {
     method: "POST",
     headers: { "Content-Type": "application/json", ...(headers || {}) },
     body: JSON.stringify(body),
+    redirect: "error",
     signal
   });
   const contentType = response.headers.get("content-type") || "";
@@ -132,6 +175,7 @@ export async function fetchAsset(url, { headers, body, signal }) {
     method: "POST",
     headers: { "Content-Type": "application/json", ...(headers || {}) },
     body: JSON.stringify(body),
+    redirect: "error",
     signal
   });
   const contentType = response.headers.get("content-type") || "";
@@ -147,21 +191,32 @@ export async function fetchAsset(url, { headers, body, signal }) {
 }
 
 export async function fetchMultipartJson(url, { headers, fields, file, signal }) {
+  return fetchMultipartForm(url, {
+    headers,
+    fields,
+    files: file ? [file] : [],
+    signal
+  });
+}
+
+export async function fetchMultipartForm(url, { headers, fields, files, signal }) {
   const form = new FormData();
   Object.entries(fields || {}).forEach(([key, value]) => {
     if (value !== undefined && value !== null) form.append(key, String(value));
   });
-  if (file?.buffer) {
+  (Array.isArray(files) ? files : []).forEach((file) => {
+    if (!file?.buffer) return;
     form.append(
       file.fieldName || "file",
       new Blob([file.buffer], { type: file.mimeType || "application/octet-stream" }),
-      file.fileName || "audio.webm"
+      file.fileName || "upload.bin"
     );
-  }
+  });
   const response = await fetch(url, {
     method: "POST",
     headers: { ...(headers || {}) },
     body: form,
+    redirect: "error",
     signal
   });
   const raw = await response.text();

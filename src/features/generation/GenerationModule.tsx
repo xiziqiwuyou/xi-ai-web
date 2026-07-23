@@ -3,6 +3,7 @@ import { Heart, Image as ImageIcon, RotateCcw, Trash2, Wand2 } from "lucide-reac
 import { api } from "../../api";
 import AssetGallery from "../../components/workbench/AssetGallery";
 import EmptyState from "../../components/workbench/EmptyState";
+import { MasonryGrid } from "../../components/ui";
 import {
   ConnectionStatus,
   GenerationOptions,
@@ -361,35 +362,36 @@ function GenerationModule({
             <span>{imageItems.length ? `${imageItems.length} 张` : "暂无记录"}</span>
           </header>
           {imageItems.length ? (
-            <div className="image-history-grid" aria-label="已生成图片">
+            <MasonryGrid className="image-history-grid" label="已生成图片">
               {imageItems.map((item) => {
                 const imageUrl = firstImageUrl(item);
                 return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    className={item.id === selectedImage?.id ? "image-history-card active" : "image-history-card"}
-                    aria-pressed={item.id === selectedImage?.id}
-                    onClick={() => {
-                      setSelectedImageId(item.id);
-                      setMobileView("preview");
-                    }}
-                  >
-                    {imageUrl ? (
-                      <img src={imageUrl} alt={item.title} />
-                    ) : (
-                      <span className="image-history-fallback">
-                        <ImageIcon size={20} />
+                  <div key={item.id} className="masonry-item" role="listitem">
+                    <button
+                      type="button"
+                      className={item.id === selectedImage?.id ? "image-history-card active" : "image-history-card"}
+                      aria-pressed={item.id === selectedImage?.id}
+                      onClick={() => {
+                        setSelectedImageId(item.id);
+                        setMobileView("preview");
+                      }}
+                    >
+                      {imageUrl ? (
+                        <img src={imageUrl} alt={item.title} />
+                      ) : (
+                        <span className="image-history-fallback">
+                          <ImageIcon size={20} />
+                        </span>
+                      )}
+                      <span>
+                        <strong>{item.title}</strong>
+                        <small>{item.prompt || "未记录提示词"}</small>
                       </span>
-                    )}
-                    <span>
-                      <strong>{item.title}</strong>
-                      <small>{item.prompt || "未记录提示词"}</small>
-                    </span>
-                  </button>
+                    </button>
+                  </div>
                 );
               })}
-            </div>
+            </MasonryGrid>
           ) : (
             <EmptyState icon={ImageIcon} title="暂无历史" description="生成后的图片会保留在这里。" />
           )}

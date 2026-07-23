@@ -28,13 +28,14 @@ function mapTools(tools = []) {
 
 function normalizeMessages(messages = []) {
   return messages.map((message) => ({
+    ...message,
     role: message.role,
     content: mapOpenAICompatibleContent(message.content)
   }));
 }
 
 function mapOpenAICompatibleContent(content) {
-  if (!Array.isArray(content)) return content || "";
+  if (!Array.isArray(content)) return content ?? "";
   return content
     .map((part) => {
       if (part?.type === "image" && part.dataUrl) {
@@ -53,13 +54,30 @@ function extractEmbeddings(json) {
     .filter((embedding) => Array.isArray(embedding));
 }
 
-async function streamChat({ provider, model, messages, temperature, signal, onToken }) {
+function chatRequestBody(
+  { model, messages, temperature, topP, maxTokens, stream, tools },
+  normalizeChatBody
+) {
+  const body = {
+    model,
+    messages: normalizeMessages(messages),
+    temperature: Number.isFinite(Number(temperature)) ? Number(temperature) : undefined,
+    top_p: Number.isFinite(Number(topP)) ? Number(topP) : undefined,
+    max_tokens: Number.isFinite(Number(maxTokens)) ? Math.max(1, Math.trunc(Number(maxTokens))) : undefined,
+    stream,
+    tools
+  };
+  return normalizeChatBody ? normalizeChatBody(body, { model }) : body;
+}
+
+async function streamChat({ provider, model, messages, temperature, topP, maxTokens, signal, onToken, normalizeChatBody }) {
   assertCapability(provider, "chat");
   if (hasImageContent(messages)) assertCapability(provider, "vision");
   const response = await fetch(providerUrl(provider, "/chat/completions"), {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders(provider) },
-    body: JSON.stringify({ model, messages: normalizeMessages(messages), temperature, stream: true }),
+    body: JSON.stringify(chatRequestBody({ model, messages, temperature, topP, maxTokens, stream: true }, normalizeChatBody)),
+    redirect: "error",
     signal
   });
 
@@ -106,10 +124,13 @@ async function completeWithTools({
   model,
   messages,
   temperature,
+  topP,
+  maxTokens,
   tools,
   runTool,
   maxToolRounds = 4,
-  signal
+  signal,
+  normalizeChatBody
 }) {
   assertCapability(provider, "chat");
   if (hasImageContent(messages)) assertCapability(provider, "vision");
@@ -120,13 +141,15 @@ async function completeWithTools({
   for (let round = 0; round <= maxToolRounds; round += 1) {
     const json = await fetchJson(providerUrl(provider, "/chat/completions"), {
       headers: authHeaders(provider),
-      body: {
+      body: chatRequestBody({
         model,
         messages: nextMessages,
         temperature,
+        topP,
+        maxTokens,
         stream: false,
         tools: mappedTools.length ? mappedTools : undefined
-      },
+      }, normalizeChatBody),
       signal
     });
     const message = json.choices?.[0]?.message;
@@ -134,8 +157,9 @@ async function completeWithTools({
     if (!toolCalls.length) return extractOpenAICompatibleText(json);
 
     nextMessages.push({
+      ...message,
       role: "assistant",
-      content: message.content || null,
+      content: message.content ?? null,
       tool_calls: toolCalls
     });
 
@@ -160,23 +184,45 @@ async function completeWithTools({
 }
 
 async function completeText(params) {
-  const { provider, model, messages, temperature, signal, tools, runTool } = params;
+  const { provider, model, messages, temperature, topP, maxTokens, signal, tools, runTool, normalizeChatBody } = params;
   if (tools?.length && runTool) return completeWithTools(params);
   assertCapability(provider, "chat");
   if (hasImageContent(messages)) assertCapability(provider, "vision");
   const json = await fetchJson(providerUrl(provider, "/chat/completions"), {
     headers: authHeaders(provider),
-    body: { model, messages: normalizeMessages(messages), temperature, stream: false },
+    body: chatRequestBody({ model, messages, temperature, topP, maxTokens, stream: false }, normalizeChatBody),
     signal
   });
   return extractOpenAICompatibleText(json);
 }
 
-async function generateImage({ provider, model, prompt, size, signal }) {
+async function generateImage({
+  provider,
+  model,
+  prompt,
+  mode,
+  size,
+  count,
+  quality,
+  outputFormat,
+  outputCompression,
+  signal
+}) {
   assertCapability(provider, "image");
+  if (mode === "edit") {
+    throw new Error("通用 OpenAI Compatible 适配器未声明图片编辑协议，请选择 OpenAI 或 Gemini 厂商模型");
+  }
   return fetchJson(providerUrl(provider, "/images/generations"), {
     headers: authHeaders(provider),
-    body: { model, prompt, n: 1, size },
+    body: {
+      model,
+      prompt,
+      n: Number.isFinite(Number(count)) ? Math.max(1, Math.min(10, Math.trunc(Number(count)))) : 1,
+      size,
+      quality,
+      output_format: outputFormat,
+      output_compression: outputFormat === "jpeg" || outputFormat === "webp" ? outputCompression : undefined
+    },
     signal
   });
 }
@@ -238,11 +284,25 @@ async function transcribeAudio({ provider, model, fileBuffer, fileName, mimeType
   });
 }
 
-export function createOpenAICompatibleAdapter(provider) {
+export function createOpenAICompatibleAdapter(
+  provider,
+  { kind = "openai-compatible", normalizeChatBody } = {}
+) {
+  const rejectHostedTools = (params = {}) => {
+    if (Array.isArray(params.hostedTools) && params.hostedTools.length) {
+      throw new Error(`${kind} adapter does not support provider-hosted tools`);
+    }
+  };
   return {
-    kind: "openai-compatible",
-    streamChat: (params) => streamChat({ provider, ...params }),
-    completeText: (params) => completeText({ provider, ...params }),
+    kind,
+    streamChat: (params) => {
+      rejectHostedTools(params);
+      return streamChat({ provider, normalizeChatBody, ...params });
+    },
+    completeText: (params) => {
+      rejectHostedTools(params);
+      return completeText({ provider, normalizeChatBody, ...params });
+    },
     generateImage: (params) => generateImage({ provider, ...params }),
     synthesizeSpeech: (params) => synthesizeSpeech({ provider, ...params }),
     transcribeAudio: (params) => transcribeAudio({ provider, ...params }),

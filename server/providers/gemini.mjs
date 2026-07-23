@@ -37,13 +37,33 @@ function mapGeminiParts(content) {
     .filter(Boolean);
 }
 
-function mapTools(tools = []) {
+function mapHostedTools(hostedTools = []) {
+  return (Array.isArray(hostedTools) ? hostedTools : []).map((tool) => {
+    if (tool.name === "web_search") return { googleSearch: {} };
+    if (tool.name === "url_context") return { urlContext: {} };
+    if (tool.name === "code_execution") return { codeExecution: {} };
+    throw new Error(`Gemini hosted tool is not supported: ${tool.name}`);
+  });
+}
+
+function mapTools(tools = [], hostedTools = []) {
   const declarations = normalizeTools(tools).map((tool) => ({
     name: tool.name,
     description: tool.description,
     parameters: tool.parameters
   }));
-  return declarations.length ? [{ functionDeclarations: declarations }] : undefined;
+  const functionTools = declarations.length ? [{ functionDeclarations: declarations }] : [];
+  const mapped = [...functionTools, ...mapHostedTools(hostedTools)];
+  return mapped.length ? mapped : undefined;
+}
+
+function assertHostedCapabilities(provider, hostedTools = []) {
+  hostedTools.forEach((tool) => {
+    if (tool.name === "web_search") assertCapability(provider, "webSearch");
+    else if (tool.name === "url_context") assertCapability(provider, "urlContext");
+    else if (tool.name === "code_execution") assertCapability(provider, "codeExecution");
+    else throw new Error(`Gemini hosted tool is not supported: ${tool.name}`);
+  });
 }
 
 function extractText(json) {
@@ -77,22 +97,39 @@ function aspectRatioForSize(size) {
   return "1:1";
 }
 
+function generationConfig({ temperature, topP, maxTokens }) {
+  return {
+    temperature: Number.isFinite(Number(temperature)) ? Number(temperature) : undefined,
+    topP: Number.isFinite(Number(topP)) ? Number(topP) : undefined,
+    maxOutputTokens: Number.isFinite(Number(maxTokens))
+      ? Math.max(1, Math.trunc(Number(maxTokens)))
+      : undefined
+  };
+}
+
 async function completeWithTools({
   provider,
   model,
   messages,
   temperature,
+  topP,
+  maxTokens,
   tools,
+  hostedTools,
   runTool,
   maxToolRounds = 4,
   signal
 }) {
   assertCapability(provider, "chat");
   if (hasImageContent(messages)) assertCapability(provider, "vision");
-  assertCapability(provider, "toolCalling");
+  if (tools?.length) assertCapability(provider, "toolCalling");
+  assertHostedCapabilities(provider, hostedTools);
+  if (tools?.length && hostedTools?.length && !/^gemini-3(?:\.|-)/i.test(model)) {
+    throw new Error("Gemini 2.5 does not support combining provider-hosted tools with custom functions");
+  }
   const mapped = mapMessages(messages);
   const contents = [...mapped.contents];
-  const mappedTools = mapTools(tools);
+  const mappedTools = mapTools(tools, hostedTools);
 
   for (let round = 0; round <= maxToolRounds; round += 1) {
     const json = await fetchJson(providerUrl(provider, `/models/${encodeURIComponent(model)}:generateContent`), {
@@ -100,7 +137,7 @@ async function completeWithTools({
       body: {
         contents,
         systemInstruction: mapped.system ? { parts: [{ text: mapped.system }] } : undefined,
-        generationConfig: { temperature },
+        generationConfig: generationConfig({ temperature, topP, maxTokens }),
         tools: mappedTools
       },
       signal
@@ -118,7 +155,10 @@ async function completeWithTools({
         toolCalls.map(async (toolCall) => ({
           functionResponse: {
             name: toolCall.name,
-            response: toFunctionResponse(await runTool(toolCall))
+            response: toFunctionResponse(await (() => {
+              if (!runTool) throw new Error(`No local executor is available for tool: ${toolCall.name}`);
+              return runTool(toolCall);
+            })())
           }
         }))
       )
@@ -129,8 +169,8 @@ async function completeWithTools({
 }
 
 async function completeText(params) {
-  const { provider, model, messages, temperature, signal, tools, runTool } = params;
-  if (tools?.length && runTool) return completeWithTools(params);
+  const { provider, model, messages, temperature, topP, maxTokens, signal, tools, hostedTools } = params;
+  if (tools?.length || hostedTools?.length) return completeWithTools(params);
   assertCapability(provider, "chat");
   if (hasImageContent(messages)) assertCapability(provider, "vision");
   const mapped = mapMessages(messages);
@@ -139,26 +179,76 @@ async function completeText(params) {
     body: {
       contents: mapped.contents,
       systemInstruction: mapped.system ? { parts: [{ text: mapped.system }] } : undefined,
-      generationConfig: { temperature }
+      generationConfig: generationConfig({ temperature, topP, maxTokens })
     },
     signal
   });
   return extractText(json) || JSON.stringify(json);
 }
 
-async function generateImage({ provider, model, prompt, size, signal }) {
+function imagePart(input) {
+  const payload = dataUrlPayload(input?.dataUrl);
+  if (!payload) throw new Error("Invalid image input");
+  return { inlineData: { mimeType: input?.mimeType || payload.mimeType, data: payload.base64 } };
+}
+
+function normalizedImageCount(count) {
+  return Number.isFinite(Number(count)) ? Math.max(1, Math.min(4, Math.trunc(Number(count)))) : 1;
+}
+
+function normalizedImageSize(model, imageSize) {
+  if (!/^gemini-3(?:\.|-)/i.test(model)) return undefined;
+  return ["512px", "1K", "2K", "4K"].includes(imageSize) ? imageSize : "1K";
+}
+
+async function generateImage({
+  provider,
+  model,
+  prompt,
+  mode,
+  inputImage,
+  maskImage,
+  size,
+  aspectRatio,
+  imageSize,
+  count,
+  signal
+}) {
   assertCapability(provider, "image");
-  return fetchJson(providerUrl(provider, `/models/${encodeURIComponent(model)}:generateContent`), {
+  if (mode === "edit") assertCapability(provider, "imageEdit");
+  const parts = [{ text: prompt }];
+  if (mode === "edit") {
+    if (!inputImage?.dataUrl) throw new Error("Image editing requires an input image");
+    parts.push(imagePart(inputImage));
+    if (maskImage?.dataUrl) {
+      parts[0] = {
+        text: `${prompt}\nThe final attached image is a semantic mask. Apply the requested edit only to the masked region.`
+      };
+      parts.push(imagePart(maskImage));
+    }
+  }
+
+  const request = () => fetchJson(providerUrl(provider, `/models/${encodeURIComponent(model)}:generateContent`), {
     headers: authHeaders(provider),
     body: {
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      contents: [{ role: "user", parts }],
       generationConfig: {
         responseModalities: ["TEXT", "IMAGE"],
-        imageConfig: aspectRatioForSize(size) ? { aspectRatio: aspectRatioForSize(size) } : undefined
+        imageConfig: {
+          aspectRatio: aspectRatio || aspectRatioForSize(size),
+          imageSize: normalizedImageSize(model, imageSize)
+        }
       }
     },
     signal
   });
+
+  const responses = await Promise.all(Array.from({ length: normalizedImageCount(count) }, request));
+  return {
+    candidates: responses.flatMap((response) => Array.isArray(response?.candidates) ? response.candidates : []),
+    text: responses.map(extractText).filter(Boolean).join("\n"),
+    responses
+  };
 }
 
 async function synthesizeSpeech({ provider, model, input, voice, signal }) {

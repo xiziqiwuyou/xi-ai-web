@@ -1,8 +1,12 @@
 import { createAnthropicAdapter } from "../server/providers/anthropic.mjs";
+import { createDeepSeekAdapter } from "../server/providers/deepseek.mjs";
 import { createGeminiAdapter } from "../server/providers/gemini.mjs";
+import { createKimiAdapter } from "../server/providers/kimi.mjs";
 import { createOpenAIAdapter } from "../server/providers/openai.mjs";
 import { createOpenAICompatibleAdapter } from "../server/providers/openai-compatible.mjs";
+import { createQwenAdapter } from "../server/providers/qwen.mjs";
 import { defaultCapabilities } from "../server/providers/types.mjs";
+import { buildRuntimeProvider, findModelEntry } from "../server/registry/model-registry.mjs";
 
 const originalFetch = globalThis.fetch;
 const imageDataUrl = "data:image/png;base64,aW1hZ2U=";
@@ -22,6 +26,10 @@ function assertIncludes(value, expected, message) {
   assert(String(value).includes(expected), `${message}. Missing ${expected} in ${value}`);
 }
 
+function assertAbsent(value, key, message) {
+  assert(!Object.prototype.hasOwnProperty.call(value, key), `${message}. Unexpected ${key}`);
+}
+
 function assertThrows(fn, pattern, message) {
   try {
     fn();
@@ -30,6 +38,16 @@ function assertThrows(fn, pattern, message) {
     return;
   }
   throw new Error(`${message}. Expected throw.`);
+}
+
+async function assertRejects(fn, pattern, message) {
+  try {
+    await fn();
+  } catch (error) {
+    assert(pattern.test(error.message), `${message}. Received ${error.message}`);
+    return;
+  }
+  throw new Error(`${message}. Expected rejection.`);
 }
 
 function jsonResponse(value, status = 200) {
@@ -155,8 +173,54 @@ function assertNoPendingFetch(label) {
   };
 }
 
+async function testCatalogModelMapping() {
+  const stableModelId = "catalog-short-label";
+  const shortDisplayLabel = "Quick Chat";
+  const actualRequestModel = "gpt-5.6-provider-production-chat-long-context-2026-07-21";
+  const catalog = [{
+    id: stableModelId,
+    vendor: "openai",
+    model: actualRequestModel,
+    label: shortDisplayLabel,
+    capabilities: ["chat"],
+    defaultFor: ["chat"],
+    enabled: true
+  }];
+  const requestPayload = { modelId: stableModelId };
+  const entry = findModelEntry(catalog, requestPayload.modelId);
+
+  assert(entry, "Stable model ID should resolve to a catalog entry");
+  assertEqual(entry.id, stableModelId, "Catalog resolution preserves the stable request ID");
+  assertEqual(entry.label, shortDisplayLabel, "Catalog resolution preserves the frontend display label");
+  assertEqual(entry.model, actualRequestModel, "Catalog resolution selects the actual provider model name");
+  assertEqual(findModelEntry(catalog, shortDisplayLabel), undefined, "Display labels must not resolve as request IDs");
+
+  const runtimeProvider = buildRuntimeProvider(entry, {
+    baseUrl: "https://catalog.contract.test/v1",
+    apiKey: "dummy-catalog-key"
+  });
+  assertEqual(runtimeProvider.name, shortDisplayLabel, "Runtime provider keeps the frontend display label");
+  assertEqual(runtimeProvider.defaultModel, actualRequestModel, "Runtime provider defaults to the actual model name");
+
+  const adapter = createOpenAIAdapter(runtimeProvider);
+  await withMockFetch("catalog model mapping", [
+    (request) => {
+      const body = parseJsonBody(request);
+      assertEqual(body.model, actualRequestModel, "Provider request uses the mapped actual model name");
+      assert(body.model !== shortDisplayLabel, "Provider request must not use the frontend display label");
+      return jsonResponse({ output_text: "mapped model response" });
+    }
+  ], async () => {
+    const text = await adapter.completeText({
+      model: entry.model,
+      messages: sampleMessages()
+    });
+    assertEqual(text, "mapped model response", "Mapped model provider response extraction");
+  });
+}
+
 async function testOpenAIAdapter() {
-  const openai = provider("openai", ["chat", "vision", "toolCalling", "image", "tts", "stt", "embedding"]);
+  const openai = provider("openai", ["chat", "vision", "toolCalling", "webSearch", "codeExecution", "image", "imageEdit", "tts", "stt", "embedding"]);
   const adapter = createOpenAIAdapter(openai);
 
   await withMockFetch("openai chat", [
@@ -167,13 +231,17 @@ async function testOpenAIAdapter() {
       assertEqual(body.model, "gpt-contract", "OpenAI chat model");
       assertEqual(body.instructions, "System prompt", "OpenAI system prompt maps to instructions");
       assertEqual(body.input[0].role, "user", "OpenAI input role");
+      assertEqual(body.top_p, 0.8, "OpenAI chat top-p");
+      assertEqual(body.max_output_tokens, 2048, "OpenAI chat maximum output tokens");
       return jsonResponse({ output_text: "openai text" });
     }
   ], async () => {
     const text = await adapter.completeText({
       model: "gpt-contract",
       messages: sampleMessages(),
-      temperature: 0.2
+      temperature: 0.2,
+      topP: 0.8,
+      maxTokens: 2048
     });
     assertEqual(text, "openai text", "OpenAI response text extraction");
   });
@@ -223,12 +291,64 @@ async function testOpenAIAdapter() {
     assertEqual(result, "tool final", "OpenAI tool final text");
   });
 
+  await withMockFetch("openai hosted tools", [
+    (request) => {
+      const body = parseJsonBody(request);
+      assertEqual(body.tools[0].type, "web_search", "OpenAI hosted search tool type");
+      assertEqual(body.tools[1].type, "code_interpreter", "OpenAI hosted code tool type");
+      assertEqual(body.tools[1].container.type, "auto", "OpenAI code interpreter auto container");
+      return jsonResponse({ output_text: "hosted tool final" });
+    }
+  ], async () => {
+    const result = await adapter.completeText({
+      model: "gpt-hosted-contract",
+      messages: sampleMessages(),
+      hostedTools: [{ name: "web_search" }, { name: "code_execution" }]
+    });
+    assertEqual(result, "hosted tool final", "OpenAI hosted tool final text");
+  });
+
   await withMockFetch("openai media and embeddings", [
     (request) => {
       assertIncludes(request.url, "/images/generations", "OpenAI image endpoint");
       const body = parseJsonBody(request);
-      assertEqual(body.size, "1024x1024", "OpenAI image size");
-      return jsonResponse({ data: [{ url: "https://asset.test/image.png" }] });
+      assertEqual(body.size, "2048x1152", "OpenAI image size");
+      assertEqual(body.n, 3, "OpenAI image count");
+      assertEqual(body.quality, "high", "OpenAI image quality");
+      assertEqual(body.output_format, "webp", "OpenAI image output format");
+      assertEqual(body.output_compression, 0, "OpenAI image zero compression value");
+      return jsonResponse({
+        data: [
+          { url: "https://asset.test/image-1.webp" },
+          { url: "https://asset.test/image-2.webp" },
+          { url: "https://asset.test/image-3.webp" }
+        ]
+      });
+    },
+    (request) => {
+      assertIncludes(request.url, "/images/edits", "OpenAI image edit endpoint");
+      assert(request.init.body instanceof FormData, "OpenAI image editing should use FormData");
+      assertEqual(headerValue(request.init.headers, "Content-Type"), "", "OpenAI multipart boundary must be generated by fetch");
+      const form = request.init.body;
+      assertEqual(form.get("model"), "gpt-image-2", "OpenAI edit model");
+      assertEqual(form.get("prompt"), "edit image", "OpenAI edit prompt");
+      assertEqual(form.get("n"), "2", "OpenAI edit count");
+      assertEqual(form.get("size"), "2048x2048", "OpenAI edit size");
+      assertEqual(form.get("quality"), "medium", "OpenAI edit quality");
+      assertEqual(form.get("output_format"), "jpeg", "OpenAI edit output format");
+      assertEqual(form.get("output_compression"), "0", "OpenAI edit zero compression value");
+      const inputImage = form.get("image");
+      const maskImage = form.get("mask");
+      assert(inputImage instanceof Blob, "OpenAI edit includes the source image");
+      assert(maskImage instanceof Blob, "OpenAI edit includes the mask image");
+      assertEqual(inputImage.type, "image/png", "OpenAI source image MIME type");
+      assertEqual(maskImage.type, "image/png", "OpenAI mask MIME type");
+      return jsonResponse({
+        data: [
+          { b64_json: "ZWRpdC0x" },
+          { b64_json: "ZWRpdC0y" }
+        ]
+      });
     },
     (request) => {
       assertIncludes(request.url, "/audio/speech", "OpenAI speech endpoint");
@@ -248,8 +368,30 @@ async function testOpenAIAdapter() {
       return jsonResponse({ data: [{ index: 0, embedding: [1, 2, 3] }], usage: { total_tokens: 3 } });
     }
   ], async () => {
-    const image = await adapter.generateImage({ model: "gpt-image", prompt: "image", size: "1024x1024" });
-    assertEqual(image.data[0].url, "https://asset.test/image.png", "OpenAI image response URL");
+    const image = await adapter.generateImage({
+      model: "gpt-image-2",
+      prompt: "image",
+      size: "2048x1152",
+      count: 3,
+      quality: "high",
+      outputFormat: "webp",
+      outputCompression: 0
+    });
+    assertEqual(image.data.length, 3, "OpenAI image generation retains every returned asset");
+    assertEqual(image.data[2].url, "https://asset.test/image-3.webp", "OpenAI final image response URL");
+    const edit = await adapter.generateImage({
+      model: "gpt-image-2",
+      prompt: "edit image",
+      mode: "edit",
+      inputImage: { dataUrl: imageDataUrl, name: "source.png", mimeType: "image/png" },
+      maskImage: { dataUrl: imageDataUrl, name: "mask.png", mimeType: "image/png" },
+      size: "2048x2048",
+      count: 2,
+      quality: "medium",
+      outputFormat: "jpeg",
+      outputCompression: 0
+    });
+    assertEqual(edit.data.length, 2, "OpenAI image editing retains every returned asset");
     const speech = await adapter.synthesizeSpeech({ model: "gpt-tts", input: "hello", voice: "alloy", format: "mp3" });
     assert(speech.dataUrl.startsWith("data:audio/mpeg;base64,"), "OpenAI speech returns data URL");
     const transcript = await adapter.transcribeAudio({
@@ -265,7 +407,7 @@ async function testOpenAIAdapter() {
 }
 
 async function testAnthropicAdapter() {
-  const claude = provider("anthropic", ["chat", "vision", "toolCalling"], "https://claude.contract.test/v1");
+  const claude = provider("anthropic", ["chat", "vision", "toolCalling", "webSearch", "urlContext", "codeExecution"], "https://claude.contract.test/v1");
   const adapter = createAnthropicAdapter(claude);
 
   await withMockFetch("claude chat vision", [
@@ -277,6 +419,8 @@ async function testAnthropicAdapter() {
       assertEqual(body.system, "System prompt", "Claude system prompt");
       assertEqual(body.messages[0].content[1].source.type, "base64", "Claude image source");
       assertEqual(body.messages[0].content[1].source.media_type, "image/png", "Claude image media type");
+      assertEqual(body.top_p, 0.6, "Claude chat top-p");
+      assertEqual(body.max_tokens, 3072, "Claude chat maximum output tokens");
       return jsonResponse({ content: [{ type: "text", text: "claude text" }] });
     }
   ], async () => {
@@ -286,7 +430,9 @@ async function testAnthropicAdapter() {
         { role: "system", content: "System prompt" },
         { role: "user", content: [{ type: "text", text: "Look" }, { type: "image", dataUrl: imageDataUrl }] }
       ],
-      temperature: 0.2
+      temperature: 0.2,
+      topP: 0.6,
+      maxTokens: 3072
     });
     assertEqual(text, "claude text", "Claude response extraction");
   });
@@ -316,13 +462,31 @@ async function testAnthropicAdapter() {
     assertEqual(result, "claude final", "Claude tool final text");
   });
 
+  await withMockFetch("claude hosted tools", [
+    (request) => {
+      const body = parseJsonBody(request);
+      assertEqual(body.tools[0].type, "web_search_20250305", "Claude hosted search tool version");
+      assertEqual(body.tools[1].type, "web_fetch_20250910", "Claude URL context maps to web fetch");
+      assertEqual(body.tools[1].citations.enabled, true, "Claude web fetch citations enabled");
+      assertEqual(body.tools[2].type, "code_execution_20250825", "Claude hosted code tool version");
+      return jsonResponse({ content: [{ type: "text", text: "claude hosted final" }], stop_reason: "end_turn" });
+    }
+  ], async () => {
+    const result = await adapter.completeText({
+      model: "claude-hosted-contract",
+      messages: sampleMessages(),
+      hostedTools: [{ name: "web_search" }, { name: "url_context" }, { name: "code_execution" }]
+    });
+    assertEqual(result, "claude hosted final", "Claude hosted tool final text");
+  });
+
   assertNoPendingFetch("claude unsupported");
   assertThrows(() => adapter.generateImage(), /image generation/, "Claude image generation should be unsupported");
   assertThrows(() => adapter.embedText(), /embeddings/, "Claude embeddings should be unsupported");
 }
 
 async function testGeminiAdapter() {
-  const gemini = provider("gemini", ["chat", "vision", "toolCalling", "image", "tts", "stt", "embedding"], "https://gemini.contract.test/v1beta");
+  const gemini = provider("gemini", ["chat", "vision", "toolCalling", "webSearch", "urlContext", "codeExecution", "image", "imageEdit", "tts", "stt", "embedding"], "https://gemini.contract.test/v1beta");
   const adapter = createGeminiAdapter(gemini);
 
   await withMockFetch("gemini chat vision", [
@@ -332,6 +496,8 @@ async function testGeminiAdapter() {
       const body = parseJsonBody(request);
       assertEqual(body.systemInstruction.parts[0].text, "System prompt", "Gemini system instruction");
       assertEqual(body.contents[0].parts[1].inlineData.mimeType, "image/png", "Gemini image inline data");
+      assertEqual(body.generationConfig.topP, 0.7, "Gemini chat top-p");
+      assertEqual(body.generationConfig.maxOutputTokens, 4096, "Gemini chat maximum output tokens");
       return jsonResponse({ candidates: [{ content: { parts: [{ text: "gemini text" }] } }] });
     }
   ], async () => {
@@ -341,7 +507,9 @@ async function testGeminiAdapter() {
         { role: "system", content: "System prompt" },
         { role: "user", content: [{ type: "text", text: "Look" }, { type: "image", dataUrl: imageDataUrl }] }
       ],
-      temperature: 0.2
+      temperature: 0.2,
+      topP: 0.7,
+      maxTokens: 4096
     });
     assertEqual(text, "gemini text", "Gemini response extraction");
   });
@@ -370,13 +538,66 @@ async function testGeminiAdapter() {
     assertEqual(result, "gemini final", "Gemini tool final text");
   });
 
-  await withMockFetch("gemini media embedding stt", [
+  await withMockFetch("gemini hosted tools", [
     (request) => {
       const body = parseJsonBody(request);
+      assertEqual(Object.keys(body.tools[0])[0], "googleSearch", "Gemini hosted search mapping");
+      assertEqual(Object.keys(body.tools[1])[0], "urlContext", "Gemini URL context mapping");
+      assertEqual(Object.keys(body.tools[2])[0], "codeExecution", "Gemini code execution mapping");
+      return jsonResponse({ candidates: [{ content: { parts: [{ text: "gemini hosted final" }] } }] });
+    }
+  ], async () => {
+    const result = await adapter.completeText({
+      model: "gemini-3-hosted-contract",
+      messages: sampleMessages(),
+      hostedTools: [{ name: "web_search" }, { name: "url_context" }, { name: "code_execution" }]
+    });
+    assertEqual(result, "gemini hosted final", "Gemini hosted tool final text");
+  });
+
+  await withMockFetch("gemini image edit fan-out", [
+    (request) => {
+      assertIncludes(request.url, "/models/gemini-3.1-flash-image:generateContent", "Gemini image edit endpoint");
+      const body = parseJsonBody(request);
+      assertEqual(body.contents[0].parts.length, 3, "Gemini image edit includes prompt, source, and semantic mask");
+      assertIncludes(body.contents[0].parts[0].text, "semantic mask", "Gemini mask must be described semantically");
+      assertEqual(body.contents[0].parts[1].inlineData.mimeType, "image/png", "Gemini edit source image MIME type");
+      assertEqual(body.contents[0].parts[2].inlineData.mimeType, "image/png", "Gemini semantic mask MIME type");
       assertEqual(body.generationConfig.responseModalities[1], "IMAGE", "Gemini image modality");
       assertEqual(body.generationConfig.imageConfig.aspectRatio, "16:9", "Gemini image aspect ratio");
-      return jsonResponse({ candidates: [{ content: { parts: [{ text: "image ok" }] } }] });
+      assertEqual(body.generationConfig.imageConfig.imageSize, "2K", "Gemini image resolution");
+      assertAbsent(body, "n", "Gemini native image requests must omit OpenAI count fields");
+      assertAbsent(body, "quality", "Gemini native image requests must omit OpenAI quality fields");
+      assertAbsent(body, "output_format", "Gemini native image requests must omit OpenAI format fields");
+      return jsonResponse({ candidates: [{ content: { parts: [{ inlineData: { mimeType: "image/png", data: "Z2VtaW5pLTE=" } }] } }] });
     },
+    (request) => {
+      const body = parseJsonBody(request);
+      assertEqual(body.contents[0].parts.length, 3, "Gemini fan-out request keeps edit inputs");
+      return jsonResponse({ candidates: [{ content: { parts: [{ inlineData: { mimeType: "image/png", data: "Z2VtaW5pLTI=" } }] } }] });
+    },
+    (request) => {
+      const body = parseJsonBody(request);
+      assertEqual(body.contents[0].parts.length, 3, "Gemini final fan-out request keeps edit inputs");
+      return jsonResponse({ candidates: [{ content: { parts: [{ inlineData: { mimeType: "image/png", data: "Z2VtaW5pLTM=" } }] } }] });
+    }
+  ], async (mock) => {
+    const image = await adapter.generateImage({
+      model: "gemini-3.1-flash-image",
+      prompt: "edit image",
+      mode: "edit",
+      inputImage: { dataUrl: imageDataUrl, name: "source.png", mimeType: "image/png" },
+      maskImage: { dataUrl: imageDataUrl, name: "mask.png", mimeType: "image/png" },
+      aspectRatio: "16:9",
+      imageSize: "2K",
+      count: 3
+    });
+    assertEqual(mock.calls.length, 3, "Gemini exact image count uses bounded request fan-out");
+    assertEqual(image.responses.length, 3, "Gemini image response keeps every fan-out response");
+    assertEqual(image.candidates.length, 3, "Gemini image response flattens every candidate");
+  });
+
+  await withMockFetch("gemini media embedding stt", [
     (request) => {
       const body = parseJsonBody(request);
       assertEqual(body.generationConfig.responseModalities[0], "AUDIO", "Gemini audio modality");
@@ -395,8 +616,6 @@ async function testGeminiAdapter() {
       return jsonResponse({ embedding: { values: [4, 5, 6] } });
     }
   ], async () => {
-    const image = await adapter.generateImage({ model: "gemini-image", prompt: "image", size: "1280x720" });
-    assertEqual(image.candidates[0].content.parts[0].text, "image ok", "Gemini image response parse");
     const audio = await adapter.synthesizeSpeech({ model: "gemini-tts", input: "speak", voice: "alloy" });
     assertEqual(audio.candidates[0].content.parts[0].inlineData.mimeType, "audio/wav", "Gemini audio inline response");
     const transcript = await adapter.transcribeAudio({ model: "gemini-stt", dataUrl: audioDataUrl, mimeType: "audio/webm" });
@@ -420,6 +639,8 @@ async function testOpenAICompatibleAdapter() {
       const body = parseJsonBody(request);
       assertEqual(body.stream, false, "Compatible completeText disables stream");
       assertEqual(body.messages[1].content[1].type, "image_url", "Compatible image content");
+      assertEqual(body.top_p, 0.5, "Compatible chat top-p");
+      assertEqual(body.max_tokens, 1024, "Compatible chat maximum output tokens");
       return jsonResponse({ choices: [{ message: { content: "compatible text" } }] });
     }
   ], async () => {
@@ -429,7 +650,9 @@ async function testOpenAICompatibleAdapter() {
         { role: "system", content: "System prompt" },
         { role: "user", content: [{ type: "text", text: "Look" }, { type: "image", dataUrl: imageDataUrl }] }
       ],
-      temperature: 0.2
+      temperature: 0.2,
+      topP: 0.5,
+      maxTokens: 1024
     });
     assertEqual(text, "compatible text", "Compatible response text");
   });
@@ -577,6 +800,126 @@ async function testOpenAICompatibleAdapter() {
     assertEqual(videoStatus.status, "completed", "Compatible video status response");
     assertEqual(videoStatus.url, "https://asset.test/video.mp4", "Compatible video status asset URL");
   });
+
+  assertNoPendingFetch("compatible hosted tool rejection");
+  await assertRejects(
+    () => adapter.completeText({ model: "compatible-chat", messages: sampleMessages(), hostedTools: [{ name: "web_search" }] }),
+    /does not support provider-hosted tools/,
+    "Generic OpenAI-compatible endpoints must reject OpenAI hosted tools"
+  );
+}
+
+async function testKimiAdapter() {
+  const kimi = provider("kimi", ["chat"], "https://api.moonshot.ai/v1");
+  const adapter = createKimiAdapter(kimi);
+
+  await withMockFetch("kimi fixed sampling", [
+    (request) => {
+      assertIncludes(request.url, "/chat/completions", "Kimi chat endpoint");
+      assertEqual(headerValue(request.init.headers, "Authorization"), `Bearer ${kimi.apiKey}`, "Kimi auth header");
+      const body = parseJsonBody(request);
+      assertEqual(body.model, "kimi-k3", "Kimi model");
+      assertAbsent(body, "temperature", "Kimi fixed sampling must omit temperature");
+      assertAbsent(body, "top_p", "Kimi fixed sampling must omit top-p");
+      assertAbsent(body, "max_tokens", "Kimi must omit deprecated max_tokens");
+      assertEqual(body.max_completion_tokens, 16384, "Kimi maximum output uses max_completion_tokens");
+      return jsonResponse({ choices: [{ message: { content: "kimi text" } }] });
+    }
+  ], async () => {
+    const text = await adapter.completeText({
+      model: "kimi-k3",
+      messages: sampleMessages(),
+      temperature: 0.9,
+      topP: 0.8,
+      maxTokens: 16384
+    });
+    assertEqual(text, "kimi text", "Kimi response text");
+  });
+
+  assertNoPendingFetch("kimi hosted tool rejection");
+  await assertRejects(
+    () => adapter.completeText({ model: "kimi-k3", messages: sampleMessages(), hostedTools: [{ name: "web_search" }] }),
+    /does not support provider-hosted tools/,
+    "Kimi must reject undeclared hosted tools"
+  );
+}
+
+async function testQwenAdapter() {
+  const qwen = provider("qwen", ["chat", "webSearch", "codeExecution"], "https://dashscope.aliyuncs.com/compatible-mode/v1");
+  const adapter = createQwenAdapter(qwen);
+
+  await withMockFetch("qwen completion tokens", [
+    (request) => {
+      assertIncludes(request.url, "/chat/completions", "Qwen chat endpoint");
+      assertEqual(headerValue(request.init.headers, "Authorization"), `Bearer ${qwen.apiKey}`, "Qwen auth header");
+      const body = parseJsonBody(request);
+      assertEqual(body.model, "qwen3.7-plus", "Qwen model");
+      assertEqual(body.top_p, 0.75, "Qwen chat top-p");
+      assertAbsent(body, "max_tokens", "Qwen must omit deprecated max_tokens");
+      assertEqual(body.max_completion_tokens, 12288, "Qwen maximum output uses max_completion_tokens");
+      return jsonResponse({ choices: [{ message: { content: "qwen text" } }] });
+    }
+  ], async () => {
+    const text = await adapter.completeText({
+      model: "qwen3.7-plus",
+      messages: sampleMessages(),
+      temperature: 0.3,
+      topP: 0.75,
+      maxTokens: 12288
+    });
+    assertEqual(text, "qwen text", "Qwen response text");
+  });
+
+  await withMockFetch("qwen responses hosted tools", [
+    (request) => {
+      assertIncludes(request.url, "/responses", "Qwen hosted tools use documented Responses-compatible endpoint");
+      const body = parseJsonBody(request);
+      assertEqual(body.tools[0].type, "web_search", "Qwen hosted search mapping");
+      assertEqual(body.tools[1].type, "code_interpreter", "Qwen hosted code mapping");
+      return jsonResponse({ output_text: "qwen hosted final" });
+    }
+  ], async () => {
+    const result = await adapter.completeText({
+      model: "qwen3.6-flash",
+      messages: sampleMessages(),
+      hostedTools: [{ name: "web_search" }, { name: "code_execution" }]
+    });
+    assertEqual(result, "qwen hosted final", "Qwen hosted tool final text");
+  });
+}
+
+async function testDeepSeekAdapter() {
+  const deepseek = provider("deepseek", ["chat"], "https://api.deepseek.com");
+  const adapter = createDeepSeekAdapter(deepseek);
+
+  await withMockFetch("deepseek chat parameters", [
+    (request) => {
+      assertIncludes(request.url, "/chat/completions", "DeepSeek chat endpoint");
+      assertEqual(headerValue(request.init.headers, "Authorization"), `Bearer ${deepseek.apiKey}`, "DeepSeek auth header");
+      const body = parseJsonBody(request);
+      assertEqual(body.model, "deepseek-v4-flash", "DeepSeek model");
+      assertEqual(body.temperature, 0.2, "DeepSeek temperature");
+      assertEqual(body.top_p, 0.65, "DeepSeek top-p");
+      assertEqual(body.max_tokens, 8192, "DeepSeek maximum output uses max_tokens");
+      return jsonResponse({ choices: [{ message: { content: "deepseek text" } }] });
+    }
+  ], async () => {
+    const text = await adapter.completeText({
+      model: "deepseek-v4-flash",
+      messages: sampleMessages(),
+      temperature: 0.2,
+      topP: 0.65,
+      maxTokens: 8192
+    });
+    assertEqual(text, "deepseek text", "DeepSeek response text");
+  });
+
+  assertNoPendingFetch("deepseek hosted tool rejection");
+  await assertRejects(
+    () => adapter.completeText({ model: "deepseek-v4-flash", messages: sampleMessages(), hostedTools: [{ name: "web_search" }] }),
+    /does not support provider-hosted tools/,
+    "DeepSeek must reject undeclared hosted tools"
+  );
 }
 
 async function testFetchHelpers() {
@@ -602,9 +945,13 @@ async function testFetchHelpers() {
 }
 
 const tests = [
+  ["Catalog model mapping contract", testCatalogModelMapping],
   ["OpenAI adapter contracts", testOpenAIAdapter],
   ["Claude adapter contracts", testAnthropicAdapter],
   ["Gemini adapter contracts", testGeminiAdapter],
+  ["Kimi adapter contracts", testKimiAdapter],
+  ["DeepSeek adapter contracts", testDeepSeekAdapter],
+  ["Qwen adapter contracts", testQwenAdapter],
   ["OpenAI-compatible adapter contracts", testOpenAICompatibleAdapter],
   ["Fetch helper error contracts", testFetchHelpers]
 ];

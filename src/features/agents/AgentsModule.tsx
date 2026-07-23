@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { BrainCircuit, CheckCircle2, ChevronLeft, Loader2, PlayCircle, Wrench } from "lucide-react";
 import { api } from "../../api";
+import { MasonryGrid } from "../../components/ui";
 import {
   ConnectionStatus,
   GenerationOptions,
@@ -228,6 +229,30 @@ function AgentsModule({
 
   const trace = traceFrom(result);
   const runStatus = busy ? "执行中" : result?.status === "failed" ? "执行失败" : result ? "已完成" : "等待运行";
+  const mobileNavigation = (
+    <div className="option-segmented agents-mobile-tabs" role="tablist" aria-label="智能体工作区">
+      <button
+        type="button"
+        role="tab"
+        className={mobileView === "setup" ? "active" : ""}
+        aria-selected={mobileView === "setup"}
+        aria-controls="agent-setup-panel"
+        onClick={() => setMobileView("setup")}
+      >
+        设置
+      </button>
+      <button
+        type="button"
+        role="tab"
+        className={mobileView === "timeline" ? "active" : ""}
+        aria-selected={mobileView === "timeline"}
+        aria-controls="agent-timeline-panel"
+        onClick={() => setMobileView("timeline")}
+      >
+        模板
+      </button>
+    </div>
+  );
 
   return (
     <WorkbenchLayout
@@ -238,6 +263,7 @@ function AgentsModule({
       sidebar={sidebar}
       sidebarTitle="智能体设置"
       className={`agents-workbench mobile-${mobileView}`}
+      mobileNavigation={mobileNavigation}
     >
       <section id="agent-timeline-panel" className="agent-run-timeline" aria-live="polite">
         <header className="agent-timeline-head">
@@ -250,6 +276,39 @@ function AgentsModule({
             返回设置
           </button>
         </header>
+
+        {!busy && !result ? (
+          <section className="agent-discovery" aria-labelledby="agent-discovery-title">
+            <header>
+              <div>
+                <strong id="agent-discovery-title">智能体模板</strong>
+                <span>选择一个角色后继续配置模型、权限和任务目标</span>
+              </div>
+              <span>{assistants.length} 个角色</span>
+            </header>
+            <MasonryGrid className="agent-template-grid" label="智能体模板">
+              {assistants.map((assistant) => (
+                <div key={assistant.id} className="masonry-item" role="listitem">
+                  <button
+                    type="button"
+                    className={assistant.id === assistantId ? "agent-template-card active" : "agent-template-card"}
+                    aria-pressed={assistant.id === assistantId}
+                    onClick={() => {
+                      setAssistantId(assistant.id);
+                      setMobileView("setup");
+                    }}
+                  >
+                    <span aria-hidden="true">
+                      <BrainCircuit size={18} />
+                    </span>
+                    <strong>{assistant.name}</strong>
+                    <p>{assistant.description}</p>
+                  </button>
+                </div>
+              ))}
+            </MasonryGrid>
+          </section>
+        ) : null}
 
         <div className="agent-timeline-feed">
           <article className={busy ? "agent-timeline-event running" : "agent-timeline-event"}>

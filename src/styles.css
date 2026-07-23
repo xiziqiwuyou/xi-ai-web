@@ -19,4 +19,7 @@
 @import "./styles/rednote-flat-v2.workbench.css";
 @import "./styles/rednote-flat-v2.admin.css";
 @import "./styles/rednote-flat-v2.modal.css";
+@import "./styles/rednote-flat-v2.knowledge-cloud.css";
+@import "./styles/rednote-flat-v2.knowledge-workspace.css";
+@import "./styles/rednote-flat-v2.knowledge-integration.css";
 @import "./styles/rednote-flat-v2.responsive.css";

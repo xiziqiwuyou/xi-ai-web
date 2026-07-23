@@ -1,100 +1,95 @@
 # xi-ai-web Design System
 
-This file is the compact implementation source of truth. The complete Figma-ready handoff lives at
-`.trellis/tasks/07-15-figma-ui-redesign/research/figma-ready-design-system.md`.
+This file is the implementation-readable source of truth for the Figma Make design
+[在线对话功能网页设计](https://www.figma.com/make/NqmyXu1t03HzZNssnm1dqL/在线对话功能网页设计).
 
 ## Product Direction
 
-xi-ai-web is a focused AI creation workbench, not a landing page or analytics dashboard.
+The public product reproduces the AiStudio user workspace from the Figma source. It is not a marketing page and must not mix in earlier xi-ai-web shells or discovery layouts.
 
-- Visual language: flat red and white with quiet neutral surfaces.
-- Interaction language: restrained iOS-like tactile feedback.
-- Density: compact and task-oriented.
-- Shape: default radius `6-10px`; dialogs and sheets up to `12px`.
-- Depth: borders and spacing first; shadow only for floating overlays.
-- Never use glass blur, gradients, decorative glow, oversized icons, or styling-only card nesting.
+- Brand: `AiStudio` with `CREATE WITH AI`.
+- Initial theme: dark; the selected theme persists in `localStorage` under `aistudio-theme`.
+- Typography: Plus Jakarta Sans for Latin UI copy and DM Mono for Latin system labels, with `PingFang SC` / `Microsoft YaHei UI` fallbacks so Chinese text never falls through to a generic monospace face.
+- Shape: `16px` base radius for cards, controls, navigation items, and dialogs.
+- Depth: quiet borders and restrained shadows; no glass blur or project-authored decoration.
+- Compatibility logic stays behind the Figma frames. Do not expose compatibility controls or retired module names.
 
 ## Tokens
 
-| Role | Value |
-| --- | --- |
-| Page | `#F7F7F8` |
-| Surface | `#FFFFFF` |
-| Surface subtle | `#FAFAFB` |
-| Primary | `#FF2442` |
-| Primary hover | `#E91F3B` |
-| Primary soft | `#FFF1F3` |
-| Text | `#171719` |
-| Text secondary | `#66666F` |
-| Text muted | `#8B8B94` |
-| Border | `#E8E8EC` |
-| Border strong | `#D7D7DD` |
-| Success | `#14875B` |
-| Warning | `#A66300` |
-| Danger | `#C92A3D` |
-| Focus | `0 0 0 2px #FFFFFF, 0 0 0 4px rgba(255,36,66,.38)` |
-| Floating shadow | `0 12px 32px rgba(20,20,24,.12)` |
+| Role | Light | Dark |
+| --- | --- | --- |
+| Page | `#f5f8ff` | `#080c14` |
+| Surface | `#ffffff` | `#0f1623` |
+| Foreground | `#10203d` | `#edf3ff` |
+| Primary | `#2368e8` | `#4f8dff` |
+| Primary fill | `#2368e8` | `#2368e8` |
+| On primary | `#ffffff` | `#ffffff` |
+| Secondary | `#edf2fc` | `#162032` |
+| Muted | `#65738d` | `#93a3bf` |
+| Border | `rgba(31,64,125,.12)` | `rgba(222,232,250,.13)` |
+| Success | `#1d9a70` | `#10b981` |
+| Danger | `#d9354c` | `#ef4444` |
 
-Spacing uses a `4px` base: `4, 8, 12, 16, 20, 24, 32`.
+The only approved gradient is the AiStudio `.figma-brand-mark` identity surface.
 
-## Typography
+UI copy uses `"Plus Jakarta Sans", "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif`. Compact metadata uses `"DM Mono", "SFMono-Regular"` before the same Chinese fallbacks and never renders below `10px`. Dark muted copy must keep at least AA contrast against the dark surface. Filled primary surfaces use the darker primary-fill token with white text, while the brighter dark primary remains available for focus, links, range progress, and icon accents. Range controls use an explicit track border and progress segment instead of transparency alone.
 
-Use a local-first Chinese UI stack:
-
-```css
-font-family: "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
-```
-
-- Page title: `18px / 1.35 / 700`
-- Section title: `16px / 1.4 / 700`
-- Body: `14px / 1.55 / 400`
-- Label: `13px / 1.4 / 600`
-- Caption: `12px / 1.4 / 400`
-- Monospace data/code: `ui-monospace, SFMono-Regular, Consolas, monospace`
-
-No viewport-scaled fonts and no negative letter spacing.
-
-## Layout
+## Public Shell
 
 ### Desktop
 
-- Outer shell fills the browser viewport.
-- Header: `56px`, compact brand, six content-width module items.
-- Workspace gap: `12px`.
-- Inspector: `304px`, up to `320px` for Drawing and Agents.
-- Main area: flexible, minimum `640px`.
-- One functional surface per region; internal sections use dividers.
+- `.figma-studio-shell`: full viewport, `224px minmax(0, 1fr)` at `1024px` and at the `1280x800` / `1440x900` acceptance viewports.
+- `.figma-sidebar`: Brand, eight product destinations, access status, and theme control. The destination list scrolls independently when height is constrained.
+- `.figma-workspace`: the sole public scroll owner, containing the active frame and Figma footer.
+- Workspace content uses the Figma maximum width and `16px` cards; do not add a second product header.
 
-### Mobile
+### Responsive
 
-- Top title bar: `52px`.
-- Bottom navigation: `56px + env(safe-area-inset-bottom)`.
-- Primary items: 对话, 绘画, 导图, 智能体, 更多.
-- More sheet contains 应用, 画廊, and API status. It never contains Admin.
-- Exactly one visible vertical scroll owner per screen.
-- Interactive targets are at least `44x44px`.
-- Sticky actions remain above the bottom navigation and software keyboard.
-
-## Component Rules
-
-- Buttons: `8px` radius, `36px` desktop minimum, `44px` mobile target.
-- Inputs: persistent label, `8px` radius, clear focus and error state.
-- Icon controls: Lucide only; `16-20px` glyph inside stable targets.
-- Segmented controls: only for real views. Filters use pressed buttons.
-- Empty states: top-aligned, one sentence, one action maximum.
-- Dialogs/sheets: `12px` radius, no blur, focus trap, inert background, focus restoration.
-- Destructive actions: confirmation or guaranteed Undo; Cancel receives initial focus.
-- Hover/pressed transitions: color/border only, `120-180ms`; no layout-shifting scale.
+- Below `1024px`, `.figma-mobile-header` replaces the rail.
+- The menu button opens `.figma-sidebar.mobile-open` as a single vertical function menu across the full `<1024px` range.
+- Each destination remains at least `44px` high.
+- There is no public bottom navigation, API button, or Admin link.
 
 ## Navigation Contract
 
-Public routes are `/chat`, `/image`, `/mindmap`, `/agents`, `/apps`, and `/gallery`.
-`/admin` remains the only administrator entry and is never linked from public navigation.
+Public routes and visible order are exact:
 
-## Accessibility And Verification
+1. `AI 对话` -> `/chat`
+2. `图像生成` -> `/image`
+3. `智能体` -> `/agents`
+4. `工作流` -> `/workflows`
+5. `AI 一键 PPT` -> `/ppt`
+6. `思维导图` -> `/mindmap`
+7. `助手库` -> `/assistants`
+8. `翻译` -> `/translate`
 
-- Maintain WCAG AA text contrast.
-- Visible `:focus-visible` treatment on every interactive control.
-- Respect `prefers-reduced-motion`.
-- Validate at `1440x900`, `1280x800`, `390x844`, and `375x812`.
-- Verify keyboard navigation, browser Back/Forward, modal focus, safe areas, and no mobile horizontal overflow.
+`/` canonicalizes to `/chat`. `/admin` is address-only and never appears in the public shell.
+
+## Chat Contract
+
+- Heading: `01 / INTELLIGENCE` and `AI 对话工作台`.
+- Sessions are stacked cards. A new session is inserted first and expanded; existing sessions fold.
+- The full session header toggles folding. A folded session shows only its title and preview.
+- The expanded frame keeps model selection, messages, network search, image input, context clearing, composer, send/stop, and session settings.
+- The model-list scrollbar keeps a stable gutter, stays visually transparent at rest, appears only while the list is actively scrolling, and hides again shortly after scrolling stops.
+- Skill management and selection live in the Chat workspace. Selected declarative instructions are sent only with the user-initiated request; no public `/skills` route exists.
+- Real local conversations, model catalog, streaming provider requests, and assistant launch behavior remain operational behind this presentation.
+
+## Other Destinations
+
+Image, Agents, Workflows, PPT, Mind Map, Assistants, and Translation use the same Figma heading/card/control language. Image uses enabled image-capable models; automation and text workbenches use enabled Chat-capable models and send the visible selection as `modelId`. The Workflow workspace uses a node canvas with a fixed Start input, Agent cards, a fixed Reply output, port-aware links, a component library, a right-side inspector, and fit controls. Model selectors describe their current value to assistive technology and remain disabled while a request is in flight. Their outer frames must not reveal retired labels such as `绘画`, `应用`, or `画廊`.
+
+## BYOK Dialog
+
+The first-use dialog is the only public credential entry surface.
+
+- Visible controls: API URL, API Key, key visibility, save.
+- It uses the shared accessible `Dialog`, cannot dismiss before both fields are valid, and hides the unavailable close command.
+- Credentials persist only in `sessionStorage` under `cherry-web-user-provider`.
+- Do not add provider presets, connection summaries, readiness cards, reset actions, or a persistent shell shortcut.
+
+## Verification
+
+- Viewports: `1440x900`, `1280x800`, `390x844`, `375x812`.
+- Required gates: `npm run qa`, `npm run test:e2e`, `npm run smoke`, `npm run release-check`, `git diff --check`.
+- Browser assertions: exact eight-item navigation, canonical routes, Back/Forward, Chat-local Skill injection, graph workflow persistence and sequencing, stacked session behavior, one scroll owner, no horizontal overflow, theme persistence, BYOK session-only storage, and no public Admin entry.

@@ -1,47 +1,63 @@
 import type { ReactNode } from "react";
+import { LockKeyhole } from "lucide-react";
 import TopBar from "./TopBar";
-import type { MenuItem, ModuleId, SiteSettings } from "../types";
+import type { MenuItem, ModuleId } from "../types";
 
 type AppShellProps = {
-  settings: SiteSettings;
   menuItems: MenuItem[];
   activeModule: ModuleId;
   apiReady: boolean;
+  accessAddress: string;
+  accessKey: string;
   onModuleChange: (moduleId: ModuleId) => void;
-  onRequestApiConfig: () => void;
+  onOpenWorkspaceData: () => void;
+  onWorkspaceError: (message: string) => void;
   children: ReactNode;
 };
 
+function maskAccessKey(value: string) {
+  const key = value.trim();
+  if (!key) return "未连接";
+  if (key.length <= 7) return `${key.slice(0, 2)}••••${key.slice(-2)}`;
+  return `${key.slice(0, 4)}••••••${key.slice(-3)}`;
+}
+
 function AppShell({
-  settings,
   menuItems,
   activeModule,
   apiReady,
+  accessAddress,
+  accessKey,
   onModuleChange,
-  onRequestApiConfig,
+  onOpenWorkspaceData,
+  onWorkspaceError,
   children
 }: AppShellProps) {
   return (
-    <div className="rednote-shell top-nav-shell" data-active-module={activeModule}>
+    <div className="figma-studio-shell" data-active-module={activeModule}>
       <a className="skip-main-link" href="#workspace-main">
         跳到工作区
       </a>
       <TopBar
-        siteName={settings.siteName}
         menuItems={menuItems}
         activeModule={activeModule}
         apiReady={apiReady}
+        accessAddress={accessAddress}
         onModuleChange={onModuleChange}
-        onRequestApiConfig={onRequestApiConfig}
+        onOpenWorkspaceData={onOpenWorkspaceData}
+        onWorkspaceError={onWorkspaceError}
       />
-      <main
-        key={activeModule}
-        id="workspace-main"
-        className="workspace-frame"
-        data-scroll-owner={activeModule === "chat" ? undefined : "public-workspace"}
-        tabIndex={-1}
-      >
-        <div className="workspace-canvas">{children}</div>
+      <main id="workspace-main" className="figma-workspace" data-scroll-owner="public-workspace" tabIndex={-1}>
+        <div key={activeModule} className="figma-workspace-canvas">
+          {children}
+        </div>
+        <footer className="figma-public-footer">
+          <span>
+            <LockKeyhole size={14} />
+            此访问链接由管理员授权
+          </span>
+          <code>KEY · {maskAccessKey(accessKey)}</code>
+        </footer>
       </main>
     </div>
   );

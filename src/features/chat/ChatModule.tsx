@@ -1,45 +1,58 @@
-import { Children, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ChangeEvent,
+  type KeyboardEvent,
+  type MouseEvent as ReactMouseEvent
+} from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
-  AlertCircle,
   Bot,
-  CheckCircle2,
-  Copy,
-  Cpu,
-  Download,
-  Edit3,
-  FileText,
-  Image,
-  MoreHorizontal,
-  MessageSquarePlus,
-  Mic,
-  PanelLeft,
-  Paperclip,
-  Pin,
-  PinOff,
-  PlugZap,
-  Search,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  Globe2,
+  Image as ImageIcon,
+  LayoutGrid,
+  Plus,
+  Puzzle,
   Send,
-  Sparkles,
+  Settings2,
   Square,
-  RotateCcw,
   Trash2,
-  Undo2,
-  Upload,
-  UserRound,
   X
 } from "lucide-react";
-import { ApiError, api, streamChat } from "../../api";
+import { ApiError, streamChat } from "../../api";
 import {
-  ModelPicker,
+  Dialog,
+  getFloatingHorizontalOffset,
+  getFloatingVerticalPlacement
+} from "../../components/ui";
+import {
   compactModelLabel,
   modelsForCapability,
   preferredModelFor
 } from "../../components/workbench";
-import { ConfirmationDialog } from "../../components/ui";
-import { attachmentSummary, createChatAttachment } from "./attachmentUtils";
-import { isUserProviderReady, userConnectionPayload } from "../settings/userProviderConfig";
+import { createChatAttachment } from "./attachmentUtils";
+import ChatCommandPalette, { type ChatCommandOption } from "./ChatCommandPalette";
+import { activeChatCommand, chatCommandMatches, removeChatCommand } from "./chatCommands";
+import ChatSkillManagerDialog from "../automation/ChatSkillManagerDialog";
+import { loadAutomationSkills, saveAgentSkills } from "../automation/automationRepository";
+import {
+  skillCompatibility,
+  toolCompatibility,
+  toolSetCompatibility
+} from "../automation/toolCompatibility";
+import {
+  ASSISTANT_LAUNCH_EVENT,
+  consumeAssistantLaunch
+} from "../assistants/assistantLaunch";
 import {
   conversationSummary,
   createLocalConversation,
@@ -47,38 +60,41 @@ import {
   localSummaries,
   makeConversationTitle,
   saveLocalConversations,
-  sortConversations
 } from "./localConversationStore";
+import { isUserProviderReady, userConnectionPayload } from "../settings/userProviderConfig";
+import SearchServiceDialog from "../settings/SearchServiceDialog";
 import {
-  conversationToMarkdown,
-  createConversationExport,
-  createConversationSummaryArtifact,
-  forkConversationBeforeUserMessage,
-  mergeImportedConversations,
-  previewConversationImport
-} from "./conversationArchive";
-import { buildChatMaskWorkflows, starterPromptFromMask } from "./maskWorkflow";
+  isSearchServiceReady,
+  searchServicePayload
+} from "../settings/searchServiceConfig";
+import CloudKnowledgeSelector from "../knowledge-cloud/CloudKnowledgeSelector";
+import KnowledgeCitationList from "../knowledge-cloud/KnowledgeCitationList";
+import {
+  knowledgeEmbeddingConnectionsForBases,
+  knowledgeLogoutEvent,
+  loadChatKnowledgeSelections,
+  missingKnowledgeEmbeddingVendors,
+  normalizeKnowledgeBaseIds,
+  saveChatKnowledgeSelection
+} from "../knowledge-cloud/integrationState";
+import { useKnowledgeCatalog } from "../knowledge-cloud/useKnowledgeCatalog";
 import type {
   Assistant,
+  AgentSkillDefinition,
   AppPreset,
   ChatAttachment,
   ChatStreamEvent,
   Conversation,
   ConversationSummary,
-  ModelCatalogEntry,
   Message,
-  PublicBootstrapPayload,
+  ModelCatalogEntry,
+  KnowledgeBase,
   PromptPreset,
+  PublicBootstrapPayload,
+  SearchServiceConfig,
+  ToolSetting,
   UserProviderConfig
 } from "../../types";
-import type { ComponentPropsWithoutRef } from "react";
-
-type Notice = { tone: "good" | "bad"; message: string } | null;
-
-type DeletedConversation = {
-  conversation: Conversation;
-  wasActive: boolean;
-};
 
 type ChatModuleProps = {
   enabled: boolean;
@@ -87,405 +103,394 @@ type ChatModuleProps = {
   promptPresets: PromptPreset[];
   conversations: ConversationSummary[];
   modelCatalog: ModelCatalogEntry[];
+  toolSettings: ToolSetting[];
   userProvider: UserProviderConfig;
+  searchService: SearchServiceConfig;
   onUserProviderChange: (patch: Partial<UserProviderConfig>) => void;
+  onSearchServiceChange: (config: SearchServiceConfig) => void;
   onRequestApiConfig: () => void;
   onConversationsChange: (conversations: ConversationSummary[]) => void;
   onRefresh: () => Promise<PublicBootstrapPayload>;
 };
 
-function formatTime(value: string) {
-  return new Intl.DateTimeFormat("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit"
-  }).format(new Date(value));
+type SessionUiState = {
+  collapsed: boolean;
+  draft: string;
+  modelId: string;
+  attachments: ChatAttachment[];
+  skillIds: string[];
+  appId: string;
+  search: boolean;
+  knowledgeBaseIds: string[];
+  notice: string;
+};
+
+type ModelVendorTab = "OpenAI" | "Claude" | "Gemini" | "Kimi" | "DeepSeek" | "通义千问";
+
+type SessionSettingsSnapshot = {
+  assistantAvatarId: string;
+  userAvatar: string | null;
+  messageStyle: "bubble" | "list";
+  temperature: number;
+  topP: number;
+  contextSize: string;
+  maxTokens: string;
+  streamOutput: boolean;
+  toolMode: string;
+  skillIds: string[];
+};
+
+const assistantAvatarPresets = [
+  { id: "akira", name: "霓虹主角", image: "/assets/figma/avatar-akira.jpg" },
+  { id: "mika", name: "蓝发旅人", image: "/assets/figma/avatar-mika.jpg" },
+  { id: "ren", name: "声波少年", image: "/assets/figma/avatar-ren.jpg" },
+  { id: "yuki", name: "靛蓝观察者", image: "/assets/figma/avatar-yuki.jpg" }
+] as const;
+
+const modelVendorTabs: ModelVendorTab[] = ["OpenAI", "Claude", "Gemini", "Kimi", "DeepSeek", "通义千问"];
+
+function vendorTabForModel(model?: ModelCatalogEntry): ModelVendorTab {
+  if (model?.vendor === "openai" || model?.vendor === "openai-compatible") return "OpenAI";
+  if (model?.vendor === "anthropic") return "Claude";
+  if (model?.vendor === "gemini") return "Gemini";
+  if (model?.vendor === "kimi") return "Kimi";
+  if (model?.vendor === "deepseek") return "DeepSeek";
+  return "通义千问";
 }
 
-function blobToDataUrl(blob: Blob) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ""));
-    reader.onerror = () => reject(new Error("录音读取失败"));
-    reader.readAsDataURL(blob);
-  });
+function modelCapabilityNote(model: ModelCatalogEntry) {
+  if (model.capabilities.includes("vision")) return "图像理解 · 多模态";
+  if (model.capabilities.includes("toolCalling")) return "代码与工具调用";
+  if (model.capabilities.includes("streaming")) return "深度推理 · 流式响应";
+  return "通用对话 · 稳定输出";
 }
 
-function downloadText(content: string, fileName: string, type = "text/plain;charset=utf-8") {
-  const blob = new Blob([content], { type });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = fileName;
-  anchor.click();
-  URL.revokeObjectURL(url);
+function moveRovingFocus(event: KeyboardEvent<HTMLElement>, selector: string) {
+  if (!["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+  const items = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(selector));
+  if (!items.length) return;
+  event.preventDefault();
+  const currentIndex = items.findIndex((item) => item === document.activeElement);
+  const forward = event.key === "ArrowDown" || event.key === "ArrowRight";
+  const nextIndex = event.key === "Home"
+    ? 0
+    : event.key === "End"
+      ? items.length - 1
+      : forward
+        ? currentIndex < 0 || currentIndex === items.length - 1 ? 0 : currentIndex + 1
+        : currentIndex <= 0 ? items.length - 1 : currentIndex - 1;
+  items[nextIndex]?.focus();
 }
 
-function escapeHtml(value: string) {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
+function defaultSessionUi(collapsed: boolean, knowledgeBaseIds: string[] = []): SessionUiState {
+  return {
+    collapsed,
+    draft: "",
+    modelId: "",
+    attachments: [],
+    skillIds: [],
+    appId: "",
+    search: false,
+    knowledgeBaseIds: normalizeKnowledgeBaseIds(knowledgeBaseIds),
+    notice: ""
+  };
 }
 
-function conversationShareHtml(conversation: Conversation) {
-  const messages = conversation.messages
-    .filter((message) => message.content)
-    .map((message) => `
-      <article class="message ${message.role}">
-        <strong>${message.role === "user" ? "用户" : "助手"}</strong>
-        <pre>${escapeHtml(message.content)}</pre>
-      </article>
-    `)
-    .join("");
-  return `<!doctype html>
-<html lang="zh-CN">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>${escapeHtml(conversation.title)}</title>
-  <style>
-    body{margin:0;background:#fff8f9;color:#211d24;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;}
-    main{max-width:860px;margin:0 auto;padding:32px 18px;}
-    h1{font-size:28px;margin:0 0 8px;}
-    .meta{color:#6f6871;font-size:13px;margin-bottom:22px;}
-    .message{border:1px solid #eee3e6;border-radius:18px;background:white;padding:14px 16px;margin:12px 0;box-shadow:0 8px 24px rgba(38,24,28,.04);}
-    .message.user{background:#fff5f6;border-color:#ffc9d3;}
-    strong{display:block;margin-bottom:8px;color:#d91f3a;}
-    pre{white-space:pre-wrap;font:14px/1.75 inherit;margin:0;}
-  </style>
-</head>
-<body>
-  <main>
-    <h1>${escapeHtml(conversation.title || "对话分享")}</h1>
-    <div class="meta">导出自 xi-ai-web · ${new Date().toLocaleString("zh-CN")}</div>
-    ${messages}
-  </main>
-</body>
-</html>`;
+function sortSessionStack(conversations: Conversation[]) {
+  return [...conversations].sort(
+    (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+  );
 }
 
-function readJsonFile(file: File) {
-  return new Promise<unknown>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        resolve(JSON.parse(String(reader.result || "")));
-      } catch {
-        reject(new Error("导入文件不是有效 JSON"));
-      }
-    };
-    reader.onerror = () => reject(new Error("读取导入文件失败"));
-    reader.readAsText(file);
-  });
+function uniqueLocalMessageId(existing: Message[], candidate: string) {
+  if (!existing.some((message) => message.id === candidate)) return candidate;
+  return `${candidate}-${crypto.randomUUID()}`;
 }
 
 function ChatModule({
   enabled,
   assistants,
   appPresets,
-  promptPresets,
-  conversations: serverConversations,
   modelCatalog,
+  toolSettings,
   userProvider,
+  searchService,
   onUserProviderChange,
+  onSearchServiceChange,
   onRequestApiConfig,
   onConversationsChange,
   onRefresh
 }: ChatModuleProps) {
-  const [localConversationList, setLocalConversationList] = useState<Conversation[]>(loadLocalConversations);
-  const conversations = useMemo(() => localSummaries(localConversationList), [localConversationList]);
-  const [activeConversationId, setActiveConversationId] = useState<string | null>(
-    conversations[0]?.id || serverConversations[0]?.id || null
-  );
-  const [selectedAssistantId, setSelectedAssistantId] = useState(assistants[0]?.id || "");
+  const [conversationList, setConversationList] = useState<Conversation[]>([]);
+  const [sessionUi, setSessionUi] = useState<Record<string, SessionUiState>>({});
+  const [conversationsHydrated, setConversationsHydrated] = useState(false);
+  const [persistenceError, setPersistenceError] = useState("");
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [temperature, setTemperature] = useState(0.7);
-  const [query, setQuery] = useState("");
-  const [notice, setNotice] = useState<Notice>(null);
-  const [draft, setDraft] = useState("");
-  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
-  const [streaming, setStreaming] = useState(false);
-  const [selectedModelId, setSelectedModelId] = useState("");
-  const [editingMessageId, setEditingMessageId] = useState("");
-  const [activeSummary, setActiveSummary] = useState("");
-  const [mobileConversationsOpen, setMobileConversationsOpen] = useState(false);
-  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
-  const [recentlyDeleted, setRecentlyDeleted] = useState<DeletedConversation | null>(null);
-  const localConversationsRef = useRef(localConversationList);
+  const [topP, setTopP] = useState(0.9);
+  const [messageStyle, setMessageStyle] = useState<"bubble" | "list">("bubble");
+  const [contextSize, setContextSize] = useState("16");
+  const [maxTokens, setMaxTokens] = useState("4096");
+  const [streamOutput, setStreamOutput] = useState(true);
+  const [toolMode, setToolMode] = useState("自动");
+  const [chatSkills, setChatSkills] = useState<AgentSkillDefinition[]>([]);
+  const [settingsSkillIds, setSettingsSkillIds] = useState<string[]>([]);
+  const [settingsConversationId, setSettingsConversationId] = useState("");
+  const [skillsLoading, setSkillsLoading] = useState(true);
+  const [skillManagerOpen, setSkillManagerOpen] = useState(false);
+  const [searchSettingsOpen, setSearchSettingsOpen] = useState(false);
+  const [pendingSearchConversationId, setPendingSearchConversationId] = useState("");
+  const [assistantAvatarId, setAssistantAvatarId] = useState("akira");
+  const [userAvatar, setUserAvatar] = useState<string | null>(null);
+  const [defaultAssistantId, setDefaultAssistantId] = useState(assistants[0]?.id || "");
+  const [streamingConversationId, setStreamingConversationId] = useState("");
+  const knowledgeCatalog = useKnowledgeCatalog();
+  const conversationsRef = useRef(conversationList);
+  const initializedRef = useRef(false);
+  const pendingAssistantHandledRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
-  const streamingMessageIdRef = useRef<string | null>(null);
-  const importInputRef = useRef<HTMLInputElement | null>(null);
-  const conversationSearchRef = useRef<HTMLInputElement | null>(null);
-  const conversationTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const streamingMessageIdRef = useRef("");
+  const userAvatarInputRef = useRef<HTMLInputElement | null>(null);
+  const settingsSnapshotRef = useRef<SessionSettingsSnapshot | null>(null);
 
-  const assistantById = useMemo(() => {
-    return new Map(assistants.map((assistant) => [assistant.id, assistant]));
-  }, [assistants]);
-  const maskWorkflows = useMemo(
-    () => buildChatMaskWorkflows(assistants, appPresets, promptPresets),
-    [assistants, appPresets, promptPresets]
-  );
-
-  const selectedAssistant = assistants.find((assistant) => assistant.id === selectedAssistantId);
   const chatModels = useMemo(() => modelsForCapability(modelCatalog, "chat"), [modelCatalog]);
-  const sttModels = useMemo(() => modelsForCapability(modelCatalog, "stt"), [modelCatalog]);
-  const selectedModel =
-    chatModels.find((entry) => entry.id === selectedModelId) ||
-    preferredModelFor(chatModels, "chat", userProvider.lastModelId);
-  const selectedSttModel = preferredModelFor(sttModels, "stt", userProvider.lastModelId);
-  const selectedModelName = compactModelLabel(selectedModel);
-  const selectedModelSupportsVision = Boolean(selectedModel?.capabilities.includes("vision"));
   const connectionReady = isUserProviderReady(userProvider);
-  const providerReady = connectionReady && Boolean(selectedModel);
-  const activeConversation =
-    localConversationList.find((conversation) => conversation.id === activeConversationId) || null;
-  const pendingDeleteConversation =
-    localConversationList.find((conversation) => conversation.id === pendingDeleteId) || null;
-  const localToolBadges = useMemo(() => {
-    const tools = ["联网搜索", "文件分析", "图片理解", "语音输入", "代码整理"];
-    return tools;
-  }, []);
+  const searchReady = isSearchServiceReady(searchService);
+  const assistantAvatarUrl = assistantAvatarPresets.find((preset) => preset.id === assistantAvatarId)?.image || assistantAvatarPresets[0].image;
 
-  const applyMaskWorkflow = useCallback(
-    (maskId: string) => {
-      const mask = maskWorkflows.find((item) => item.id === maskId);
-      if (!mask) return;
-      if (mask.type === "assistant") {
-        setSelectedAssistantId(mask.assistantId);
-        setNotice({ tone: "good", message: `已切换到 ${mask.title}` });
-        return;
-      }
-      setDraft(starterPromptFromMask(mask));
-      setNotice({ tone: "good", message: `已套用应用 ${mask.title}` });
-    },
-    [maskWorkflows]
-  );
-
-  const commitLocalConversations = useCallback(
+  const commitConversations = useCallback(
     (updater: Conversation[] | ((current: Conversation[]) => Conversation[])) => {
-      const current = localConversationsRef.current;
-      const next = sortConversations(typeof updater === "function" ? updater(current) : updater);
-      localConversationsRef.current = next;
-      saveLocalConversations(next);
-      setLocalConversationList(next);
+      const current = conversationsRef.current;
+      const next = sortSessionStack(typeof updater === "function" ? updater(current) : updater);
+      conversationsRef.current = next;
+      void saveLocalConversations(next).catch((error: unknown) => {
+        setPersistenceError(error instanceof Error ? error.message : "无法保存本地对话。");
+      });
+      setConversationList(next);
       onConversationsChange(localSummaries(next));
     },
     [onConversationsChange]
   );
 
-  useEffect(() => {
-    localConversationsRef.current = localConversationList;
-  }, [localConversationList]);
-
-  useEffect(() => {
-    if (!selectedAssistantId && assistants[0]) setSelectedAssistantId(assistants[0].id);
-  }, [assistants, selectedAssistantId]);
-
-  useEffect(() => {
-      if (!chatModels.length) {
-        setSelectedModelId("");
-        return;
-      }
-      setSelectedModelId((current) => {
-        if (chatModels.some((entry) => entry.id === current)) return current;
-        const preferred = preferredModelFor(chatModels, "chat", userProvider.lastModelId);
-        return preferred?.id || "";
-      });
-  }, [chatModels, userProvider.lastModelId]);
-
-  useEffect(() => {
-    if (!activeConversationId && conversations[0]) {
-      setActiveConversationId(conversations[0].id);
+  const patchSessionUi = useCallback((id: string, patch: Partial<SessionUiState>) => {
+    if (patch.knowledgeBaseIds !== undefined) {
+      saveChatKnowledgeSelection(id, patch.knowledgeBaseIds);
     }
-  }, [activeConversationId, conversations]);
-
-  useEffect(() => {
-    if (activeConversation) setSelectedAssistantId(activeConversation.assistantId);
-  }, [activeConversation]);
-
-  const closeMobileConversations = useCallback(() => {
-    setMobileConversationsOpen(false);
+    setSessionUi((current) => ({
+      ...current,
+      [id]: { ...(current[id] || defaultSessionUi(false)), ...patch }
+    }));
   }, []);
 
-  useEffect(() => {
-    if (!mobileConversationsOpen) return;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    const focusFrame = window.requestAnimationFrame(() => conversationSearchRef.current?.focus());
-    return () => {
-      window.cancelAnimationFrame(focusFrame);
-      document.body.style.overflow = previousOverflow;
-      window.requestAnimationFrame(() => conversationTriggerRef.current?.focus());
-    };
-  }, [mobileConversationsOpen]);
-
-  useEffect(() => {
-    const desktopQuery = window.matchMedia("(min-width: 821px)");
-    const closeOnDesktop = (event: MediaQueryListEvent) => {
-      if (event.matches) setMobileConversationsOpen(false);
-    };
-    desktopQuery.addEventListener("change", closeOnDesktop);
-    return () => desktopQuery.removeEventListener("change", closeOnDesktop);
-  }, []);
-
-  const handleConversationSheetKeyDown = (event: KeyboardEvent<HTMLElement>) => {
-    if (!mobileConversationsOpen) return;
-    if (event.key === "Escape") {
-      event.preventDefault();
-      closeMobileConversations();
-      return;
-    }
-    if (event.key !== "Tab") return;
-    const focusable = Array.from(
-      event.currentTarget.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
-      )
-    );
-    if (!focusable.length) return;
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault();
-      first.focus();
-    }
-  };
-
-  const filteredConversations = useMemo(() => {
-    const term = query.trim().toLowerCase();
-    if (!term) return conversations;
-    return conversations.filter((conversation) => {
-      const assistant = assistantById.get(conversation.assistantId);
-      return `${conversation.title} ${conversation.preview} ${assistant?.name || ""}`
-        .toLowerCase()
-        .includes(term);
-    });
-  }, [assistantById, conversations, query]);
-
-  const createConversation = useCallback(async () => {
-    const assistantId = selectedAssistantId || assistants[0]?.id;
-    if (!assistantId) return null;
-    const assistant = assistants.find((item) => item.id === assistantId) || assistants[0];
+  const createConversation = useCallback(() => {
+    const assistant = assistants.find((item) => item.id === defaultAssistantId) || assistants[0];
     if (!assistant) return null;
     const conversation = createLocalConversation(assistant);
-    setActiveConversationId(conversation.id);
-    commitLocalConversations((current) => [conversation, ...current]);
+    commitConversations((current) => [conversation, ...current]);
+    setSessionUi((current) => {
+      const collapsed = Object.fromEntries(
+        Object.entries(current).map(([id, value]) => [id, { ...value, collapsed: true }])
+      );
+      return { ...collapsed, [conversation.id]: defaultSessionUi(false) };
+    });
     return conversation;
-  }, [assistants, commitLocalConversations, selectedAssistantId]);
+  }, [assistants, commitConversations, defaultAssistantId]);
 
-  const handleCreateConversation = useCallback(async () => {
-    await createConversation();
-    setMobileConversationsOpen(false);
-  }, [createConversation]);
+  useEffect(() => {
+    conversationsRef.current = conversationList;
+  }, [conversationList]);
 
-  const handleSelectConversation = useCallback((id: string) => {
-    setActiveConversationId(id);
-    setMobileConversationsOpen(false);
+  useEffect(() => {
+    let alive = true;
+    loadLocalConversations()
+      .then((loaded) => {
+        if (!alive) return;
+        const storedKnowledgeSelections = loadChatKnowledgeSelections();
+        const currentById = new Map(conversationsRef.current.map((conversation) => [conversation.id, conversation]));
+        loaded.forEach((conversation) => {
+          if (!currentById.has(conversation.id)) currentById.set(conversation.id, conversation);
+        });
+        const next = sortSessionStack([...currentById.values()]);
+        conversationsRef.current = next;
+        setConversationList(next);
+        setSessionUi((current) => ({
+          ...Object.fromEntries(next.map((conversation, index) => [
+            conversation.id,
+            current[conversation.id] || defaultSessionUi(index > 0, storedKnowledgeSelections[conversation.id])
+          ]))
+        }));
+        onConversationsChange(localSummaries(next));
+      })
+      .catch((error: unknown) => {
+        if (alive) setPersistenceError(error instanceof Error ? error.message : "无法读取本地对话。");
+      })
+      .finally(() => {
+        if (alive) setConversationsHydrated(true);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [onConversationsChange]);
+
+  useEffect(() => {
+    const clearKnowledgeSelections = () => {
+      setSessionUi((current) => Object.fromEntries(
+        Object.entries(current).map(([id, ui]) => [id, { ...ui, knowledgeBaseIds: [] }])
+      ));
+    };
+    window.addEventListener(knowledgeLogoutEvent, clearKnowledgeSelections);
+    return () => window.removeEventListener(knowledgeLogoutEvent, clearKnowledgeSelections);
   }, []);
 
-  const deleteConversation = useCallback(
-    async (id: string) => {
-      const nextConversations = localConversationList.filter((conversation) => conversation.id !== id);
-      commitLocalConversations(nextConversations);
-      if (activeConversationId === id) {
-        setActiveConversationId(sortConversations(nextConversations)[0]?.id || null);
-      }
-    },
-    [activeConversationId, commitLocalConversations, localConversationList]
-  );
-
-  const confirmDeleteConversation = useCallback(async () => {
-    if (!pendingDeleteConversation) {
-      setPendingDeleteId(null);
-      return;
-    }
-    const deleted: DeletedConversation = {
-      conversation: pendingDeleteConversation,
-      wasActive: activeConversationId === pendingDeleteConversation.id
+  useEffect(() => {
+    let alive = true;
+    loadAutomationSkills()
+      .then((skills) => {
+        if (!alive) return;
+        setChatSkills(skills);
+      })
+      .catch((error: unknown) => {
+        if (alive) setPersistenceError(error instanceof Error ? error.message : "无法读取本地 Skill。");
+      })
+      .finally(() => {
+        if (alive) setSkillsLoading(false);
+      });
+    return () => {
+      alive = false;
     };
-    await deleteConversation(pendingDeleteConversation.id);
-    setPendingDeleteId(null);
-    setRecentlyDeleted(deleted);
-  }, [activeConversationId, deleteConversation, pendingDeleteConversation]);
+  }, []);
 
-  const undoConversationDeletion = useCallback(() => {
-    if (!recentlyDeleted) return;
-    commitLocalConversations((current) => {
-      if (current.some((conversation) => conversation.id === recentlyDeleted.conversation.id)) return current;
-      return [recentlyDeleted.conversation, ...current];
+  useEffect(() => {
+    if (!defaultAssistantId && assistants[0]) setDefaultAssistantId(assistants[0].id);
+  }, [assistants, defaultAssistantId]);
+
+  const consumePendingAssistantLaunch = useCallback(() => {
+    if (!conversationsHydrated) return false;
+    const { intent, error: launchError } = consumeAssistantLaunch();
+    if (launchError) {
+      setPersistenceError(launchError);
+      return false;
+    }
+    if (!intent) return false;
+    const assistant = assistants.find((item) => item.id === intent.assistantId && item.enabled !== false);
+    if (!assistant) {
+      setPersistenceError("所选助手已停用或不存在，请返回助手库重新选择。");
+      return false;
+    }
+    pendingAssistantHandledRef.current = true;
+    setDefaultAssistantId(assistant.id);
+    const conversation = createLocalConversation(assistant);
+    commitConversations((current) => [conversation, ...current]);
+    setSessionUi((current) => ({
+      ...Object.fromEntries(Object.entries(current).map(([id, value]) => [id, { ...value, collapsed: true }])),
+      [conversation.id]: {
+        ...defaultSessionUi(false),
+        draft: intent.starterPrompt || ""
+      }
+    }));
+    return true;
+  }, [assistants, commitConversations, conversationsHydrated]);
+
+  useEffect(() => {
+    void consumePendingAssistantLaunch();
+  }, [consumePendingAssistantLaunch]);
+
+  useEffect(() => {
+    const handleAssistantLaunch = () => {
+      void consumePendingAssistantLaunch();
+    };
+    window.addEventListener(ASSISTANT_LAUNCH_EVENT, handleAssistantLaunch);
+    return () => window.removeEventListener(ASSISTANT_LAUNCH_EVENT, handleAssistantLaunch);
+  }, [consumePendingAssistantLaunch]);
+
+  useEffect(() => {
+    if (
+      initializedRef.current ||
+      !conversationsHydrated ||
+      pendingAssistantHandledRef.current ||
+      conversationList.length ||
+      !assistants.length
+    ) return;
+    initializedRef.current = true;
+    createConversation();
+  }, [assistants.length, conversationList.length, conversationsHydrated, createConversation]);
+
+  useEffect(() => {
+    setSessionUi((current) => {
+      let changed = false;
+      const next = { ...current };
+      conversationList.forEach((conversation, index) => {
+        if (!next[conversation.id]) {
+          next[conversation.id] = defaultSessionUi(index > 0);
+          changed = true;
+        }
+      });
+      return changed ? next : current;
     });
-    if (recentlyDeleted.wasActive) setActiveConversationId(recentlyDeleted.conversation.id);
-    setRecentlyDeleted(null);
-    setNotice({ tone: "good", message: "会话已恢复" });
-  }, [commitLocalConversations, recentlyDeleted]);
+  }, [conversationList]);
 
-  const togglePin = useCallback(
-    async (conversation: ConversationSummary) => {
-      commitLocalConversations((current) =>
-        current.map((item) =>
-          item.id === conversation.id
-            ? { ...item, pinned: !item.pinned, updatedAt: new Date().toISOString() }
-            : item
-        )
+  const modelForSession = useCallback(
+    (conversationId: string) => {
+      const requestedId = sessionUi[conversationId]?.modelId;
+      return (
+        chatModels.find((model) => model.id === requestedId) ||
+        preferredModelFor(chatModels, "chat", userProvider.lastModelId)
       );
     },
-    [commitLocalConversations]
+    [chatModels, sessionUi, userProvider.lastModelId]
+  );
+  const settingsModel = modelForSession(
+    settingsConversationId ||
+      conversationList.find((conversation) => !sessionUi[conversation.id]?.collapsed)?.id ||
+      conversationList[0]?.id ||
+      ""
   );
 
-  const toggleActivePin = useCallback(async () => {
-    if (!activeConversation) return;
-    commitLocalConversations((current) =>
-      current.map((item) =>
-        item.id === activeConversation.id
-          ? { ...item, pinned: !item.pinned, updatedAt: new Date().toISOString() }
-          : item
-      )
-    );
-  }, [activeConversation, commitLocalConversations]);
-
   const handleStreamEvent = useCallback(
-    (event: ChatStreamEvent) => {
+    (conversationId: string, selectedModel: ModelCatalogEntry, event: ChatStreamEvent) => {
       if (event.type === "meta") {
-        streamingMessageIdRef.current = event.assistantMessageId;
-        commitLocalConversations((current) =>
-          current.map((conversation) => {
-            if (conversation.id !== event.conversation.id) return conversation;
-          const assistantPlaceholder: Message = {
-            id: event.assistantMessageId,
-            role: "assistant",
-            content: "",
-            providerId: selectedModel?.id || "user-direct",
-            model: selectedModel?.model || selectedModelName,
-            status: "streaming",
-            createdAt: new Date().toISOString()
-          };
-          return {
-            ...conversation,
-            ...event.conversation,
-            messages: [...conversation.messages, event.userMessage, assistantPlaceholder],
-            updatedAt: event.conversation.updatedAt
-          };
-          })
+        commitConversations((current) =>
+          current.map((conversation) =>
+            conversation.id !== conversationId
+              ? conversation
+              : (() => {
+                  const userMessage = {
+                    ...event.userMessage,
+                    id: uniqueLocalMessageId(conversation.messages, event.userMessage.id)
+                  };
+                  const assistantMessageId = uniqueLocalMessageId([...conversation.messages, userMessage], event.assistantMessageId);
+                  streamingMessageIdRef.current = assistantMessageId;
+                  const assistantPlaceholder: Message = {
+                    id: assistantMessageId,
+                    role: "assistant",
+                    content: "",
+                    providerId: selectedModel.id,
+                    model: selectedModel.model,
+                    status: "streaming",
+                    createdAt: new Date().toISOString()
+                  };
+                  return {
+                  ...conversation,
+                  ...event.conversation,
+                  messages: [...conversation.messages, userMessage, assistantPlaceholder]
+                  };
+                })()
+          )
         );
         return;
       }
 
       if (event.type === "token") {
+        if (!streamOutput) return;
         const messageId = streamingMessageIdRef.current;
         if (!messageId) return;
-        commitLocalConversations((current) =>
+        commitConversations((current) =>
           current.map((conversation) =>
-            conversation.id === activeConversationId
+            conversation.id === conversationId
               ? {
                   ...conversation,
                   messages: conversation.messages.map((message) =>
-                    message.id === messageId
-                      ? { ...message, content: message.content + event.token }
-                      : message
+                    message.id === messageId ? { ...message, content: message.content + event.token } : message
                   )
                 }
               : conversation
@@ -495,1149 +500,1239 @@ function ChatModule({
       }
 
       if (event.type === "error") {
-        setNotice({ tone: "bad", message: event.error });
+        patchSessionUi(conversationId, { notice: event.error });
         return;
       }
 
-      commitLocalConversations((current) =>
+      commitConversations((current) =>
         current.map((conversation) =>
-          conversation.id === event.conversation.id
+          conversation.id === conversationId
             ? {
                 ...conversation,
                 ...event.conversation,
                 messages: conversation.messages.map((message) =>
-                  message.id === event.message.id ? event.message : message
+                  message.id === streamingMessageIdRef.current
+                    ? { ...event.message, id: streamingMessageIdRef.current }
+                    : message
                 )
               }
             : conversation
         )
       );
     },
-    [activeConversationId, commitLocalConversations, selectedModel, selectedModelName]
+    [commitConversations, patchSessionUi, streamOutput]
   );
 
-  const sendMessage = async (contentOverride?: string, baseConversation?: Conversation, options: { clearEdit?: boolean } = {}) => {
-    const rawContent = (contentOverride ?? draft).trim();
-    const content = activeSummary
-      ? `以下是本地生成的历史摘要，请作为上下文参考，不要直接复述：\n${activeSummary}\n\n用户最新输入：\n${rawContent}`
-      : rawContent;
-    if (!rawContent || streaming) return;
+  const sendMessage = async (conversation: Conversation) => {
+    const ui = sessionUi[conversation.id] || defaultSessionUi(false);
+    const rawContent = ui.draft.trim();
+    if ((!rawContent && !ui.attachments.length) || streamingConversationId) return;
     if (!enabled) {
-      setNotice({ tone: "bad", message: "当前对话功能未启用" });
-      return;
-    }
-    if (!selectedAssistantId) {
-      setNotice({ tone: "bad", message: "没有可用助手，无法发送消息" });
+      patchSessionUi(conversation.id, { notice: "当前对话服务暂未开放。" });
       return;
     }
     if (!connectionReady) {
-      setNotice({ tone: "bad", message: "请先填写 API URL 和 Key" });
+      patchSessionUi(conversation.id, { notice: "请先填写 API URL 和 Key。" });
       onRequestApiConfig();
       return;
     }
+    const selectedModel = modelForSession(conversation.id);
     if (!selectedModel) {
-      setNotice({ tone: "bad", message: "请先在后台启用对话模型" });
+      patchSessionUi(conversation.id, { notice: "当前没有可用的对话模型。" });
       return;
     }
-    if (attachments.some((attachment) => attachment.kind === "image") && !selectedModelSupportsVision) {
-      setNotice({ tone: "bad", message: "当前模型未启用视觉能力，不能发送图片附件" });
+    if (ui.attachments.length && !selectedModel.capabilities.includes("vision")) {
+      patchSessionUi(conversation.id, { notice: "当前模型不支持图片输入。" });
       return;
     }
-
-    if (!contentOverride) setDraft("");
-    setStreaming(true);
-    setNotice(null);
-
-    let conversation = baseConversation || activeConversation;
-    if (!conversation) {
-      conversation = await createConversation();
-      if (!conversation) {
-        setStreaming(false);
-        setNotice({ tone: "bad", message: "没有可用助手，无法创建会话" });
+    const knowledgeBaseIds = normalizeKnowledgeBaseIds(ui.knowledgeBaseIds);
+    let embeddingConnections;
+    if (knowledgeBaseIds.length) {
+      if (knowledgeCatalog.status !== "authenticated" || !knowledgeCatalog.csrfToken) {
+        patchSessionUi(conversation.id, { notice: "知识库账号已退出，请重新登录后再引用云知识库。" });
         return;
       }
+      const visibleIds = new Set(knowledgeCatalog.bases.map((base) => base.id));
+      const missingIds = knowledgeBaseIds.filter((id) => !visibleIds.has(id));
+      if (missingIds.length) {
+        patchSessionUi(conversation.id, {
+          knowledgeBaseIds: knowledgeBaseIds.filter((id) => visibleIds.has(id)),
+          notice: "部分知识库已不存在或无权访问，请重新选择。"
+        });
+        return;
+      }
+      const missingVendors = missingKnowledgeEmbeddingVendors(knowledgeBaseIds, knowledgeCatalog.bases);
+      if (missingVendors.length) {
+        const labels = missingVendors.map((vendor) => vendor === "qwen" ? "Qwen" : "OpenAI");
+        patchSessionUi(conversation.id, { notice: `请先在知识库页面配置 ${labels.join("、")} Embedding 连接。` });
+        return;
+      }
+      embeddingConnections = knowledgeEmbeddingConnectionsForBases(knowledgeBaseIds, knowledgeCatalog.bases);
     }
+    const selectedSkills = chatSkills.filter((skill) => (ui.skillIds || []).includes(skill.id));
+    const selectedApp = appPresets.find((app) => app.enabled && app.id === ui.appId);
+    const compatibilityOptions = { searchReady };
+    const incompatibleSkill = selectedSkills.find((skill) => !skillCompatibility(skill, toolSettings, selectedModel, compatibilityOptions).compatible);
+    if (incompatibleSkill) {
+      const compatibility = skillCompatibility(incompatibleSkill, toolSettings, selectedModel, compatibilityOptions);
+      patchSessionUi(conversation.id, { notice: `Skill“${incompatibleSkill.name}”不可用：${compatibility.reason}` });
+      return;
+    }
+    const allowedTools = [...new Set([
+      ...selectedSkills.flatMap((skill) => skill.allowedTools),
+      ...(ui.search ? ["web_search"] : [])
+    ])];
+    if (toolMode === "禁用" && allowedTools.length) {
+      patchSessionUi(conversation.id, { notice: "当前会话已禁用工具调用，请关闭相关 Skill 或切换工具调用方式。" });
+      return;
+    }
+    const toolsCompatibility = toolSetCompatibility(allowedTools, toolSettings, selectedModel, compatibilityOptions);
+    if (!toolsCompatibility.compatible) {
+      patchSessionUi(conversation.id, { notice: toolsCompatibility.reason });
+      return;
+    }
+    const assistant = assistants.find((item) => item.id === conversation.assistantId && item.enabled !== false);
+    if (!assistant) {
+      patchSessionUi(conversation.id, { notice: "当前没有可用助手。" });
+      return;
+    }
+
+    const displayContent = rawContent || "请分析我上传的图片。";
+    const appAwareContent = selectedApp
+      ? `${selectedApp.prompt}\n\n用户输入：\n${displayContent}`
+      : displayContent;
+    const content = toolMode === "禁用"
+      ? `请勿调用任何外部工具，直接基于当前上下文回答。\n\n${appAwareContent}`
+      : toolMode === "询问后调用"
+        ? `如需调用外部工具，请先说明原因并征得确认。\n\n${appAwareContent}`
+        : appAwareContent;
     const requestConversation: Conversation = {
       ...conversation,
-      title:
-        conversation.messages.length === 0 || conversation.title === "新对话"
-          ? makeConversationTitle(rawContent)
-          : conversation.title,
-      assistantId: selectedAssistantId,
+      title: conversation.messages.length ? conversation.title : makeConversationTitle(displayContent),
+      assistantId: assistant.id,
       updatedAt: new Date().toISOString()
     };
-    if (requestConversation.title !== conversation.title || requestConversation.assistantId !== conversation.assistantId) {
-      commitLocalConversations((current) =>
-        current.map((item) => (item.id === requestConversation.id ? requestConversation : item))
+    if (
+      requestConversation.title !== conversation.title ||
+      requestConversation.assistantId !== conversation.assistantId
+    ) {
+      commitConversations((current) =>
+        current.map((item) => (item.id === conversation.id ? requestConversation : item))
       );
     }
 
+    patchSessionUi(conversation.id, { draft: "", appId: "", notice: "" });
+    setStreamingConversationId(conversation.id);
     const controller = new AbortController();
     abortRef.current = controller;
-
     try {
       await streamChat(
         {
           conversation: conversationSummary(requestConversation),
-      history: requestConversation.messages,
-          assistantId: selectedAssistantId,
+          history: requestConversation.messages.slice(-Math.max(1, Number(contextSize) || 16)),
+          assistantId: assistant.id,
           modelId: selectedModel.id,
           temperature,
+          topP,
+          maxTokens: Math.max(1, Number(maxTokens) || 4096),
           content,
-          displayContent: rawContent,
-          attachments: contentOverride ? [] : attachments,
+          displayContent,
+          attachments: ui.attachments,
+          skillInstructions: selectedSkills.map((skill) => `${skill.name}: ${skill.instructions}`),
+          allowedTools,
+          searchService: allowedTools.includes("web_search")
+            ? searchServicePayload(searchService)
+            : undefined,
+          ...(knowledgeBaseIds.length ? { knowledgeBaseIds, embeddingConnections } : {}),
           connection: userConnectionPayload(userProvider)
         },
-        handleStreamEvent,
-        controller.signal
+        (event) => handleStreamEvent(conversation.id, selectedModel, event),
+        controller.signal,
+        knowledgeBaseIds.length ? knowledgeCatalog.csrfToken : ""
       );
-      if (!contentOverride) setAttachments([]);
-      if (options.clearEdit) setEditingMessageId("");
-      if (activeSummary) setActiveSummary("");
-    } catch (err: unknown) {
-      if (controller.signal.aborted) {
-        setNotice({ tone: "good", message: "已停止生成" });
-      } else {
-        const message = err instanceof ApiError || err instanceof Error ? err.message : "发送失败";
-        setNotice({ tone: "bad", message });
+      patchSessionUi(conversation.id, { attachments: [] });
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        const message = error instanceof ApiError || error instanceof Error ? error.message : "发送失败";
+        patchSessionUi(conversation.id, { notice: message, draft: rawContent, appId: selectedApp?.id || "" });
       }
     } finally {
-      setStreaming(false);
+      setStreamingConversationId("");
       abortRef.current = null;
-      streamingMessageIdRef.current = null;
+      streamingMessageIdRef.current = "";
       void onRefresh();
     }
   };
 
-  const exportActiveJson = () => {
-    if (!activeConversation) return;
-    downloadText(
-      JSON.stringify(createConversationExport([activeConversation]), null, 2),
-      `${activeConversation.id}.json`,
-      "application/json;charset=utf-8"
-    );
-    setNotice({ tone: "good", message: "已导出当前对话 JSON" });
-  };
-
-  const exportActiveMarkdown = () => {
-    if (!activeConversation) return;
-    downloadText(conversationToMarkdown(activeConversation), `${activeConversation.id}.md`, "text/markdown;charset=utf-8");
-    setNotice({ tone: "good", message: "已导出当前对话 Markdown" });
-  };
-
-  const exportAllJson = () => {
-    downloadText(
-      JSON.stringify(createConversationExport(localConversationList), null, 2),
-      `xi-ai-web-conversations-${Date.now()}.json`,
-      "application/json;charset=utf-8"
-    );
-    setNotice({ tone: "good", message: "已批量导出全部本地对话" });
-  };
-
-  const exportShareCard = () => {
-    if (!activeConversation) return;
-    downloadText(conversationShareHtml(activeConversation), `${activeConversation.id}-share.html`, "text/html;charset=utf-8");
-    setNotice({ tone: "good", message: "已导出本地分享卡片 HTML" });
-  };
-
-  const summarizeActiveConversation = () => {
-    if (!activeConversation) return;
-    const summary = createConversationSummaryArtifact(activeConversation);
-    setActiveSummary(summary.summary);
-    downloadText(summary.summary, `${activeConversation.id}-summary.md`, "text/markdown;charset=utf-8");
-    setNotice({ tone: "good", message: "已生成本地摘要，并会附加到下一次请求上下文" });
-  };
-
-  const importConversationFile = async (file: File) => {
-    try {
-      const payload = await readJsonFile(file);
-      const preview = previewConversationImport(payload);
-      if (!preview.valid.length) {
-        setNotice({ tone: "bad", message: "没有可导入的有效对话" });
-        return;
-      }
-      const message = `检测到 ${preview.valid.length} 条有效对话，${preview.rejected.length} 条无效记录。是否合并导入？`;
-      if (!window.confirm(message)) return;
-      const next = mergeImportedConversations(localConversationList, preview.valid);
-      commitLocalConversations(next);
-      setActiveConversationId(next[0]?.id || activeConversationId);
-      setNotice({ tone: "good", message: "已合并导入本地对话" });
-    } catch (error) {
-      setNotice({ tone: "bad", message: error instanceof Error ? error.message : "导入失败" });
-    }
-  };
-
-  const retryFromUserMessage = async (messageId: string, content: string) => {
-    if (!activeConversation) return;
-    const nextConversation = forkConversationBeforeUserMessage(activeConversation, messageId);
-    commitLocalConversations((current) =>
-      current.map((conversation) => (conversation.id === nextConversation.id ? nextConversation : conversation))
-    );
-    await sendMessage(content, nextConversation);
-  };
-
-  const sendComposerMessage = async () => {
-    if (editingMessageId && activeConversation) {
-      const nextConversation = forkConversationBeforeUserMessage(activeConversation, editingMessageId);
-      commitLocalConversations((current) =>
-        current.map((conversation) => (conversation.id === nextConversation.id ? nextConversation : conversation))
-      );
-      await sendMessage(draft, nextConversation, { clearEdit: true });
-      return;
-    }
-    await sendMessage();
-  };
-
   const stopStreaming = () => {
     abortRef.current?.abort();
-    const messageId = streamingMessageIdRef.current;
-    if (messageId) {
-      commitLocalConversations((current) =>
-        current.map((conversation) =>
-          conversation.id === activeConversationId
-            ? {
-                ...conversation,
-                messages: conversation.messages.map((message) =>
-                  message.id === messageId ? { ...message, status: "stopped" } : message
-                )
-              }
-            : conversation
-        )
-      );
-    }
+    setStreamingConversationId("");
   };
 
-  const transcribeVoice = async (blob: Blob) => {
-    if (!connectionReady) {
-      setNotice({ tone: "bad", message: "请先填写 API URL 和 Key" });
-      onRequestApiConfig();
-      return;
-    }
-    if (!selectedSttModel) {
-      setNotice({ tone: "bad", message: "后台未启用语音识别模型" });
-      return;
-    }
-    setNotice({ tone: "good", message: "正在识别语音..." });
+  const clearContext = (conversation: Conversation) => {
+    commitConversations((current) =>
+      current.map((item) =>
+        item.id === conversation.id
+          ? { ...item, messages: [], title: "新对话", updatedAt: new Date().toISOString() }
+          : item
+      )
+    );
+    patchSessionUi(conversation.id, { notice: "", attachments: [] });
+  };
+
+  const attachImage = async (conversationId: string, event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
     try {
-      const transcript = await api.transcribeAudio({
-        connection: userConnectionPayload(userProvider),
-        modelId: selectedSttModel.id,
-        fileName: "chat-voice.webm",
-        mimeType: blob.type || "audio/webm",
-        dataUrl: await blobToDataUrl(blob)
-      });
-      if (!transcript.text?.trim()) {
-        setNotice({ tone: "bad", message: "未识别到文本" });
-        return;
-      }
-      setDraft((current) => (current ? `${current}\n${transcript.text.trim()}` : transcript.text.trim()));
-      setNotice({ tone: "good", message: "语音已转写到输入框" });
+      const attachment = await createChatAttachment(file, "image");
+      patchSessionUi(conversationId, { attachments: [attachment], notice: "" });
     } catch (error) {
-      setNotice({ tone: "bad", message: error instanceof Error ? error.message : "语音识别失败" });
+      patchSessionUi(conversationId, {
+        notice: error instanceof Error ? error.message : "图片读取失败"
+      });
     }
   };
 
-  if (!enabled) {
-    return (
-      <section className="module-placeholder">
-        <div className="placeholder-note">
-          <strong>暂未开放</strong>
-          <p>当前功能未启用。</p>
-          <div className="placeholder-grid">
-            <span>多模型</span>
-            <span>流式回复</span>
-            <span>助手切换</span>
-          </div>
-        </div>
-      </section>
-    );
-  }
+  const changeModel = (conversationId: string, modelId: string) => {
+    patchSessionUi(conversationId, { modelId });
+    onUserProviderChange({ lastModelId: modelId });
+  };
 
-  return (
-    <section
-      className={mobileConversationsOpen ? "chat-module conversation-sheet-open" : "chat-module"}
-      data-testid="chat-module"
-    >
-      <input
-        ref={importInputRef}
-        type="file"
-        hidden
-        accept="application/json,.json"
-        onChange={(event) => {
-          const file = event.currentTarget.files?.[0];
-          if (file) void importConversationFile(file);
-          event.currentTarget.value = "";
-        }}
-      />
-      {mobileConversationsOpen ? (
-        <button
-          type="button"
-          className="conversation-scrim"
-          onClick={closeMobileConversations}
-          aria-label="关闭会话列表"
-          tabIndex={-1}
-        />
-      ) : null}
-      <aside
-        className={mobileConversationsOpen ? "conversation-panel mobile-open" : "conversation-panel"}
-        role={mobileConversationsOpen ? "dialog" : undefined}
-        aria-modal={mobileConversationsOpen ? "true" : undefined}
-        aria-labelledby="conversation-panel-title"
-        onKeyDown={handleConversationSheetKeyDown}
-        inert={pendingDeleteConversation ? true : undefined}
-      >
-        <div className="conversation-panel-header">
-          <div>
-            <strong id="conversation-panel-title">会话</strong>
-            <span>{conversations.length} 个本地会话</span>
-          </div>
-          <button
-            type="button"
-            className="icon-button conversation-panel-close"
-            onClick={closeMobileConversations}
-            aria-label="关闭会话列表"
-          >
-            <X size={17} />
-          </button>
-        </div>
+  const openSettings = (conversationId?: string) => {
+    const targetConversationId = conversationId ||
+      conversationList.find((conversation) => !sessionUi[conversation.id]?.collapsed)?.id ||
+      conversationList[0]?.id ||
+      "";
+    const targetSkillIds = targetConversationId
+      ? sessionUi[targetConversationId]?.skillIds || []
+      : [];
+    setSettingsConversationId(targetConversationId);
+    setSettingsSkillIds([...targetSkillIds]);
+    settingsSnapshotRef.current = {
+      assistantAvatarId,
+      userAvatar,
+      messageStyle,
+      temperature,
+      topP,
+      contextSize,
+      maxTokens,
+      streamOutput,
+      toolMode,
+      skillIds: [...targetSkillIds]
+    };
+    setSettingsOpen(true);
+  };
 
-        <button type="button" className="new-thread" onClick={() => void handleCreateConversation()}>
-          <MessageSquarePlus size={18} />
-          新建对话
-        </button>
+  const cancelSettings = () => {
+    const snapshot = settingsSnapshotRef.current;
+    if (snapshot) {
+      setAssistantAvatarId(snapshot.assistantAvatarId);
+      setUserAvatar(snapshot.userAvatar);
+      setMessageStyle(snapshot.messageStyle);
+      setTemperature(snapshot.temperature);
+      setTopP(snapshot.topP);
+      setContextSize(snapshot.contextSize);
+      setMaxTokens(snapshot.maxTokens);
+      setStreamOutput(snapshot.streamOutput);
+      setToolMode(snapshot.toolMode);
+      setSettingsSkillIds(snapshot.skillIds);
+    }
+    settingsSnapshotRef.current = null;
+    setSettingsConversationId("");
+    setSettingsOpen(false);
+  };
 
-        <label className="thread-search">
-          <Search size={16} />
-          <input
-            ref={conversationSearchRef}
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="搜索会话"
-            aria-label="搜索会话"
-          />
-        </label>
+  const saveSettings = () => {
+    if (settingsConversationId) {
+      patchSessionUi(settingsConversationId, { skillIds: [...settingsSkillIds] });
+    }
+    settingsSnapshotRef.current = null;
+    setSettingsConversationId("");
+    setSettingsOpen(false);
+  };
 
-        <div
-          className="thread-list"
-          data-scroll-owner={mobileConversationsOpen ? "conversation-list" : undefined}
-        >
-          {filteredConversations.length ? (
-            filteredConversations.map((conversation) => {
-              const assistant = assistantById.get(conversation.assistantId);
-              return (
-                <article
-                  key={conversation.id}
-                  className={
-                    conversation.id === activeConversationId ? "thread-card active" : "thread-card"
-                  }
-                >
-                  <button
-                    type="button"
-                    className="thread-main"
-                    onClick={() => handleSelectConversation(conversation.id)}
-                    aria-current={conversation.id === activeConversationId ? "true" : undefined}
-                  >
-                    <strong>{conversation.title}</strong>
-                    <span>{conversation.preview || assistant?.name || "空会话"}</span>
-                  </button>
-                  <div className="thread-actions">
-                    <button
-                      type="button"
-                      className="icon-button"
-                      onClick={() => void togglePin(conversation)}
-                      title={conversation.pinned ? "取消置顶" : "置顶"}
-                      aria-label={conversation.pinned ? "取消置顶" : "置顶"}
-                    >
-                      {conversation.pinned ? <PinOff size={14} /> : <Pin size={14} />}
-                    </button>
-                    <button
-                      type="button"
-                      className="icon-button danger"
-                      onClick={() => setPendingDeleteId(conversation.id)}
-                      title="删除"
-                      aria-label={`删除会话 ${conversation.title}`}
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                </article>
-              );
-            })
-          ) : (
-            <p className="empty-copy">{conversations.length ? "没有匹配会话。" : "还没有会话。"}</p>
-          )}
-        </div>
-      </aside>
-
-      <div
-        className="chat-stage"
-        inert={mobileConversationsOpen || pendingDeleteConversation ? true : undefined}
-      >
-        <ChatHeader
-          conversation={activeConversation}
-          assistant={selectedAssistant}
-          assistants={assistants}
-          selectedAssistantId={selectedAssistantId}
-          chatModels={chatModels}
-          selectedModelId={selectedModel?.id || ""}
-          selectedModel={selectedModel}
-          connectionReady={connectionReady}
-          temperature={temperature}
-          onAssistantChange={setSelectedAssistantId}
-          onModelChange={(modelId) => {
-            setSelectedModelId(modelId);
-            onUserProviderChange({ lastModelId: modelId });
-          }}
-          onRequestApiConfig={onRequestApiConfig}
-          onTemperatureChange={setTemperature}
-          onTogglePin={toggleActivePin}
-          onExportJson={exportActiveJson}
-          onExportMarkdown={exportActiveMarkdown}
-          onExportAll={exportAllJson}
-          onShareCard={exportShareCard}
-          onImportClick={() => importInputRef.current?.click()}
-          onSummarize={summarizeActiveConversation}
-          onOpenConversations={() => setMobileConversationsOpen(true)}
-          conversationTriggerRef={conversationTriggerRef}
-        />
-
-        {notice || activeSummary ? (
-          <div className="chat-status-stack">
-            {notice ? (
-              <div className={`notice ${notice.tone}`} role={notice.tone === "bad" ? "alert" : "status"}>
-                {notice.tone === "good" ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
-                <span>{notice.message}</span>
-                <button type="button" className="icon-button" onClick={() => setNotice(null)} aria-label="关闭提示">
-                  <X size={15} />
-                </button>
-              </div>
-            ) : null}
-            {activeSummary ? (
-              <div className="summary-context-banner" role="status">
-                <Sparkles size={15} />
-                <span>本地摘要已加入下一次请求</span>
-                <button type="button" onClick={() => setActiveSummary("")}>移除</button>
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-
-        <MessageList
-          conversation={activeConversation}
-          assistant={selectedAssistant}
-          masks={maskWorkflows}
-          tools={localToolBadges}
-          onMaskPick={applyMaskWorkflow}
-          onPromptPick={setDraft}
-          onRetryPrompt={(messageId, content) => void retryFromUserMessage(messageId, content)}
-          onEditPrompt={(messageId, content) => {
-            setEditingMessageId(messageId);
-            setDraft(content);
-            setNotice({ tone: "good", message: "已放入输入框，发送或重试时才会生成新的分支" });
-          }}
-          scrollActive={!mobileConversationsOpen && !pendingDeleteConversation}
-        />
-
-        <Composer
-          value={draft}
-          streaming={streaming}
-          model={selectedModelName || "选择模型"}
-          connectionReady={providerReady}
-          onChange={setDraft}
-          onSend={sendComposerMessage}
-          onStop={stopStreaming}
-          onOpenConnection={onRequestApiConfig}
-          attachments={attachments}
-          supportsVision={selectedModelSupportsVision}
-          onAttachmentsChange={setAttachments}
-          onAttachmentError={(message) => setNotice({ tone: "bad", message })}
-          voiceEnabled={Boolean(selectedSttModel)}
-          onVoiceInput={transcribeVoice}
-        />
-      </div>
-      {recentlyDeleted ? (
-        <div className="chat-undo-toast" role="status" aria-live="polite">
-          <span>已删除“{recentlyDeleted.conversation.title}”</span>
-          <button type="button" onClick={undoConversationDeletion}>
-            <Undo2 size={15} />
-            撤销
-          </button>
-          <button type="button" className="icon-button" onClick={() => setRecentlyDeleted(null)} aria-label="关闭撤销提示">
-            <X size={15} />
-          </button>
-        </div>
-      ) : null}
-      {pendingDeleteConversation ? (
-        <ConfirmationDialog
-          open
-          title="删除这个会话？"
-          description={`“${pendingDeleteConversation.title}”及其本地消息将被移除，删除后仍可立即撤销。`}
-          confirmLabel="删除会话"
-          onCancel={() => setPendingDeleteId(null)}
-          onConfirm={() => void confirmDeleteConversation()}
-        />
-      ) : null}
-    </section>
-  );
-}
-
-function ChatHeader({
-  conversation,
-  assistant,
-  assistants,
-  selectedAssistantId,
-  chatModels,
-  selectedModelId,
-  selectedModel,
-  connectionReady,
-  temperature,
-  onAssistantChange,
-  onModelChange,
-  onRequestApiConfig,
-  onTemperatureChange,
-  onTogglePin,
-  onExportJson,
-  onExportMarkdown,
-  onExportAll,
-  onShareCard,
-  onImportClick,
-  onSummarize,
-  onOpenConversations,
-  conversationTriggerRef
-}: {
-  conversation: Conversation | null;
-  assistant?: Assistant;
-  assistants: Assistant[];
-  selectedAssistantId: string;
-  chatModels: ModelCatalogEntry[];
-  selectedModelId: string;
-  selectedModel?: ModelCatalogEntry;
-  connectionReady: boolean;
-  temperature: number;
-  onAssistantChange: (id: string) => void;
-  onModelChange: (id: string) => void;
-  onRequestApiConfig: () => void;
-  onTemperatureChange: (value: number) => void;
-  onTogglePin: () => Promise<void>;
-  onExportJson: () => void;
-  onExportMarkdown: () => void;
-  onExportAll: () => void;
-  onShareCard: () => void;
-  onImportClick: () => void;
-  onSummarize: () => void;
-  onOpenConversations: () => void;
-  conversationTriggerRef: { current: HTMLButtonElement | null };
-}) {
-  const [actionsOpen, setActionsOpen] = useState(false);
-  const actionsRef = useRef<HTMLDivElement | null>(null);
-  const actionsTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const title = conversation?.title || "新的对话";
-  const subtitle = assistant?.description || "选择角色后开始创作";
-
-  useEffect(() => {
-    if (!actionsOpen) return;
-    const focusFrame = window.requestAnimationFrame(() => {
-      actionsRef.current?.querySelector<HTMLButtonElement>('button[role="menuitem"]:not([disabled])')?.focus();
+  const uploadUserAvatar = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    const reader = new FileReader();
+    reader.addEventListener("load", () => {
+      if (typeof reader.result === "string") setUserAvatar(reader.result);
     });
-    const handlePointerDown = (event: PointerEvent) => {
-      if (!actionsRef.current?.contains(event.target as Node)) setActionsOpen(false);
-    };
-    const handleEscape = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      setActionsOpen(false);
-      actionsTriggerRef.current?.focus();
-    };
-    document.addEventListener("pointerdown", handlePointerDown);
-    document.addEventListener("keydown", handleEscape);
-    return () => {
-      window.cancelAnimationFrame(focusFrame);
-      document.removeEventListener("pointerdown", handlePointerDown);
-      document.removeEventListener("keydown", handleEscape);
-    };
-  }, [actionsOpen]);
-
-  const runAction = (action: () => void) => {
-    setActionsOpen(false);
-    action();
-    window.requestAnimationFrame(() => actionsTriggerRef.current?.focus());
+    reader.readAsDataURL(file);
   };
 
-  return (
-    <header className="chat-header">
-      <div className="chat-title-row">
-        <button
-          ref={conversationTriggerRef}
-          type="button"
-          className="icon-button conversation-trigger"
-          onClick={onOpenConversations}
-          aria-label="打开会话列表"
-          title="会话列表"
-        >
-          <PanelLeft size={18} />
-        </button>
-        <div className="chat-title-block">
-          <h2 title={title}>{title}</h2>
-          <p>{subtitle}</p>
-        </div>
-      </div>
-
-      <div className="chat-header-actions">
-        <label className="assistant-chip">
-          <Bot size={15} />
-          <select
-            aria-label="选择助手"
-            value={selectedAssistantId}
-            onChange={(event) => onAssistantChange(event.target.value)}
-          >
-            {assistants.map((assistant) => (
-              <option key={assistant.id} value={assistant.id}>
-                {assistant.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <ModelPicker
-          className="model-select-chip"
-          models={chatModels}
-          capability="chat"
-          label=""
-          value={selectedModelId}
-          onChange={onModelChange}
-          disabled={!chatModels.length}
-        />
-        <div className="connection-control">
-          <button
-            type="button"
-            className={connectionReady ? "connection-pill ready" : "connection-pill"}
-            onClick={onRequestApiConfig}
-            data-testid="model-connection-button"
-            title={connectionReady ? selectedModel?.model || "API 已连接" : "配置 API"}
-          >
-            <PlugZap size={16} />
-            <span>{connectionReady ? "已连接" : "配置 API"}</span>
-          </button>
-        </div>
-        <div className="chat-overflow" ref={actionsRef}>
-          <button
-            ref={actionsTriggerRef}
-            type="button"
-            className="icon-button chat-overflow-trigger"
-            onClick={() => setActionsOpen((open) => !open)}
-            aria-label="更多对话操作"
-            aria-haspopup="menu"
-            aria-expanded={actionsOpen}
-            title="更多操作"
-          >
-            <MoreHorizontal size={18} />
-          </button>
-          {actionsOpen ? (
-            <div className="chat-overflow-menu" role="menu" aria-label="对话操作">
-              <label className="overflow-temperature">
-                <span>
-                  回复温度
-                  <strong>{temperature.toFixed(1)}</strong>
-                </span>
-                <input
-                  aria-label="回复温度"
-                  type="range"
-                  min="0"
-                  max="1.5"
-                  step="0.1"
-                  value={temperature}
-                  onChange={(event) => onTemperatureChange(Number(event.target.value))}
-                />
-              </label>
-              <div className="overflow-menu-divider" role="separator" />
-              <button
-                type="button"
-                role="menuitem"
-                disabled={!conversation}
-                onClick={() => runAction(() => void onTogglePin())}
-              >
-                {conversation?.pinned ? <PinOff size={16} /> : <Pin size={16} />}
-                {conversation?.pinned ? "取消置顶" : "置顶会话"}
-              </button>
-              <button type="button" role="menuitem" onClick={() => runAction(onImportClick)}>
-                <Upload size={16} />
-                导入对话
-              </button>
-              <button type="button" role="menuitem" disabled={!conversation} onClick={() => runAction(onExportJson)}>
-                <Download size={16} />
-                导出 JSON
-              </button>
-              <button type="button" role="menuitem" disabled={!conversation} onClick={() => runAction(onExportMarkdown)}>
-                <FileText size={16} />
-                导出 Markdown
-              </button>
-              <button type="button" role="menuitem" onClick={() => runAction(onExportAll)}>
-                <Download size={16} />
-                导出全部对话
-              </button>
-              <button type="button" role="menuitem" disabled={!conversation} onClick={() => runAction(onShareCard)}>
-                <Copy size={16} />
-                导出分享卡片
-              </button>
-              <button type="button" role="menuitem" disabled={!conversation} onClick={() => runAction(onSummarize)}>
-                <Sparkles size={16} />
-                生成本地摘要
-              </button>
-            </div>
-          ) : null}
-        </div>
-      </div>
-    </header>
-  );
-}
-
-function MessageList({
-  conversation,
-  assistant,
-  masks,
-  tools,
-  onMaskPick,
-  onPromptPick,
-  onRetryPrompt,
-  onEditPrompt,
-  scrollActive
-}: {
-  conversation: Conversation | null;
-  assistant?: Assistant;
-  masks: ReturnType<typeof buildChatMaskWorkflows>;
-  tools: string[];
-  onMaskPick: (maskId: string) => void;
-  onPromptPick: (prompt: string) => void;
-  onRetryPrompt: (messageId: string, prompt: string) => void;
-  onEditPrompt: (messageId: string, prompt: string) => void;
-  scrollActive: boolean;
-}) {
-  const bottomRef = useRef<HTMLDivElement | null>(null);
-  const promptStarters = [
-    "梳理执行步骤",
-    "对比三个方案",
-    "润色这段内容"
-  ];
-
-  useEffect(() => {
-    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    bottomRef.current?.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "end" });
-  }, [conversation?.messages]);
-
-  const copyMessage = async (content: string) => {
-    try {
-      await navigator.clipboard.writeText(content);
-    } catch {
-      const textarea = document.createElement("textarea");
-      textarea.value = content;
-      textarea.style.position = "fixed";
-      textarea.style.opacity = "0";
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand("copy");
-      textarea.remove();
-    }
-  };
-
-  if (!conversation || conversation.messages.length === 0) {
-    return (
-      <section className="empty-chat" data-scroll-owner={scrollActive ? "chat-messages" : undefined}>
-        <div className="empty-chat-intro">
-          <div className="assistant-orbit" style={{ background: assistant?.color || "#ff2442" }}>
-            <Bot size={22} />
-          </div>
-          <div>
-            <h1>{assistant ? assistant.name : "选择助手开始"}</h1>
-            <p>{assistant?.description || "选择一个角色后开始创作。"}</p>
-          </div>
-        </div>
-        <div className="prompt-starters">
-          {promptStarters.map((prompt) => (
-            <button key={prompt} type="button" onClick={() => onPromptPick(prompt)}>
-              <Sparkles size={15} />
-              {prompt}
-            </button>
-          ))}
-        </div>
-        <MaskStrip masks={masks} onPick={onMaskPick} compact />
-        <ToolStrip tools={tools} compact />
-      </section>
-    );
-  }
+  const topModel = conversationList[0] ? modelForSession(conversationList[0].id) : undefined;
 
   return (
-    <section className="message-list" data-scroll-owner={scrollActive ? "chat-messages" : undefined}>
-      <MaskStrip masks={masks.slice(0, 8)} onPick={onMaskPick} compact />
-      <ToolStrip tools={tools} compact />
-      {conversation.messages.map((message) => (
-        <article key={message.id} className={`message ${message.role} ${message.status || ""}`}>
-          <div className="message-avatar">
-            {message.role === "user" ? <UserRound size={17} /> : <Bot size={17} />}
-          </div>
-          <div className="message-body">
-            <div className="message-meta">
-              <strong>{message.role === "user" ? "你" : assistant?.name || "助手"}</strong>
-              <span>{formatTime(message.createdAt)}</span>
-              {message.model ? <span>{message.model}</span> : null}
-              {message.status === "streaming" ? <span>生成中</span> : null}
-              {message.status === "stopped" ? <span>已停止</span> : null}
-            </div>
-            {message.content ? (
-              <>
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ code: MarkdownCode }}>
-                  {message.content}
-                </ReactMarkdown>
-                <div className="message-actions">
-                  <button type="button" onClick={() => void copyMessage(message.content)}>
-                    <Copy size={14} />
-                    复制
-                  </button>
-                  {message.role === "user" ? (
-                    <>
-                      <button type="button" onClick={() => onEditPrompt(message.id, message.content)}>
-                        <Edit3 size={14} />
-                        编辑
-                      </button>
-                      <button type="button" onClick={() => onRetryPrompt(message.id, message.content)}>
-                        <RotateCcw size={14} />
-                        重试
-                      </button>
-                    </>
-                  ) : null}
-                </div>
-              </>
-            ) : (
-              <div className="typing-line">
-                <span />
-                <span />
-                <span />
-              </div>
-            )}
-          </div>
-        </article>
-      ))}
-      <div ref={bottomRef} />
-    </section>
-  );
-}
-
-function MaskStrip({
-  masks,
-  compact = false,
-  onPick
-}: {
-  masks: ReturnType<typeof buildChatMaskWorkflows>;
-  compact?: boolean;
-  onPick: (maskId: string) => void;
-}) {
-  if (!masks.length) return null;
-  return (
-    <div className={compact ? "mask-strip compact" : "mask-strip"} aria-label="工作流面具">
-      {masks.slice(0, compact ? 8 : 12).map((mask) => (
-        <button key={mask.id} type="button" onClick={() => onPick(mask.id)}>
-          <span style={{ background: mask.color }} />
-          <strong>{mask.title}</strong>
-          <small>{mask.category}</small>
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function ToolStrip({ tools, compact = false }: { tools: string[]; compact?: boolean }) {
-  if (!tools.length) return null;
-  return (
-    <div className={compact ? "tool-strip compact" : "tool-strip"} aria-label="本地工具能力">
-      {tools.map((tool) => (
-        <span key={tool}>{tool}</span>
-      ))}
-    </div>
-  );
-}
-
-function extensionForLanguage(language: string) {
-  const normalized = language.toLowerCase();
-  if (normalized === "typescript" || normalized === "ts") return "ts";
-  if (normalized === "javascript" || normalized === "js" || normalized === "jsx") return "js";
-  if (normalized === "tsx") return "tsx";
-  if (normalized === "json") return "json";
-  if (normalized === "css") return "css";
-  if (normalized === "html") return "html";
-  if (normalized === "bash" || normalized === "shell" || normalized === "sh") return "sh";
-  if (normalized === "python" || normalized === "py") return "py";
-  if (normalized === "mermaid") return "mmd";
-  return "txt";
-}
-
-function MarkdownCode({ inline, className, children, ...props }: ComponentPropsWithoutRef<"code"> & { inline?: boolean }) {
-  const text = Children.toArray(children).join("");
-  const language = /language-(\w+)/.exec(className || "")?.[1] || "";
-
-  const copyCode = async () => {
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch {
-      const textarea = document.createElement("textarea");
-      textarea.value = text;
-      textarea.style.position = "fixed";
-      textarea.style.opacity = "0";
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand("copy");
-      textarea.remove();
-    }
-  };
-
-  if (inline) {
-    return <code className={className} {...props}>{children}</code>;
-  }
-
-  return (
-    <figure className="code-artifact">
-      <header>
-        <span>{language || "text"}</span>
+    <section className="figma-chat-view" data-testid="chat-module">
+      <header className="figma-workspace-heading">
         <div>
-          <button type="button" onClick={() => void copyCode()}>复制</button>
-          <button
-            type="button"
-            onClick={() => downloadText(text, `snippet.${extensionForLanguage(language)}`, "text/plain;charset=utf-8")}
-          >
-            下载
+          <p>
+            <span>01 / INTELLIGENCE</span>
+            <i />
+            <small>{compactModelLabel(topModel) || "AI"} 对话空间</small>
+          </p>
+          <h1>AI 对话工作台</h1>
+        </div>
+        <div className="figma-heading-actions">
+          <button type="button" onClick={createConversation} disabled={!conversationsHydrated} aria-label="新对话" title="新对话">
+            <Plus size={15} />
+            <span className="figma-heading-action-label">新对话</span>
+          </button>
+          <button type="button" onClick={() => setSkillManagerOpen(true)} disabled={skillsLoading} aria-label="管理对话 Skill" title="管理对话 Skill">
+            <Puzzle size={15} />
+            <span className="figma-heading-action-label">Skill</span>
+          </button>
+          <button type="button" onClick={() => openSettings()} aria-label="会话设置" title="会话设置">
+            <Settings2 size={15} />
+            <span className="figma-heading-action-label">会话设置</span>
           </button>
         </div>
       </header>
-      {language === "mermaid" ? <small>Mermaid 源码</small> : null}
-      <pre>
-        <code className={className} {...props}>{children}</code>
-      </pre>
-    </figure>
+
+      {persistenceError ? (
+        <p className="figma-chat-storage-error" role="alert">
+          {persistenceError}
+          <button type="button" onClick={() => setPersistenceError("")} aria-label="关闭存储错误">×</button>
+        </p>
+      ) : null}
+
+      <div className="figma-session-stack">
+        {!conversationsHydrated ? <p className="figma-chat-storage-loading">正在读取本地对话…</p> : null}
+        {conversationList.map((conversation) => {
+          const ui = sessionUi[conversation.id] || defaultSessionUi(false);
+          const selectedModel = modelForSession(conversation.id);
+          const boundAssistant = assistants.find((assistant) => assistant.id === conversation.assistantId);
+          return (
+            <ChatSessionBlock
+              key={conversation.id}
+              conversation={conversation}
+              ui={ui}
+              models={chatModels}
+              skills={chatSkills}
+              tools={toolSettings}
+              searchReady={searchReady}
+              knowledgeAuthenticated={knowledgeCatalog.status === "authenticated"}
+              knowledgeBases={knowledgeCatalog.bases}
+              apps={appPresets.filter((app) => app.enabled)}
+              assistant={boundAssistant}
+              selectedModel={selectedModel}
+              messageStyle={messageStyle}
+              assistantAvatarUrl={assistantAvatarUrl}
+              userAvatarUrl={userAvatar}
+              streaming={streamingConversationId === conversation.id}
+              onCreateConversation={createConversation}
+              onOpenSkillManager={() => setSkillManagerOpen(true)}
+              onOpenSettings={() => openSettings(conversation.id)}
+              onToggle={() => patchSessionUi(conversation.id, { collapsed: !ui.collapsed })}
+              onDraftChange={(draft) => patchSessionUi(conversation.id, { draft })}
+              onAddSkill={(skillId) => patchSessionUi(conversation.id, { skillIds: [...new Set([...(ui.skillIds || []), skillId])] })}
+              onRemoveSkill={(skillId) => patchSessionUi(conversation.id, { skillIds: (ui.skillIds || []).filter((id) => id !== skillId) })}
+              onSelectApp={(appId) => patchSessionUi(conversation.id, { appId })}
+              onClearApp={() => patchSessionUi(conversation.id, { appId: "" })}
+              onModelChange={(modelId) => changeModel(conversation.id, modelId)}
+              onSearchToggle={() => {
+                if (ui.search) {
+                  patchSessionUi(conversation.id, { search: false, notice: "" });
+                  return;
+                }
+                const searchTool = toolSettings.find((tool) => tool.name === "web_search");
+                if (!searchTool?.enabled) {
+                  patchSessionUi(conversation.id, { notice: searchTool ? "联网搜索已由后台关闭。" : "联网搜索工具不存在。" });
+                  return;
+                }
+                if (!searchReady) {
+                  setPendingSearchConversationId(conversation.id);
+                  setSearchSettingsOpen(true);
+                  return;
+                }
+                patchSessionUi(conversation.id, { search: true, notice: "" });
+              }}
+              onOpenSearchSettings={() => {
+                setPendingSearchConversationId("");
+                setSearchSettingsOpen(true);
+              }}
+              onKnowledgeChange={(knowledgeBaseIds) => patchSessionUi(conversation.id, {
+                knowledgeBaseIds,
+                notice: ""
+              })}
+              onImageInput={(event) => void attachImage(conversation.id, event)}
+              onRemoveImage={() => patchSessionUi(conversation.id, { attachments: [] })}
+              onClear={() => clearContext(conversation)}
+              onSend={() => void sendMessage(conversation)}
+              onStop={stopStreaming}
+            />
+          );
+        })}
+      </div>
+
+      <Dialog
+        open={settingsOpen}
+        labelledBy="figma-session-settings-title"
+        describedBy="figma-session-settings-description"
+        className="figma-session-settings"
+        onClose={cancelSettings}
+      >
+        <header>
+          <div>
+            <small>SESSION CONFIGURATION</small>
+            <h2 id="figma-session-settings-title">会话设置</h2>
+            <p id="figma-session-settings-description">调整模型的生成倾向和响应行为。</p>
+          </div>
+          <button type="button" className="figma-settings-close" onClick={cancelSettings} aria-label="关闭会话设置">
+            <X size={17} />
+          </button>
+        </header>
+
+        <section className="figma-settings-profile">
+          <div>
+            <strong>AI 对话头像</strong>
+            <p>选择在消息中显示的助手形象</p>
+            <div className="figma-avatar-presets" aria-label="AI 对话头像">
+              {assistantAvatarPresets.map((preset) => (
+                <button
+                  key={preset.id}
+                  type="button"
+                  className={assistantAvatarId === preset.id ? "active" : ""}
+                  onClick={() => setAssistantAvatarId(preset.id)}
+                  aria-pressed={assistantAvatarId === preset.id}
+                  title={preset.name}
+                >
+                  <img src={preset.image} alt={`${preset.name} 动漫风格 AI 头像预设`} />
+                  {assistantAvatarId === preset.id ? <span><Check size={10} /></span> : null}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <strong>个人头像</strong>
+            <p>仅显示在你发送的对话消息中</p>
+            <div className="figma-personal-avatar">
+              <button type="button" onClick={() => userAvatarInputRef.current?.click()} aria-label="上传个人头像">
+                {userAvatar ? <img src={userAvatar} alt="个人头像预览" /> : <Plus size={16} />}
+              </button>
+              <div>
+                <button type="button" onClick={() => userAvatarInputRef.current?.click()}>上传个人头像</button>
+                <small>PNG、JPG，建议 1:1 比例</small>
+                {userAvatar ? <button type="button" className="remove" onClick={() => setUserAvatar(null)}>移除头像</button> : null}
+              </div>
+              <input ref={userAvatarInputRef} type="file" hidden accept="image/png,image/jpeg" onChange={uploadUserAvatar} />
+            </div>
+          </div>
+          <div>
+            <strong>对话列表方式</strong>
+            <p>选择聊天内容的视觉组织方式</p>
+            <div className="figma-segmented">
+              <button type="button" className={messageStyle === "bubble" ? "active" : ""} onClick={() => setMessageStyle("bubble")} aria-pressed={messageStyle === "bubble"}>气泡式</button>
+              <button type="button" className={messageStyle === "list" ? "active" : ""} onClick={() => setMessageStyle("list")} aria-pressed={messageStyle === "list"}>列表式</button>
+            </div>
+          </div>
+        </section>
+
+        <fieldset className="figma-chat-skill-selection">
+          <legend>对话 Skill</legend>
+          <div className="figma-chat-skill-selection-list">
+            {skillsLoading ? <p>正在读取本地 Skill…</p> : chatSkills.length ? chatSkills.map((skill) => {
+              const compatibility = skillCompatibility(skill, toolSettings, settingsModel, { searchReady });
+              const checked = settingsSkillIds.includes(skill.id);
+              return (
+                <label key={skill.id} className={!compatibility.compatible ? "disabled" : ""}>
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    disabled={!compatibility.compatible && !checked}
+                    onChange={(event) => setSettingsSkillIds((current) => event.target.checked
+                      ? [...new Set([...current, skill.id])]
+                      : current.filter((id) => id !== skill.id))}
+                  />
+                  <span><strong>{skill.name}</strong><small>{compatibility.compatible ? skill.description || "对话指令" : compatibility.reason}</small></span>
+                </label>
+              );
+            }) : <p>暂无 Skill</p>}
+          </div>
+        </fieldset>
+
+        <section className="figma-settings-grid">
+          <label className="figma-range-control">
+            <span id="figma-temperature-label">模型温度 · Temperature</span>
+            <div
+              className="figma-range-track"
+              style={{ "--range-progress": `${temperature * 100}%` } as CSSProperties}
+            >
+              <i aria-hidden="true" />
+              <input
+                id="figma-temperature-range"
+                type="range"
+                min="0"
+                max="1"
+                step="0.1"
+                value={temperature}
+                aria-labelledby="figma-temperature-label"
+                aria-describedby="figma-temperature-low figma-temperature-high"
+                onChange={(event) => setTemperature(Number(event.target.value))}
+              />
+            </div>
+            <small>
+              <span id="figma-temperature-low">严谨</span>
+              <output htmlFor="figma-temperature-range">{temperature.toFixed(1)}</output>
+              <span id="figma-temperature-high">发散</span>
+            </small>
+          </label>
+          <label className="figma-range-control">
+            <span id="figma-top-p-label">TOP-P</span>
+            <div
+              className="figma-range-track"
+              style={{ "--range-progress": `${((topP - 0.1) / 0.9) * 100}%` } as CSSProperties}
+            >
+              <i aria-hidden="true" />
+              <input
+                id="figma-top-p-range"
+                type="range"
+                min="0.1"
+                max="1"
+                step="0.1"
+                value={topP}
+                aria-labelledby="figma-top-p-label"
+                aria-describedby="figma-top-p-low figma-top-p-high"
+                onChange={(event) => setTopP(Number(event.target.value))}
+              />
+            </div>
+            <small>
+              <span id="figma-top-p-low">聚焦</span>
+              <output htmlFor="figma-top-p-range">{topP.toFixed(1)}</output>
+              <span id="figma-top-p-high">多样</span>
+            </small>
+          </label>
+          <label>
+            <span>上下文数</span>
+            <select value={contextSize} onChange={(event) => setContextSize(event.target.value)}>
+              <option value="4">4K tokens</option>
+              <option value="16">16K tokens</option>
+              <option value="32">32K tokens</option>
+              <option value="128">128K tokens</option>
+            </select>
+          </label>
+          <label>
+            <span>最大 Token 数</span>
+            <select value={maxTokens} onChange={(event) => setMaxTokens(event.target.value)}>
+              <option value="1024">1,024</option>
+              <option value="2048">2,048</option>
+              <option value="4096">4,096</option>
+              <option value="8192">8,192</option>
+            </select>
+          </label>
+          <div className="figma-setting-toggle">
+            <span><strong>流式输出</strong><small>实时显示生成内容</small></span>
+            <button type="button" className={streamOutput ? "active" : ""} onClick={() => setStreamOutput((value) => !value)} aria-pressed={streamOutput} aria-label="流式输出"><i /></button>
+          </div>
+          <fieldset className="figma-tool-mode">
+            <legend>工具调用方式</legend>
+            <div className="figma-segmented">
+              {["自动", "询问后调用", "禁用"].map((mode) => (
+                <button key={mode} type="button" className={toolMode === mode ? "active" : ""} onClick={() => setToolMode(mode)} aria-pressed={toolMode === mode}>{mode}</button>
+              ))}
+            </div>
+          </fieldset>
+        </section>
+
+        <footer>
+          <button type="button" onClick={cancelSettings}>取消</button>
+          <button type="button" className="primary" onClick={saveSettings}>保存设置</button>
+        </footer>
+      </Dialog>
+
+      <SearchServiceDialog
+        open={searchSettingsOpen}
+        config={searchService}
+        onSave={(nextConfig) => {
+          onSearchServiceChange(nextConfig);
+          if (pendingSearchConversationId) {
+            patchSessionUi(pendingSearchConversationId, { search: true, notice: "" });
+          }
+          setPendingSearchConversationId("");
+        }}
+        onClose={() => {
+          setSearchSettingsOpen(false);
+          setPendingSearchConversationId("");
+        }}
+      />
+
+      <ChatSkillManagerDialog
+        open={skillManagerOpen}
+        skills={chatSkills}
+        tools={toolSettings}
+        onClose={() => setSkillManagerOpen(false)}
+        onSave={async (skills) => {
+          await saveAgentSkills(skills);
+          setChatSkills(skills);
+          setSettingsSkillIds((current) => current.filter((id) => skills.some((skill) => skill.id === id)));
+          setSessionUi((current) => Object.fromEntries(Object.entries(current).map(([id, ui]) => [
+            id,
+            { ...ui, skillIds: (ui.skillIds || []).filter((skillId) => skills.some((skill) => skill.id === skillId)) }
+          ])));
+        }}
+      />
+    </section>
   );
 }
 
-function Composer({
-  value,
-  streaming,
-  model,
-  connectionReady,
-  attachments,
-  supportsVision,
-  onChange,
-  onSend,
-  onStop,
-  onOpenConnection,
-  onAttachmentsChange,
-  onAttachmentError,
-  voiceEnabled,
-  onVoiceInput
-}: {
-  value: string;
+type ChatSessionBlockProps = {
+  conversation: Conversation;
+  ui: SessionUiState;
+  models: ModelCatalogEntry[];
+  skills: AgentSkillDefinition[];
+  tools: ToolSetting[];
+  searchReady: boolean;
+  knowledgeAuthenticated: boolean;
+  knowledgeBases: KnowledgeBase[];
+  apps: AppPreset[];
+  assistant?: Assistant;
+  selectedModel?: ModelCatalogEntry;
+  messageStyle: "bubble" | "list";
+  assistantAvatarUrl: string;
+  userAvatarUrl: string | null;
   streaming: boolean;
-  model: string;
-  connectionReady: boolean;
-  attachments: ChatAttachment[];
-  supportsVision: boolean;
-  onChange: (value: string) => void;
-  onSend: () => Promise<void>;
+  onCreateConversation: () => Conversation | null;
+  onOpenSkillManager: () => void;
+  onOpenSettings: () => void;
+  onToggle: () => void;
+  onDraftChange: (value: string) => void;
+  onAddSkill: (skillId: string) => void;
+  onRemoveSkill: (skillId: string) => void;
+  onSelectApp: (appId: string) => void;
+  onClearApp: () => void;
+  onModelChange: (modelId: string) => void;
+  onSearchToggle: () => void;
+  onOpenSearchSettings: () => void;
+  onKnowledgeChange: (knowledgeBaseIds: string[]) => void;
+  onImageInput: (event: ChangeEvent<HTMLInputElement>) => void;
+  onRemoveImage: () => void;
+  onClear: () => void;
+  onSend: () => void;
   onStop: () => void;
-  onOpenConnection: () => void;
-  onAttachmentsChange: (attachments: ChatAttachment[]) => void;
-  onAttachmentError: (message: string) => void;
-  voiceEnabled: boolean;
-  onVoiceInput: (blob: Blob) => Promise<void>;
-}) {
-  const canSend = value.trim().length > 0 && connectionReady && !streaming;
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
+};
+
+function ChatSessionBlock({
+  conversation,
+  ui,
+  models,
+  skills,
+  tools,
+  searchReady,
+  knowledgeAuthenticated,
+  knowledgeBases,
+  apps,
+  assistant,
+  selectedModel,
+  messageStyle,
+  assistantAvatarUrl,
+  userAvatarUrl,
+  streaming,
+  onCreateConversation,
+  onOpenSkillManager,
+  onOpenSettings,
+  onToggle,
+  onDraftChange,
+  onAddSkill,
+  onRemoveSkill,
+  onSelectApp,
+  onClearApp,
+  onModelChange,
+  onSearchToggle,
+  onOpenSearchSettings,
+  onKnowledgeChange,
+  onImageInput,
+  onRemoveImage,
+  onClear,
+  onSend,
+  onStop
+}: ChatSessionBlockProps) {
   const imageInputRef = useRef<HTMLInputElement | null>(null);
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const recorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
-  const [recording, setRecording] = useState(false);
+  const bottomRef = useRef<HTMLDivElement | null>(null);
+  const modelPickerRef = useRef<HTMLDivElement | null>(null);
+  const modelTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const vendorListScrollTimerRef = useRef<number | null>(null);
+  const modelListScrollTimerRef = useRef<number | null>(null);
+  const [modelPickerOpen, setModelPickerOpen] = useState(false);
+  const [modelPickerPlacement, setModelPickerPlacement] = useState<"down" | "up">("down");
+  const [modelPickerOffset, setModelPickerOffset] = useState(0);
+  const [vendorListScrolling, setVendorListScrolling] = useState(false);
+  const [modelListScrolling, setModelListScrolling] = useState(false);
+  const modelPopoverId = useId();
+  const commandListId = useId();
+  const modelListId = `${modelPopoverId}-list`;
+  const modelValueDescriptionId = `${modelPopoverId}-value`;
+  const [activeModelVendor, setActiveModelVendor] = useState<ModelVendorTab>(() => vendorTabForModel(selectedModel));
+  const [commandActiveIndex, setCommandActiveIndex] = useState(0);
+  const [dismissedCommand, setDismissedCommand] = useState("");
+  const focusAfterVendorChangeRef = useRef<"list" | "tab">("list");
+  const vendorModels = useMemo(
+    () => models.filter((model) => vendorTabForModel(model) === activeModelVendor),
+    [activeModelVendor, models]
+  );
+  const selectedModelInVendor = vendorModels.some((model) => model.id === selectedModel?.id);
+  const command = activeChatCommand(ui.draft);
+  const searchTool = tools.find((tool) => tool.name === "web_search");
+  const searchCompatibility = toolCompatibility(searchTool, selectedModel, { searchReady });
+  const canConfigureSearch = Boolean(searchTool?.enabled && !searchReady);
+  const commandIdentity = command ? `${command.kind}:${command.start}:${command.token}` : "";
+  const commandOptions = useMemo<ChatCommandOption[]>(() => {
+    if (!command) return [];
+    if (command.kind === "app") {
+      return apps
+        .filter((app) => chatCommandMatches(command.query, app.name, app.description, app.category))
+        .map((app) => ({
+          id: app.id,
+          name: app.name,
+          description: app.category || app.description,
+          selected: ui.appId === app.id
+        }));
+    }
+    return skills
+      .filter((skill) => chatCommandMatches(command.query, skill.name, skill.description))
+      .map((skill) => {
+        const compatibility = skillCompatibility(skill, tools, selectedModel, { searchReady });
+        return {
+          id: skill.id,
+          name: skill.name,
+          description: compatibility.compatible ? skill.description || "对话 Skill" : compatibility.reason,
+          disabled: !compatibility.compatible,
+          selected: (ui.skillIds || []).includes(skill.id)
+        };
+      });
+  }, [apps, command, searchReady, selectedModel, skills, tools, ui.appId, ui.skillIds]);
+  const commandOpen = Boolean(command && commandIdentity !== dismissedCommand);
+  const visibleVendorModelCount = Math.min(3, vendorModels.length);
+  const displayMessages: Message[] = conversation.messages.length
+    ? conversation.messages
+    : [
+        {
+          id: `${conversation.id}-welcome`,
+          role: "assistant",
+          content: "你好，我是 **AiStudio** 助手。连接知识、想法与成果——现在想创作什么？",
+          createdAt: conversation.createdAt,
+          status: "done"
+        },
+        {
+          id: `${conversation.id}-sample-user`,
+          role: "user",
+          content: "帮我梳理一份关于生成式 AI 在企业落地的简短介绍。",
+          createdAt: conversation.createdAt,
+          status: "done"
+        },
+        {
+          id: `${conversation.id}-sample-answer`,
+          role: "assistant",
+          content: "当然可以。\n\n**生成式 AI 正在成为企业的创造力基础设施。**\n\n它将重复性知识工作转化为可编排的智能流程：从市场洞察、内容生产到客户支持。关键不在于替代人，而是让每一位员工都能以更短路径完成高价值决策。\n\n要不要我继续为这段内容生成一个 6 页的演示文稿？",
+          createdAt: conversation.createdAt,
+          status: "done"
+        }
+      ];
+  const lastMessage = [...displayMessages].reverse().find((message) => message.content);
 
   useEffect(() => {
-    const textarea = textareaRef.current;
-    if (!textarea) return;
-    textarea.style.height = "auto";
-    textarea.style.height = `${Math.min(textarea.scrollHeight, 120)}px`;
-  }, [value]);
+    if (ui.collapsed) return;
+    bottomRef.current?.scrollIntoView({ block: "end" });
+  }, [displayMessages.length, streaming, ui.collapsed]);
 
-  const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key !== "Enter" || !(event.ctrlKey || event.metaKey)) return;
-    event.preventDefault();
-    if (canSend) void onSend();
+  useEffect(() => {
+    if (!modelPickerOpen) setActiveModelVendor(vendorTabForModel(selectedModel));
+  }, [modelPickerOpen, selectedModel]);
+
+  useEffect(() => {
+    if (!ui.collapsed) return;
+    setModelPickerOpen(false);
+  }, [ui.collapsed]);
+
+  useEffect(() => {
+    if (!modelPickerOpen) return;
+    const updatePlacement = () => {
+      const anchor = modelPickerRef.current;
+      const popover = anchor?.querySelector<HTMLElement>(".figma-model-popover");
+      if (!anchor || !popover) return;
+      setModelPickerPlacement(getFloatingVerticalPlacement(anchor, popover));
+      setModelPickerOffset(getFloatingHorizontalOffset(anchor, popover));
+    };
+    const closeOnOutside = (event: PointerEvent) => {
+      if (modelPickerRef.current?.contains(event.target as Node)) return;
+      setModelPickerOpen(false);
+      if (!(event.target instanceof HTMLElement) || !event.target.closest("a, button, input, select, textarea, [tabindex]:not([tabindex='-1'])")) {
+        requestAnimationFrame(() => modelTriggerRef.current?.focus());
+      }
+    };
+    const closeOnEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setModelPickerOpen(false);
+      modelTriggerRef.current?.focus();
+    };
+    const frame = requestAnimationFrame(updatePlacement);
+    window.addEventListener("resize", updatePlacement);
+    window.addEventListener("scroll", updatePlacement, true);
+    document.addEventListener("pointerdown", closeOnOutside);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener("resize", updatePlacement);
+      window.removeEventListener("scroll", updatePlacement, true);
+      document.removeEventListener("pointerdown", closeOnOutside);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [modelPickerOpen]);
+
+  useEffect(() => {
+    if (modelPickerOpen) return;
+    setModelPickerOffset(0);
+    setVendorListScrolling(false);
+    setModelListScrolling(false);
+    if (vendorListScrollTimerRef.current !== null) {
+      window.clearTimeout(vendorListScrollTimerRef.current);
+      vendorListScrollTimerRef.current = null;
+    }
+    if (modelListScrollTimerRef.current !== null) {
+      window.clearTimeout(modelListScrollTimerRef.current);
+      modelListScrollTimerRef.current = null;
+    }
+  }, [modelPickerOpen]);
+
+  useEffect(() => () => {
+    if (vendorListScrollTimerRef.current !== null) {
+      window.clearTimeout(vendorListScrollTimerRef.current);
+    }
+    if (modelListScrollTimerRef.current !== null) {
+      window.clearTimeout(modelListScrollTimerRef.current);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!modelPickerOpen) return;
+    const frame = requestAnimationFrame(() => {
+      if (focusAfterVendorChangeRef.current === "tab") {
+        modelPickerRef.current
+          ?.querySelector<HTMLElement>(`[role="tab"][data-vendor="${activeModelVendor}"]`)
+          ?.focus();
+        focusAfterVendorChangeRef.current = "list";
+        return;
+      }
+      const list = modelPickerRef.current?.querySelector<HTMLElement>('[role="listbox"]');
+      const selectedOption = list?.querySelector<HTMLElement>('[role="option"][aria-selected="true"]');
+      const firstOption = list?.querySelector<HTMLElement>('[role="option"]:not(:disabled)');
+      (selectedOption || firstOption)?.focus();
+      focusAfterVendorChangeRef.current = "list";
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [activeModelVendor, modelPickerOpen]);
+
+  useEffect(() => {
+    setCommandActiveIndex(Math.max(0, commandOptions.findIndex((option) => !option.disabled)));
+  }, [commandIdentity, commandOptions.length]);
+
+  useEffect(() => {
+    if (!commandIdentity) setDismissedCommand("");
+  }, [commandIdentity]);
+
+  const selectCommandOption = (option: ChatCommandOption) => {
+    if (!command || option.disabled) return;
+    onDraftChange(removeChatCommand(ui.draft, command));
+    if (command.kind === "skill") onAddSkill(option.id);
+    else onSelectApp(option.id);
+    setDismissedCommand("");
   };
 
-  const addFiles = async (files: FileList | null, kind: "image" | "text") => {
-    if (!files?.length) return;
-    if (kind === "image" && !supportsVision) {
-      onAttachmentError("当前模型未启用视觉能力，不能添加图片附件");
-      return;
-    }
+  const moveCommandSelection = (direction: 1 | -1) => {
+    const enabledIndices = commandOptions.flatMap((option, index) => option.disabled ? [] : [index]);
+    if (!enabledIndices.length) return;
+    const current = enabledIndices.indexOf(commandActiveIndex);
+    const next = current < 0
+      ? enabledIndices[0]
+      : enabledIndices[(current + direction + enabledIndices.length) % enabledIndices.length];
+    setCommandActiveIndex(next);
+  };
 
-    const nextAttachments: ChatAttachment[] = [];
-    for (const file of Array.from(files).slice(0, 6 - attachments.length)) {
-      try {
-        nextAttachments.push(await createChatAttachment(file, kind));
-      } catch (error) {
-        onAttachmentError(error instanceof Error ? error.message : `${file.name} 添加失败`);
+  const handleComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (commandOpen) {
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        moveCommandSelection(event.key === "ArrowDown" ? 1 : -1);
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setDismissedCommand(commandIdentity);
+        return;
+      }
+      if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+        const option = commandOptions[commandActiveIndex];
+        if (option && !option.disabled) {
+          event.preventDefault();
+          selectCommandOption(option);
+          return;
+        }
       }
     }
-    if (nextAttachments.length) onAttachmentsChange([...attachments, ...nextAttachments].slice(0, 6));
+    if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+    event.preventDefault();
+    onSend();
   };
 
-  const removeAttachment = (id: string) => {
-    onAttachmentsChange(attachments.filter((attachment) => attachment.id !== id));
+  const handleModelListScroll = () => {
+    setModelListScrolling(true);
+    if (modelListScrollTimerRef.current !== null) {
+      window.clearTimeout(modelListScrollTimerRef.current);
+    }
+    modelListScrollTimerRef.current = window.setTimeout(() => {
+      setModelListScrolling(false);
+      modelListScrollTimerRef.current = null;
+    }, 650);
   };
 
-  const toggleRecording = async () => {
-    if (recording) {
-      recorderRef.current?.stop();
-      return;
+  const handleVendorListScroll = () => {
+    setVendorListScrolling(true);
+    if (vendorListScrollTimerRef.current !== null) {
+      window.clearTimeout(vendorListScrollTimerRef.current);
     }
-    if (!voiceEnabled) {
-      onAttachmentError("后台未启用语音识别模型");
-      return;
-    }
-    if (!navigator.mediaDevices?.getUserMedia) {
-      onAttachmentError("当前浏览器不支持录音");
-      return;
-    }
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      chunksRef.current = [];
-      const recorder = new MediaRecorder(stream);
-      recorderRef.current = recorder;
-      recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) chunksRef.current.push(event.data);
-      };
-      recorder.onstop = () => {
-        stream.getTracks().forEach((track) => track.stop());
-        setRecording(false);
-        const blob = new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" });
-        if (blob.size > 0) void onVoiceInput(blob);
-      };
-      recorder.start();
-      setRecording(true);
-    } catch (error) {
-      onAttachmentError(error instanceof Error ? error.message : "无法开始录音");
-    }
+    vendorListScrollTimerRef.current = window.setTimeout(() => {
+      setVendorListScrolling(false);
+      vendorListScrollTimerRef.current = null;
+    }, 650);
+  };
+
+  const handleVendorKeyDown = (
+    event: KeyboardEvent<HTMLButtonElement>,
+    vendor: ModelVendorTab
+  ) => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    const currentIndex = modelVendorTabs.indexOf(vendor);
+    const nextIndex = event.key === "Home"
+      ? 0
+      : event.key === "End"
+        ? modelVendorTabs.length - 1
+        : event.key === "ArrowLeft"
+          ? currentIndex <= 0 ? modelVendorTabs.length - 1 : currentIndex - 1
+          : currentIndex >= modelVendorTabs.length - 1 ? 0 : currentIndex + 1;
+    event.preventDefault();
+    focusAfterVendorChangeRef.current = "tab";
+    setActiveModelVendor(modelVendorTabs[nextIndex]);
+  };
+
+  const handleSessionHeaderClick = (event: ReactMouseEvent<HTMLDivElement>) => {
+    if ((event.target as HTMLElement).closest("button")) return;
+    onToggle();
+  };
+
+  const handleSessionHeaderKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.target !== event.currentTarget || (event.key !== "Enter" && event.key !== " ")) return;
+    event.preventDefault();
+    onToggle();
   };
 
   return (
-    <footer className="composer">
-      <div className="composer-box">
-        <input
-          ref={fileInputRef}
-          type="file"
-          hidden
-          multiple
-          accept=".txt,.md,.markdown,.csv,.json,text/plain,text/markdown,text/csv,application/json"
-          onChange={(event) => {
-            void addFiles(event.currentTarget.files, "text");
-            event.currentTarget.value = "";
-          }}
-        />
-        <input
-          ref={imageInputRef}
-          type="file"
-          hidden
-          multiple
-          accept="image/png,image/jpeg,image/webp,image/gif"
-          onChange={(event) => {
-            void addFiles(event.currentTarget.files, "image");
-            event.currentTarget.value = "";
-          }}
-        />
-        <textarea
-          ref={textareaRef}
-          data-testid="composer-input"
-          value={value}
-          aria-label="消息内容"
-          aria-describedby="composer-input-help"
-          onChange={(event) => onChange(event.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="写点什么... Ctrl/⌘ + Enter 发送"
-          rows={1}
-        />
-        <div className="composer-status-row" id="composer-input-help">
-          <span>{value.trim().length ? `${value.trim().length} 字` : "Enter 换行"}</span>
-          <span aria-live="polite" role="status">
-            {streaming ? "回复生成中" : canSend ? "Ctrl/⌘ + Enter 发送" : "填写内容并完成 API 配置后可发送"}
+    <article className={ui.collapsed ? "figma-chat-session collapsed" : "figma-chat-session"}>
+      <div
+        className="figma-session-header"
+        data-testid="session-header-toggle-area"
+        tabIndex={0}
+        aria-label={ui.collapsed ? "点击展开对话" : "点击折叠对话"}
+        onClick={handleSessionHeaderClick}
+        onKeyDown={handleSessionHeaderKeyDown}
+      >
+        <div className="figma-session-identity">
+          <div ref={modelPickerRef} className="figma-session-model" onClick={(event) => event.stopPropagation()}>
+          <span id={modelValueDescriptionId} className="figma-visually-hidden">
+            当前模型：{compactModelLabel(selectedModel) || "未选择"}
+          </span>
+          <button
+            ref={modelTriggerRef}
+            type="button"
+            className="figma-model-trigger"
+            aria-label="选择对话模型"
+            aria-haspopup="listbox"
+            aria-expanded={modelPickerOpen}
+            aria-controls={modelPopoverId}
+            aria-describedby={modelValueDescriptionId}
+            onClick={() => {
+              focusAfterVendorChangeRef.current = "list";
+              setModelPickerOpen((open) => !open);
+            }}
+          >
+            <i />
+            <span>{compactModelLabel(selectedModel) || "选择模型"}</span>
+            <ChevronDown size={12} />
+          </button>
+          {modelPickerOpen ? (
+            <div
+              id={modelPopoverId}
+              className="figma-model-popover"
+              data-placement={modelPickerPlacement}
+              style={modelPickerOffset ? { transform: `translateX(${modelPickerOffset}px)` } : undefined}
+              aria-label="对话模型菜单"
+              onBlur={(event) => {
+                const nextTarget = event.relatedTarget;
+                if (!(nextTarget instanceof Node) || !modelPickerRef.current?.contains(nextTarget)) {
+                  setModelPickerOpen(false);
+                }
+              }}
+            >
+              <div
+                className="figma-model-vendors"
+                role="tablist"
+                aria-label="模型厂商"
+                data-scroll-active={vendorListScrolling ? "true" : "false"}
+                onScroll={handleVendorListScroll}
+              >
+                <span className="figma-model-vendor-label">厂商</span>
+                {modelVendorTabs.map((vendor) => (
+                <button
+                  key={vendor}
+                  type="button"
+                  role="tab"
+                  aria-selected={activeModelVendor === vendor}
+                  aria-controls={modelListId}
+                  data-vendor={vendor}
+                  tabIndex={activeModelVendor === vendor ? 0 : -1}
+                  className={activeModelVendor === vendor ? "active" : ""}
+                  onClick={() => {
+                    focusAfterVendorChangeRef.current = "list";
+                    setActiveModelVendor(vendor);
+                  }}
+                  onKeyDown={(event) => handleVendorKeyDown(event, vendor)}
+                >
+                    {vendor}
+                  </button>
+                ))}
+              </div>
+              <div className="figma-model-popover-heading">
+                <strong>{activeModelVendor} · 模型</strong>
+                <span>{vendorModels.length ? `显示 ${visibleVendorModelCount} 个` : "暂无模型"}</span>
+              </div>
+              <div
+                className="figma-model-list"
+                id={modelListId}
+                role="listbox"
+                aria-label={`${activeModelVendor} 模型`}
+                data-scroll-active={modelListScrolling ? "true" : "false"}
+                onScroll={handleModelListScroll}
+                onKeyDown={(event) => moveRovingFocus(event, '[role="option"]:not(:disabled)')}
+              >
+                {vendorModels.length ? vendorModels.map((model) => (
+                  <button
+                    key={model.id}
+                    type="button"
+                    role="option"
+                    aria-selected={selectedModel?.id === model.id}
+                    tabIndex={selectedModel?.id === model.id || (!selectedModelInVendor && model === vendorModels[0]) ? 0 : -1}
+                    className={selectedModel?.id === model.id ? "active" : ""}
+                    onClick={() => {
+                      onModelChange(model.id);
+                      setModelPickerOpen(false);
+                      setModelPickerOffset(0);
+                      requestAnimationFrame(() => modelTriggerRef.current?.focus());
+                    }}
+                  >
+                    <span><strong>{compactModelLabel(model)}</strong><small>{modelCapabilityNote(model)}</small></span>
+                    {selectedModel?.id === model.id
+                      ? <Check size={14} aria-hidden="true" />
+                      : <span className="figma-model-option-mark" aria-hidden="true" />}
+                  </button>
+                )) : <p>暂无可用模型</p>}
+              </div>
+            </div>
+          ) : null}
+          </div>
+          <span
+            className={assistant ? "figma-session-assistant" : "figma-session-assistant missing"}
+            aria-label={`当前助手：${assistant?.name || "已失效"}`}
+            title={assistant?.name || "助手已失效"}
+          >
+            <Bot size={13} aria-hidden="true" />
+            <span>{assistant?.name || "助手已失效"}</span>
           </span>
         </div>
-        {attachments.length ? (
-          <div className="attachment-tray" aria-label="附件列表">
-            {attachments.map((attachment) => (
-              <article key={attachment.id} className="attachment-chip">
-                {attachment.kind === "image" && attachment.dataUrl ? (
-                  <img src={attachment.dataUrl} alt="" />
-                ) : (
-                  <FileText size={15} />
-                )}
-                <span>
-                  <strong>{attachment.name}</strong>
-                  <small>{attachmentSummary(attachment)}</small>
-                </span>
-                <button type="button" className="icon-button" onClick={() => removeAttachment(attachment.id)} aria-label={`移除附件 ${attachment.name}`}>
-                  <X size={13} />
-                </button>
-              </article>
-            ))}
-          </div>
-        ) : null}
-        <div className="composer-toolbar">
-          <div className="composer-chips">
-            <button type="button" className="model-chip" onClick={onOpenConnection} aria-label="配置 API 连接">
-              <Cpu size={14} />
-              {connectionReady ? model : "配置 API"}
-            </button>
-            <button
-              type="button"
-              className="tool-chip"
-              title="文本附件"
-              aria-label="文本附件"
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <Paperclip size={15} />
-            </button>
-          </div>
-          <div className="composer-actions">
-            <button
-              type="button"
-              className={recording ? "round-tool active-soft" : "round-tool"}
-              title={voiceEnabled ? (recording ? "停止录音并转写" : "语音输入") : "后台未启用语音识别模型"}
-              aria-label="语音"
-              disabled={!voiceEnabled}
-              onClick={() => void toggleRecording()}
-            >
-              <Mic size={17} />
-            </button>
-            <button
-              type="button"
-              className="round-tool"
-              title={supportsVision ? "图片附件" : "当前模型未启用视觉能力"}
-              aria-label="图片附件"
-              disabled={!supportsVision}
-              onClick={() => imageInputRef.current?.click()}
-            >
-              <Image size={17} />
-            </button>
-            {streaming ? (
-              <button type="button" className="stop-button" onClick={onStop} aria-label="停止">
-                <Square size={15} />
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="send-button"
-                disabled={!canSend}
-                onClick={() => void onSend()}
-                aria-label="发送"
-              >
-                <Send size={18} />
-              </button>
-            )}
-          </div>
+        <div className="figma-session-mobile-actions">
+          <button
+            type="button"
+            className="figma-session-action-mobile"
+            onClick={onCreateConversation}
+            aria-label="新对话"
+            title="新对话"
+          >
+            <Plus size={14} />
+          </button>
+          <button
+            type="button"
+            className="figma-session-action-mobile"
+            onClick={onOpenSkillManager}
+            aria-label="管理对话 Skill"
+            title="管理对话 Skill"
+          >
+            <Puzzle size={14} />
+          </button>
+          <button
+            type="button"
+            className="figma-session-action-mobile"
+            onClick={onOpenSettings}
+            aria-label="会话设置"
+            title="会话设置"
+          >
+            <Settings2 size={14} />
+          </button>
+        </div>
+        <div className="figma-session-header-actions">
+          <button
+            type="button"
+            className="figma-session-toggle"
+            onClick={(event) => {
+              event.stopPropagation();
+              onToggle();
+            }}
+            aria-expanded={!ui.collapsed}
+            aria-label={ui.collapsed ? "点击展开" : "点击折叠"}
+          >
+            <span>{ui.collapsed ? "点击展开" : "点击折叠"}</span>
+            {ui.collapsed ? <ChevronDown size={12} /> : <ChevronUp size={12} />}
+          </button>
         </div>
       </div>
-    </footer>
+
+      {ui.collapsed ? (
+        <button type="button" className="figma-session-preview" onClick={onToggle}>
+          <img src={assistantAvatarUrl} alt="" />
+          <span>
+            <strong>{conversation.title || selectedModel?.label || "新对话"}</strong>
+            <small>{lastMessage?.content.replace(/[*#`]/g, "").slice(0, 90)}</small>
+          </span>
+        </button>
+      ) : (
+        <>
+          <div className={messageStyle === "list" ? "figma-message-history list" : "figma-message-history"}>
+            <div className="figma-message-track">
+              {displayMessages.map((message) => (
+                <article key={message.id} className={`figma-message ${message.role}`}>
+                  {message.role === "assistant" ? (
+                    <img className="figma-message-avatar" src={assistantAvatarUrl} alt="AiStudio" />
+                  ) : null}
+                  <div className="figma-message-bubble">
+                    {message.content ? (
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+                    ) : (
+                      <span className="figma-typing"><i /><i /><i /></span>
+                    )}
+                    <KnowledgeCitationList citations={message.knowledgeCitations} />
+                  </div>
+                  {message.role === "user" ? (
+                    userAvatarUrl
+                      ? <img className="figma-user-avatar image" src={userAvatarUrl} alt="个人头像" />
+                      : <span className="figma-user-avatar">我</span>
+                  ) : null}
+                </article>
+              ))}
+              <div ref={bottomRef} />
+            </div>
+          </div>
+
+          <div className="figma-session-controls">
+            <div className="figma-session-controls-track">
+              <div className="figma-session-tools">
+                <button
+                  type="button"
+                  className={ui.search ? "active" : ""}
+                  onClick={onSearchToggle}
+                  aria-pressed={ui.search}
+                  disabled={!searchCompatibility.compatible && !ui.search && !canConfigureSearch}
+                  title={searchCompatibility.compatible ? "网络搜索" : canConfigureSearch ? "配置联网搜索服务" : searchCompatibility.reason}
+                >
+                  <Globe2 size={14} />
+                  网络搜索
+                </button>
+                <button
+                  type="button"
+                  className="figma-search-settings-action"
+                  onClick={onOpenSearchSettings}
+                  aria-label="配置联网搜索服务"
+                  title="配置联网搜索服务"
+                >
+                  <Settings2 size={14} />
+                </button>
+                {knowledgeAuthenticated ? (
+                  <CloudKnowledgeSelector
+                    compact
+                    bases={knowledgeBases}
+                    selectedIds={ui.knowledgeBaseIds}
+                    onChange={onKnowledgeChange}
+                    disabled={streaming}
+                  />
+                ) : null}
+                <button type="button" onClick={() => imageInputRef.current?.click()}>
+                  <ImageIcon size={14} />
+                  图片输入
+                </button>
+                <input ref={imageInputRef} type="file" hidden accept="image/png,image/jpeg,image/webp,image/gif" onChange={onImageInput} />
+                <button type="button" className="clear" onClick={onClear}>
+                  <Trash2 size={14} />
+                  清除此对话上下文
+                </button>
+              </div>
+
+              <div className="figma-composer">
+                {commandOpen && command ? (
+                  <ChatCommandPalette
+                    id={commandListId}
+                    kind={command.kind}
+                    query={command.query}
+                    options={commandOptions}
+                    activeIndex={commandActiveIndex}
+                    onHover={setCommandActiveIndex}
+                    onSelect={selectCommandOption}
+                  />
+                ) : null}
+                {ui.attachments.length ? (
+                  <div className="figma-image-attachment">
+                    <img src={ui.attachments[0].dataUrl} alt={ui.attachments[0].name} />
+                    <span>{ui.attachments[0].name}</span>
+                    <button type="button" onClick={onRemoveImage} aria-label="移除图片"><X size={13} /></button>
+                  </div>
+                ) : null}
+                {(ui.skillIds.length || ui.appId) ? (
+                  <div className="figma-chat-command-tags" aria-label="已选择的对话能力">
+                    {ui.skillIds.map((skillId) => {
+                      const skill = skills.find((item) => item.id === skillId);
+                      return skill ? (
+                        <span key={skill.id}><Puzzle size={12} />${skill.name}<button type="button" onClick={() => onRemoveSkill(skill.id)} aria-label={`移除 Skill ${skill.name}`}><X size={11} /></button></span>
+                      ) : null;
+                    })}
+                    {ui.appId ? (() => {
+                      const app = apps.find((item) => item.id === ui.appId);
+                      return app ? <span className="app"><LayoutGrid size={12} />/{app.name}<button type="button" onClick={onClearApp} aria-label={`移除应用 ${app.name}`}><X size={11} /></button></span> : null;
+                    })() : null}
+                  </div>
+                ) : null}
+                {ui.notice ? <p className="figma-session-notice" role="alert">{ui.notice}</p> : null}
+                <textarea
+                  value={ui.draft}
+                  aria-label="消息内容"
+                  aria-controls={commandOpen ? commandListId : undefined}
+                  aria-activedescendant={commandOpen && commandOptions[commandActiveIndex] ? `${commandListId}-${commandOptions[commandActiveIndex].id}` : undefined}
+                  aria-autocomplete="list"
+                  onChange={(event) => onDraftChange(event.target.value)}
+                  onKeyDown={handleComposerKeyDown}
+                  placeholder="在此输入你想探讨的想法、分析的内容，或者向 AI 提问... (Shift + Enter 换行，Enter 发送)"
+                  rows={2}
+                />
+                <div className="figma-composer-footer">
+                  {streaming ? (
+                    <button type="button" className="figma-send-button" onClick={onStop} aria-label="停止生成"><Square size={16} /></button>
+                  ) : (
+                    <button type="button" className="figma-send-button" onClick={onSend} disabled={!ui.draft.trim() && !ui.attachments.length} aria-label="发送"><Send size={17} /></button>
+                  )}
+                </div>
+              </div>
+              <p className="figma-generation-note">AI 生成内容仅供参考，请核验关键结论。</p>
+            </div>
+          </div>
+        </>
+      )}
+    </article>
   );
 }
 

@@ -112,9 +112,9 @@ function Dialog({
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
         if (canCloseRef.current && closeOnEscapeRef.current) {
-          event.preventDefault();
-          event.stopPropagation();
           onCloseRef.current();
         }
         return;
@@ -163,15 +163,17 @@ function Dialog({
 
   return createPortal(
     <div className={`ui-dialog-layer ui-dialog-layer-${variant}`}>
-      <button
-        type="button"
-        className="ui-dialog-scrim"
-        aria-label="关闭对话框"
-        tabIndex={-1}
-        onClick={() => {
-          if (canClose && closeOnScrim) onCloseRef.current();
-        }}
-      />
+      {canClose && closeOnScrim ? (
+        <button
+          type="button"
+          className="ui-dialog-scrim"
+          aria-label="关闭对话框"
+          tabIndex={-1}
+          onClick={() => onCloseRef.current()}
+        />
+      ) : (
+        <div className="ui-dialog-scrim" aria-hidden="true" />
+      )}
       <section
         ref={dialogRef}
         className={`ui-dialog ui-dialog-${variant} ${className}`.trim()}

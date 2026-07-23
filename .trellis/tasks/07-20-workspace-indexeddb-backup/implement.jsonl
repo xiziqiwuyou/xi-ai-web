@@ -1,0 +1,9 @@
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Frontend persistence ownership and BYOK boundary"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Browser storage runtime validation and shared type rules"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Dialog, shell and accessibility contracts"}
+{"file": ".trellis/tasks/07-20-workspace-indexeddb-backup/research/storage-inventory.md", "reason": "Repository storage inventory and migration hazards"}
+{"file": ".trellis/tasks/07-20-workspace-indexeddb-backup/research/backup-architecture.md", "reason": "Workspace and future remote backup architecture"}
+{"file": ".trellis\\tasks\\07-20-workspace-indexeddb-backup\\research\\workflow-catalog-reference.md", "reason": "Official workflow catalog and safe node boundary research for Phase 8"}
+{"file": ".trellis/tasks/07-20-workspace-indexeddb-backup/research/agent-assistant-library-reference.md", "reason": "Official Agent catalog and assistant-to-conversation activation references for Phase 9"}
+{"file": ".trellis\\tasks\\07-20-workspace-indexeddb-backup\\research\\provider-tool-capability-matrix.md", "reason": "Official provider tool capability matrix and adopted/deferred boundaries for Phase 10"}
+{"file": ".trellis/tasks/07-20-workspace-indexeddb-backup/research/phase-12-independent-web-search.md", "reason": "Official GLM and Kimi search contracts"}

@@ -1,0 +1,248 @@
+.cloud-knowledge-selector {
+  position: relative;
+  display: inline-flex;
+}
+
+.cloud-knowledge-trigger {
+  display: inline-flex;
+  min-height: 27px;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--xhs-muted);
+  font-size: 10px;
+}
+
+.cloud-knowledge-trigger:hover,
+.cloud-knowledge-trigger:focus-visible,
+.cloud-knowledge-trigger.active {
+  background: color-mix(in srgb, var(--xhs-red) 8%, var(--xhs-surface));
+  color: var(--xhs-red);
+}
+
+.cloud-knowledge-trigger:focus-visible {
+  outline: 2px solid var(--xhs-blue);
+  outline-offset: 2px;
+}
+
+.cloud-knowledge-popover {
+  position: absolute;
+  z-index: 90;
+  bottom: calc(100% + 8px);
+  left: 0;
+  display: grid;
+  width: min(330px, calc(100vw - 32px));
+  max-height: 350px;
+  overflow: hidden;
+  border: 1px solid var(--xhs-line-strong);
+  border-radius: 14px;
+  background: var(--xhs-surface);
+  box-shadow: var(--xhs-shadow-popover);
+  color: var(--xhs-ink);
+}
+
+.cloud-knowledge-popover > header,
+.cloud-knowledge-popover > footer {
+  display: flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+}
+
+.cloud-knowledge-popover > header {
+  border-bottom: 1px solid var(--xhs-line);
+}
+
+.cloud-knowledge-popover > header > span,
+.cloud-knowledge-popover > footer a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cloud-knowledge-popover > header strong {
+  font-size: 11px;
+}
+
+.cloud-knowledge-popover > header small,
+.cloud-knowledge-popover > footer a {
+  color: var(--xhs-muted);
+  font-size: 10px;
+}
+
+.cloud-knowledge-popover > footer {
+  justify-content: flex-end;
+  border-top: 1px solid var(--xhs-line);
+}
+
+.cloud-knowledge-popover > footer a:hover {
+  color: var(--xhs-red);
+}
+
+.cloud-knowledge-options {
+  display: grid;
+  gap: 4px;
+  overflow-y: auto;
+  padding: 6px;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--xhs-muted) 24%, transparent) transparent;
+}
+
+.cloud-knowledge-options label {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) 18px;
+  min-height: 52px;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.cloud-knowledge-options label:hover {
+  background: var(--xhs-soft-3);
+}
+
+.cloud-knowledge-options label.not-ready {
+  color: var(--xhs-muted);
+}
+
+.cloud-knowledge-options label > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.cloud-knowledge-options strong,
+.cloud-knowledge-options small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cloud-knowledge-options strong {
+  font-size: 11px;
+}
+
+.cloud-knowledge-options small,
+.cloud-knowledge-options > p {
+  color: var(--xhs-muted);
+  font-size: 10px;
+}
+
+.cloud-knowledge-options > p {
+  margin: 0;
+  padding: 24px 12px;
+  text-align: center;
+}
+
+.cloud-knowledge-options input {
+  accent-color: var(--xhs-red);
+}
+
+.knowledge-citation-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.knowledge-citation-list > header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--xhs-muted);
+  font-size: 10px;
+}
+
+.knowledge-citation-list > header span {
+  display: grid;
+  min-width: 18px;
+  height: 18px;
+  place-items: center;
+  border-radius: 7px;
+  background: var(--xhs-soft-3);
+}
+
+.knowledge-citation-list > div {
+  display: grid;
+  gap: 4px;
+}
+
+.knowledge-citation-list article {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) 28px 28px;
+  min-height: 44px;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 6px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--xhs-surface) 64%, transparent);
+}
+
+.knowledge-citation-list article > button:not(.icon) {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.knowledge-citation-list article strong,
+.knowledge-citation-list article small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knowledge-citation-list article strong {
+  font-size: 10px;
+}
+
+.knowledge-citation-list article small {
+  color: var(--xhs-muted);
+  font-size: 9px;
+}
+
+.knowledge-citation-list button.icon {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--xhs-muted);
+}
+
+.knowledge-citation-list button:hover,
+.knowledge-citation-list button:focus-visible {
+  color: var(--xhs-red);
+}
+
+.knowledge-citation-list > p {
+  margin: 0;
+  color: var(--xhs-danger);
+  font-size: 10px;
+}
+
+@media (max-width: 640px) {
+  .cloud-knowledge-popover {
+    position: fixed;
+    right: 12px;
+    bottom: 96px;
+    left: 12px;
+    width: auto;
+  }
+}

@@ -4,6 +4,9 @@ export const vendorLabels: Record<string, string> = {
   openai: "OpenAI",
   anthropic: "Claude",
   gemini: "Gemini",
+  kimi: "Kimi",
+  deepseek: "DeepSeek",
+  qwen: "通义千问",
   "openai-compatible": "Compatible"
 };
 

@@ -1,4 +1,4 @@
-import { PlugZap, ShieldCheck, X } from "lucide-react";
+import { X } from "lucide-react";
 import { Dialog } from "../../components/ui";
 import ApiConnectionForm from "./ApiConnectionForm";
 import { isUserProviderReady } from "./userProviderConfig";
@@ -9,7 +9,6 @@ type ApiConnectionModalProps = {
   required: boolean;
   userProvider: UserProviderConfig;
   onUserProviderChange: (patch: Partial<UserProviderConfig>) => void;
-  onResetUserProvider: () => void;
   onClose: () => void;
 };
 
@@ -18,7 +17,6 @@ function ApiConnectionModal({
   required,
   userProvider,
   onUserProviderChange,
-  onResetUserProvider,
   onClose
 }: ApiConnectionModalProps) {
   const ready = isUserProviderReady(userProvider);
@@ -35,35 +33,31 @@ function ApiConnectionModal({
       closeOnScrim={canClose}
       className="api-config-dialog"
     >
-        <header className="api-config-head">
-          <span className={ready ? "api-config-mark ready" : "api-config-mark"}>
-            {ready ? <ShieldCheck size={22} /> : <PlugZap size={22} />}
-          </span>
-          <div>
-            <small>{ready ? "连接信息已完整" : "首次使用需要连接信息"}</small>
-            <h2 id="api-config-title">配置你的 API URL 和 Key</h2>
-            <p id="api-config-description">仅在本次浏览器会话中保存，不写入服务器。</p>
-          </div>
-          <button
-            type="button"
-            className="icon-button"
-            onClick={onClose}
-            disabled={!canClose}
-            title={canClose ? "关闭" : "请先补全 API URL 和 Key"}
-            aria-label="关闭"
-          >
-            <X size={17} />
-          </button>
-        </header>
+      <header className="api-config-head">
+        <div>
+          <small>API CONNECTION</small>
+          <h2 id="api-config-title">连接 API</h2>
+          <p id="api-config-description">连接信息仅保存在当前浏览器会话中。</p>
+        </div>
+        <button
+          type="button"
+          className="icon-button"
+          onClick={onClose}
+          disabled={!canClose}
+          title={canClose ? "关闭" : "请先填写 API URL 和 Key"}
+          aria-label="关闭"
+        >
+          <X size={17} />
+        </button>
+      </header>
 
-        <ApiConnectionForm
-          userProvider={userProvider}
-          onUserProviderChange={onUserProviderChange}
-          onResetUserProvider={onResetUserProvider}
-          onSubmit={onClose}
-          className="api-config-form"
-          autoFocus
-        />
+      <ApiConnectionForm
+        userProvider={userProvider}
+        onUserProviderChange={onUserProviderChange}
+        onSubmit={onClose}
+        className="api-config-form"
+        autoFocus
+      />
     </Dialog>
   );
 }

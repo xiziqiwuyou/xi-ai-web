@@ -1,0 +1,84 @@
+name: xi-ai-web-knowledge
+
+x-knowledge-environment: &knowledge-environment
+  NODE_ENV: production
+  PORT: 8787
+  DATA_DIR: /app/data
+  KNOWLEDGE_ENABLED: "true"
+  DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+  DATABASE_SSL_MODE: disable
+  COS_SECRET_ID: ${COS_SECRET_ID:?set COS_SECRET_ID}
+  COS_SECRET_KEY: ${COS_SECRET_KEY:?set COS_SECRET_KEY}
+  COS_BUCKET: ${COS_BUCKET:?set COS_BUCKET}
+  COS_REGION: ${COS_REGION:?set COS_REGION}
+  COS_APP_ID: ${COS_APP_ID:?set COS_APP_ID}
+  KNOWLEDGE_COS_UPLOAD_GRANT_TTL_SECONDS: ${KNOWLEDGE_COS_UPLOAD_GRANT_TTL_SECONDS:-900}
+  PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:?set PUBLIC_ORIGIN}
+  KNOWLEDGE_TOKEN_SECRET: ${KNOWLEDGE_TOKEN_SECRET:?set KNOWLEDGE_TOKEN_SECRET}
+  KNOWLEDGE_SESSION_TTL_SECONDS: ${KNOWLEDGE_SESSION_TTL_SECONDS:-1209600}
+  KNOWLEDGE_WORKER_CONCURRENCY: ${KNOWLEDGE_WORKER_CONCURRENCY:-2}
+  KNOWLEDGE_WORKER_LEASE_SECONDS: ${KNOWLEDGE_WORKER_LEASE_SECONDS:-60}
+  KNOWLEDGE_EMBEDDING_LEASE_SECONDS: ${KNOWLEDGE_EMBEDDING_LEASE_SECONDS:-120}
+  KNOWLEDGE_EMBEDDING_REQUEST_TIMEOUT_MS: ${KNOWLEDGE_EMBEDDING_REQUEST_TIMEOUT_MS:-60000}
+
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.1-pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-xi_ai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-xi_ai}
+    volumes:
+      - knowledge-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-xi_ai} -d ${POSTGRES_DB:-xi_ai}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  migrate:
+    build:
+      context: ../..
+      dockerfile: deploy/knowledge/Dockerfile
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+      KNOWLEDGE_MIGRATION_DATABASE_URL: ${KNOWLEDGE_MIGRATION_DATABASE_URL:-}
+      DATABASE_SSL_MODE: disable
+    command: ["npm", "run", "knowledge:migrate"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  web:
+    build:
+      context: ../..
+      dockerfile: deploy/knowledge/Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: *knowledge-environment
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD}
+      ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:?set ADMIN_SESSION_SECRET}
+    ports:
+      - "8787:8787"
+    volumes:
+      - app-metadata:/app/data
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  knowledge-worker:
+    build:
+      context: ../..
+      dockerfile: deploy/knowledge/Dockerfile
+    restart: unless-stopped
+    environment: *knowledge-environment
+    command: ["npm", "run", "knowledge:worker"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  app-metadata:
+  knowledge-postgres:

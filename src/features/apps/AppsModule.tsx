@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { ChevronLeft, LayoutGrid, Search, Sparkles } from "lucide-react";
 import { api } from "../../api";
+import { MasonryGrid } from "../../components/ui";
 import {
   ConnectionStatus,
   EmptyState,
@@ -270,10 +271,10 @@ function AppsModule({
           </div>
 
           {filteredApps.length ? (
-            <div className="app-card-grid">
+            <MasonryGrid className="app-card-grid" label="应用目录">
               {filteredApps.map((preset) => (
+                <div key={preset.id} className="masonry-item" role="listitem">
                 <button
-                  key={preset.id}
                   type="button"
                   className={preset.id === selectedApp?.id ? "app-preset-card active" : "app-preset-card"}
                   aria-pressed={preset.id === selectedApp?.id}
@@ -286,8 +287,9 @@ function AppsModule({
                   <small>{preset.category}</small>
                   <p>{preset.description}</p>
                 </button>
+                </div>
               ))}
-            </div>
+            </MasonryGrid>
           ) : (
             <EmptyState icon={Search} title="没有匹配的应用" description="调整关键词或分类后重试。" />
           )}

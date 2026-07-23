@@ -1,11 +1,20 @@
 import crypto from "node:crypto";
 
-export const vendorKinds = ["openai", "anthropic", "gemini", "openai-compatible"];
+export const vendorKinds = [
+  "openai",
+  "anthropic",
+  "gemini",
+  "kimi",
+  "deepseek",
+  "qwen",
+  "openai-compatible"
+];
 
 export const modelCapabilities = [
   "chat",
   "vision",
   "image",
+  "imageEdit",
   "tts",
   "stt",
   "audio",
@@ -13,6 +22,9 @@ export const modelCapabilities = [
   "embedding",
   "fileSearch",
   "toolCalling",
+  "webSearch",
+  "urlContext",
+  "codeExecution",
   "streaming"
 ];
 
@@ -22,25 +34,73 @@ const vendorLabels = {
   openai: "OpenAI",
   anthropic: "Claude",
   gemini: "Gemini",
+  kimi: "Kimi",
+  deepseek: "DeepSeek",
+  qwen: "Qwen",
   "openai-compatible": "OpenAI Compatible"
 };
 
 const defaultCatalog = [
+  {
+    id: "compatible-chat",
+    vendor: "openai-compatible",
+    model: "gpt-4.1-mini",
+    label: "Compatible Chat",
+    capabilities: ["chat", "vision", "streaming"],
+    defaultFor: ["chat"],
+    enabled: true
+  },
+  {
+    id: "openai-gpt-5-6-sol",
+    vendor: "openai",
+    model: "gpt-5.6-sol",
+    label: "GPT-5.6 Sol",
+    capabilities: ["chat", "vision", "toolCalling", "streaming"],
+    defaultFor: [],
+    enabled: true
+  },
+  {
+    id: "openai-gpt-5-6-terra",
+    vendor: "openai",
+    model: "gpt-5.6-terra",
+    label: "GPT-5.6 Terra",
+    capabilities: ["chat", "vision", "toolCalling", "streaming"],
+    defaultFor: [],
+    enabled: true
+  },
+  {
+    id: "openai-gpt-5-6-luna",
+    vendor: "openai",
+    model: "gpt-5.6-luna",
+    label: "GPT-5.6 Luna",
+    capabilities: ["chat", "vision", "toolCalling", "streaming"],
+    defaultFor: [],
+    enabled: true
+  },
   {
     id: "openai-gpt-4-1-mini",
     vendor: "openai",
     model: "gpt-4.1-mini",
     label: "GPT-4.1 Mini",
     capabilities: ["chat", "vision", "toolCalling", "streaming"],
-    defaultFor: ["chat"],
+    defaultFor: [],
     enabled: true
   },
   {
-    id: "openai-gpt-4-1",
+    id: "openai-gpt-image-2",
     vendor: "openai",
-    model: "gpt-4.1",
-    label: "GPT-4.1",
-    capabilities: ["chat", "vision", "toolCalling", "streaming"],
+    model: "gpt-image-2",
+    label: "GPT Image 2",
+    capabilities: ["image", "imageEdit"],
+    defaultFor: ["image"],
+    enabled: true
+  },
+  {
+    id: "openai-gpt-image-1-5",
+    vendor: "openai",
+    model: "gpt-image-1.5",
+    label: "GPT Image 1.5",
+    capabilities: ["image", "imageEdit"],
     defaultFor: [],
     enabled: true
   },
@@ -49,8 +109,17 @@ const defaultCatalog = [
     vendor: "openai",
     model: "gpt-image-1",
     label: "GPT Image 1",
-    capabilities: ["image"],
-    defaultFor: ["image"],
+    capabilities: ["image", "imageEdit"],
+    defaultFor: [],
+    enabled: true
+  },
+  {
+    id: "openai-gpt-image-1-mini",
+    vendor: "openai",
+    model: "gpt-image-1-mini",
+    label: "GPT Image 1 Mini",
+    capabilities: ["image", "imageEdit"],
+    defaultFor: [],
     enabled: true
   },
   {
@@ -81,10 +150,55 @@ const defaultCatalog = [
     enabled: true
   },
   {
-    id: "claude-sonnet-4-5",
+    id: "openai-text-embedding-3-large",
+    vendor: "openai",
+    model: "text-embedding-3-large",
+    label: "Text Embedding 3 Large",
+    capabilities: ["embedding"],
+    defaultFor: [],
+    enabled: true
+  },
+  {
+    id: "claude-fable-5",
     vendor: "anthropic",
-    model: "claude-sonnet-4-5",
-    label: "Claude Sonnet 4.5",
+    model: "claude-fable-5",
+    label: "Claude Fable 5",
+    capabilities: ["chat", "vision", "toolCalling", "streaming"],
+    defaultFor: [],
+    enabled: true
+  },
+  {
+    id: "claude-sonnet-5",
+    vendor: "anthropic",
+    model: "claude-sonnet-5",
+    label: "Claude Sonnet 5",
+    capabilities: ["chat", "vision", "toolCalling", "streaming"],
+    defaultFor: [],
+    enabled: true
+  },
+  {
+    id: "claude-opus-4-8",
+    vendor: "anthropic",
+    model: "claude-opus-4-8",
+    label: "Claude Opus 4.8",
+    capabilities: ["chat", "vision", "toolCalling", "streaming"],
+    defaultFor: [],
+    enabled: true
+  },
+  {
+    id: "claude-opus-4-7",
+    vendor: "anthropic",
+    model: "claude-opus-4-7",
+    label: "Claude Opus 4.7",
+    capabilities: ["chat", "vision", "toolCalling", "streaming"],
+    defaultFor: [],
+    enabled: true
+  },
+  {
+    id: "claude-sonnet-4-6",
+    vendor: "anthropic",
+    model: "claude-sonnet-4-6",
+    label: "Claude Sonnet 4.6",
     capabilities: ["chat", "vision", "toolCalling", "streaming"],
     defaultFor: [],
     enabled: true
@@ -99,10 +213,19 @@ const defaultCatalog = [
     enabled: true
   },
   {
-    id: "gemini-2-5-flash",
+    id: "gemini-3-5-flash",
     vendor: "gemini",
-    model: "gemini-2.5-flash",
-    label: "Gemini 2.5 Flash",
+    model: "gemini-3.5-flash",
+    label: "Gemini 3.5 Flash",
+    capabilities: ["chat", "vision", "toolCalling", "streaming"],
+    defaultFor: [],
+    enabled: true
+  },
+  {
+    id: "gemini-3-1-pro-preview",
+    vendor: "gemini",
+    model: "gemini-3.1-pro-preview",
+    label: "Gemini 3.1 Pro Preview",
     capabilities: ["chat", "vision", "toolCalling", "streaming"],
     defaultFor: [],
     enabled: true
@@ -117,11 +240,38 @@ const defaultCatalog = [
     enabled: true
   },
   {
+    id: "gemini-2-5-flash",
+    vendor: "gemini",
+    model: "gemini-2.5-flash",
+    label: "Gemini 2.5 Flash",
+    capabilities: ["chat", "vision", "toolCalling", "streaming"],
+    defaultFor: [],
+    enabled: true
+  },
+  {
+    id: "gemini-3-1-flash-image",
+    vendor: "gemini",
+    model: "gemini-3.1-flash-image",
+    label: "Gemini 3.1 Flash Image",
+    capabilities: ["image", "imageEdit", "vision"],
+    defaultFor: [],
+    enabled: true
+  },
+  {
+    id: "gemini-3-pro-image",
+    vendor: "gemini",
+    model: "gemini-3-pro-image",
+    label: "Gemini 3 Pro Image",
+    capabilities: ["image", "imageEdit", "vision"],
+    defaultFor: [],
+    enabled: true
+  },
+  {
     id: "gemini-2-5-flash-image",
     vendor: "gemini",
     model: "gemini-2.5-flash-image",
     label: "Gemini 2.5 Flash Image",
-    capabilities: ["image", "vision"],
+    capabilities: ["image", "imageEdit", "vision"],
     defaultFor: [],
     enabled: true
   },
@@ -135,6 +285,15 @@ const defaultCatalog = [
     enabled: true
   },
   {
+    id: "gemini-embedding-2",
+    vendor: "gemini",
+    model: "gemini-embedding-2",
+    label: "Gemini Embedding 2",
+    capabilities: ["embedding"],
+    defaultFor: [],
+    enabled: true
+  },
+  {
     id: "gemini-embedding-001",
     vendor: "gemini",
     model: "gemini-embedding-001",
@@ -144,11 +303,110 @@ const defaultCatalog = [
     enabled: true
   },
   {
-    id: "compatible-chat",
-    vendor: "openai-compatible",
-    model: "gpt-4.1-mini",
-    label: "Compatible Chat",
-    capabilities: ["chat", "streaming"],
+    id: "kimi-k3",
+    vendor: "kimi",
+    model: "kimi-k3",
+    label: "Kimi K3",
+    capabilities: ["chat", "vision", "toolCalling", "streaming"],
+    defaultFor: [],
+    enabled: true
+  },
+  {
+    id: "kimi-k2-7-code",
+    vendor: "kimi",
+    model: "kimi-k2.7-code",
+    label: "Kimi K2.7 Code",
+    capabilities: ["chat", "toolCalling", "streaming"],
+    defaultFor: [],
+    enabled: true
+  },
+  {
+    id: "kimi-k2-7-code-highspeed",
+    vendor: "kimi",
+    model: "kimi-k2.7-code-highspeed",
+    label: "Kimi K2.7 Code Highspeed",
+    capabilities: ["chat", "toolCalling", "streaming"],
+    defaultFor: [],
+    enabled: true
+  },
+  {
+    id: "kimi-k2-6",
+    vendor: "kimi",
+    model: "kimi-k2.6",
+    label: "Kimi K2.6",
+    capabilities: ["chat", "vision", "toolCalling", "streaming"],
+    defaultFor: [],
+    enabled: true
+  },
+  {
+    id: "deepseek-v4-flash",
+    vendor: "deepseek",
+    model: "deepseek-v4-flash",
+    label: "DeepSeek V4 Flash",
+    capabilities: ["chat", "toolCalling", "streaming"],
+    defaultFor: [],
+    enabled: true
+  },
+  {
+    id: "deepseek-v4-pro",
+    vendor: "deepseek",
+    model: "deepseek-v4-pro",
+    label: "DeepSeek V4 Pro",
+    capabilities: ["chat", "toolCalling", "streaming"],
+    defaultFor: [],
+    enabled: true
+  },
+  {
+    id: "qwen3-7-max",
+    vendor: "qwen",
+    model: "qwen3.7-max",
+    label: "Qwen 3.7 Max",
+    capabilities: ["chat", "toolCalling", "streaming"],
+    defaultFor: [],
+    enabled: true
+  },
+  {
+    id: "qwen3-7-plus",
+    vendor: "qwen",
+    model: "qwen3.7-plus",
+    label: "Qwen 3.7 Plus",
+    capabilities: ["chat", "vision", "toolCalling", "streaming"],
+    defaultFor: [],
+    enabled: true
+  },
+  {
+    id: "qwen3-6-flash",
+    vendor: "qwen",
+    model: "qwen3.6-flash",
+    label: "Qwen 3.6 Flash",
+    capabilities: ["chat", "vision", "toolCalling", "streaming"],
+    defaultFor: [],
+    enabled: true
+  },
+  {
+    id: "qwen3-coder-plus",
+    vendor: "qwen",
+    model: "qwen3-coder-plus",
+    label: "Qwen 3 Coder Plus",
+    capabilities: ["chat", "toolCalling", "streaming"],
+    defaultFor: [],
+    enabled: true
+  },
+  {
+    id: "qwen3-5-omni-plus",
+    vendor: "qwen",
+    model: "qwen3.5-omni-plus",
+    label: "Qwen 3.5 Omni Plus",
+    capabilities: ["chat", "vision", "toolCalling", "streaming"],
+    defaultFor: [],
+    enabled: true
+  },
+  {
+    id: "qwen-text-embedding-v4",
+    vendor: "qwen",
+    model: "text-embedding-v4",
+    label: "Qwen Text Embedding V4",
+    capabilities: ["embedding"],
     defaultFor: [],
     enabled: true
   },
@@ -179,8 +437,34 @@ export function vendorLabel(vendor) {
   return vendorLabels[normalizeVendorKind(vendor)] || vendorLabels["openai-compatible"];
 }
 
+function shippedHostedCapabilities(entry) {
+  if (!entry.capabilities.includes("chat")) return [];
+  if (entry.vendor === "openai") return ["webSearch", "codeExecution"];
+  if (entry.vendor === "anthropic") {
+    return /(?:fable-5|sonnet-5|opus-4-[678]|sonnet-4-6)/i.test(entry.model)
+      ? ["webSearch", "urlContext", "codeExecution"]
+      : [];
+  }
+  if (entry.vendor === "gemini") return ["webSearch", "urlContext", "codeExecution"];
+  if (entry.vendor === "qwen") {
+    if (/^qwen3[.-]6-flash/i.test(entry.model)) return ["webSearch", "codeExecution"];
+    if (/^qwen3[.-]7-max/i.test(entry.model)) return ["webSearch"];
+  }
+  return [];
+}
+
+function withShippedHostedCapabilities(entry) {
+  return {
+    ...entry,
+    capabilities: [...new Set([...entry.capabilities, ...shippedHostedCapabilities(entry)])]
+  };
+}
+
 export function defaultModelCatalog() {
-  return defaultCatalog.map((entry) => ({ ...entry, capabilities: [...entry.capabilities], defaultFor: [...entry.defaultFor] }));
+  return defaultCatalog.map((entry) => {
+    const next = withShippedHostedCapabilities(entry);
+    return { ...next, capabilities: [...next.capabilities], defaultFor: [...entry.defaultFor] };
+  });
 }
 
 function cleanText(value, fallback = "") {
@@ -309,11 +593,9 @@ export function normalizeModelCatalog(value, fallback = defaultModelCatalog()) {
 
 function chatCapabilities(vendor, providerCapabilities = []) {
   const base = ["chat"];
-  if (providerCapabilities.includes("vision") || vendor !== "openai-compatible") base.push("vision");
-  if (providerCapabilities.includes("toolCalling") || vendor !== "openai-compatible") {
-    base.push("toolCalling");
-  }
-  if (providerCapabilities.includes("streaming") || vendor !== "anthropic") base.push("streaming");
+  ["vision", "toolCalling", "webSearch", "urlContext", "codeExecution", "streaming"].forEach((capability) => {
+    if (providerCapabilities.includes(capability)) base.push(capability);
+  });
   return [...new Set(base)];
 }
 
@@ -328,6 +610,8 @@ function addLegacyEntry(entriesByKey, provider, capability, model, defaultFor = 
   const capabilities =
     capability === "chat"
       ? chatCapabilities(vendor, provider.capabilities || [])
+      : capability === "image" && ["openai", "gemini"].includes(vendor)
+        ? ["image", "imageEdit"]
       : capability === "tts" || capability === "stt"
         ? [capability, "audio"]
         : [capability];

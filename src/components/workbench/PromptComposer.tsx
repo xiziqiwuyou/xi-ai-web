@@ -32,7 +32,7 @@ function PromptComposer({
   onPresetPick
 }: PromptComposerProps) {
   const canSubmit = !disabled && !busy;
-  const submitHint = "Ctrl/Cmd + Enter 提交";
+  const submitHint = "输入内容后可提交";
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key !== "Enter" || !(event.ctrlKey || event.metaKey)) return;
     event.preventDefault();

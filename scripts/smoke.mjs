@@ -28,6 +28,12 @@ assert(health.ok, "Health endpoint is not ok");
 
 const bootstrap = JSON.parse((await get("/api/public/bootstrap")).text);
 const bootstrapJson = JSON.stringify(bootstrap);
+assert(
+  JSON.stringify(bootstrap.menuItems?.map((item) => item.id)) === JSON.stringify([
+    "chat", "image", "agents", "workflows", "ppt", "mindmap", "assistants", "translate"
+  ]),
+  "Public bootstrap menu order is incomplete"
+);
 assert(!bootstrapJson.includes("apiKey"), "Public bootstrap leaked apiKey");
 assert(!bootstrapJson.includes("baseUrl"), "Public bootstrap leaked baseUrl");
 assert(!bootstrapJson.includes("adminEntryEnabled"), "Public bootstrap leaked admin entry flag");

@@ -5,10 +5,12 @@ export const PRODUCT_NAME = "xi-ai-web";
 export const publicRoutes = [
   { id: "chat", path: "/chat" },
   { id: "image", path: "/image" },
-  { id: "mindmap", path: "/mindmap" },
   { id: "agents", path: "/agents" },
-  { id: "apps", path: "/apps" },
-  { id: "gallery", path: "/gallery" }
+  { id: "workflows", path: "/workflows" },
+  { id: "ppt", path: "/ppt" },
+  { id: "mindmap", path: "/mindmap" },
+  { id: "assistants", path: "/assistants" },
+  { id: "translate", path: "/translate" }
 ] as const satisfies ReadonlyArray<{ id: ModuleId; path: `/${string}` }>;
 
 export type PublicModuleId = (typeof publicRoutes)[number]["id"];
@@ -20,15 +22,6 @@ const moduleByRoute = new Map<string, PublicModuleId>(
   publicRoutes.map((route) => [route.path, route.id])
 );
 const publicModuleIds = new Set<ModuleId>(publicRoutes.map((route) => route.id));
-
-export const mobilePrimaryModuleIds = new Set<ModuleId>([
-  "chat",
-  "image",
-  "mindmap",
-  "agents"
-]);
-
-export const mobileMoreModuleIds = new Set<ModuleId>(["apps", "gallery"]);
 
 export function normalizePathname(pathname: string) {
   return pathname.replace(/\/+$/, "") || "/";

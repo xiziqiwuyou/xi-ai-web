@@ -4,6 +4,12 @@ import {
   test
 } from "./support/app-fixture";
 
+test("public root resolves to Chat and requires BYOK credentials", async ({ page }) => {
+  await page.goto("/");
+  await expect(page).toHaveURL(/\/chat$/);
+  await expect(page.getByRole("dialog")).toBeVisible();
+});
+
 test("required BYOK modal gates dismissal and persists only in sessionStorage", async ({ page }) => {
   await page.goto("/chat");
 
@@ -13,13 +19,13 @@ test("required BYOK modal gates dismissal and persists only in sessionStorage", 
   await page.keyboard.press("Escape");
   await expect(dialog).toBeVisible();
 
-  await page
-    .getByRole("button", { name: "\u5173\u95ed\u5bf9\u8bdd\u6846", exact: true })
-    .click({ position: { x: 4, y: 4 } });
+  await expect(page.getByRole("button", { name: "\u5173\u95ed\u5bf9\u8bdd\u6846", exact: true })).toHaveCount(0);
+  await page.mouse.click(4, 4);
   await expect(dialog).toBeVisible();
 
-  const closeButton = dialog.getByRole("button", { name: "\u5173\u95ed", exact: true });
+  const closeButton = dialog.locator(".api-config-head .icon-button");
   await expect(closeButton).toBeDisabled();
+  await expect(closeButton).toBeHidden();
 
   await dialog
     .getByRole("textbox", { name: "API URL", exact: true })

@@ -22,22 +22,29 @@ import {
 import { loadGalleryItems, saveGalleryItems } from "./features/gallery/galleryStorage";
 import ApiConnectionModal from "./features/settings/ApiConnectionModal";
 import {
-  defaultUserProviderConfig,
+  loadSearchServiceConfig,
+  sanitizeSearchServiceConfig,
+  saveSearchServiceConfig
+} from "./features/settings/searchServiceConfig";
+import {
   isUserProviderReady,
   loadUserProviderConfig,
   sanitizeUserProviderConfig,
   saveUserProviderConfig
 } from "./features/settings/userProviderConfig";
+import WorkspaceDataDialog from "./features/workspace/WorkspaceDataDialog";
 import type {
   ConversationSummary,
   GalleryItem,
   MenuItem,
   ModuleId,
   PublicBootstrapPayload,
+  SearchServiceConfig,
   UserProviderConfig
 } from "./types";
 
 const AdminPortal = lazy(() => import("./features/admin/AdminPortal"));
+const KnowledgeCloudPortal = lazy(() => import("./features/knowledge-cloud/KnowledgeCloudPortal"));
 const fallbackModule: ModuleId = "chat";
 
 function ModuleLoading() {
@@ -64,14 +71,20 @@ function pushPublicUrl(moduleId: ModuleId) {
 function App() {
   const normalizedPath = normalizePathname(window.location.pathname);
   const isAdminRoute = normalizedPath === "/admin";
+  const isKnowledgeRoute = normalizedPath === "/knowledge";
+  const isStandaloneRoute = isAdminRoute || isKnowledgeRoute;
   const [loading, setLoading] = useState(true);
   const [payload, setPayload] = useState<PublicBootstrapPayload | null>(null);
   const [activeModule, setActiveModule] = useState<ModuleId>(
     () => publicModuleFromPath(window.location.pathname) || fallbackModule
   );
   const [userProvider, setUserProvider] = useState<UserProviderConfig>(loadUserProviderConfig);
+  const [searchService, setSearchService] = useState<SearchServiceConfig>(loadSearchServiceConfig);
   const [apiConfigOpen, setApiConfigOpen] = useState(false);
-  const [galleryItems, setGalleryItems] = useState<GalleryItem[]>(loadGalleryItems);
+  const [workspaceDataOpen, setWorkspaceDataOpen] = useState(false);
+  const [workspaceDataError, setWorkspaceDataError] = useState("");
+  const [galleryItems, setGalleryItems] = useState<GalleryItem[]>([]);
+  const [galleryHydrated, setGalleryHydrated] = useState(false);
   const [error, setError] = useState("");
 
   const applyActiveModule = useCallback((moduleId: ModuleId) => {
@@ -104,8 +117,8 @@ function App() {
   }, [applyPublicBootstrap]);
 
   useEffect(() => {
-    if (isAdminRoute) {
-      document.title = `Admin - ${PRODUCT_NAME}`;
+    if (isStandaloneRoute) {
+      document.title = `${isAdminRoute ? "Admin" : "知识库"} - ${PRODUCT_NAME}`;
       setLoading(false);
       return;
     }
@@ -123,10 +136,10 @@ function App() {
     return () => {
       alive = false;
     };
-  }, [isAdminRoute, loadPublicBootstrap]);
+  }, [isAdminRoute, isStandaloneRoute, loadPublicBootstrap]);
 
   useEffect(() => {
-    if (isAdminRoute || !payload) return;
+    if (isStandaloneRoute || !payload) return;
 
     const handlePopState = () => {
       const requestedModule = publicModuleFromPath(window.location.pathname);
@@ -143,27 +156,62 @@ function App() {
 
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-  }, [applyActiveModule, isAdminRoute, payload]);
+  }, [applyActiveModule, isStandaloneRoute, payload]);
 
   useEffect(() => {
-    if (isAdminRoute || !payload) return;
-    const item = payload.menuItems.find((menuItem) => menuItem.id === activeModule);
-    document.title = `${cleanMenuLabel(activeModule, item?.label)} - ${PRODUCT_NAME}`;
-  }, [activeModule, isAdminRoute, payload]);
+    if (isStandaloneRoute || !payload) return;
+    document.title = `${cleanMenuLabel(activeModule)} - ${PRODUCT_NAME}`;
+  }, [activeModule, isStandaloneRoute, payload]);
 
   useEffect(() => {
+    if (isStandaloneRoute) return;
     saveUserProviderConfig(userProvider);
-  }, [userProvider]);
+  }, [isStandaloneRoute, userProvider]);
 
   useEffect(() => {
-    if (isAdminRoute || loading || !payload) return;
-    if (!isUserProviderReady(userProvider)) setApiConfigOpen(true);
-  }, [isAdminRoute, loading, payload, userProvider]);
+    if (isStandaloneRoute) return;
+    saveSearchServiceConfig(searchService);
+  }, [isStandaloneRoute, searchService]);
 
   useEffect(() => {
-    if (isAdminRoute) return;
-    saveGalleryItems(galleryItems);
-  }, [galleryItems, isAdminRoute]);
+    if (isStandaloneRoute) return;
+    let alive = true;
+    loadGalleryItems()
+      .then((items) => {
+        if (!alive) return;
+        setGalleryItems((current) => {
+          const merged = new Map(items.map((item) => [item.id, item]));
+          current.forEach((item) => merged.set(item.id, item));
+          return [...merged.values()].slice(0, 50);
+        });
+      })
+      .catch((nextError: unknown) => {
+        if (!alive) return;
+        setWorkspaceDataError(nextError instanceof Error ? nextError.message : "无法读取本地画廊数据。");
+        setWorkspaceDataOpen(true);
+      })
+      .finally(() => {
+        if (alive) setGalleryHydrated(true);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [isStandaloneRoute]);
+
+  useEffect(() => {
+    if (isStandaloneRoute || loading || !payload) return;
+    if (!isUserProviderReady(userProvider)) {
+      setApiConfigOpen(true);
+    }
+  }, [activeModule, isStandaloneRoute, loading, payload, userProvider]);
+
+  useEffect(() => {
+    if (isStandaloneRoute || !galleryHydrated) return;
+    void saveGalleryItems(galleryItems).catch((nextError: unknown) => {
+      setWorkspaceDataError(nextError instanceof Error ? nextError.message : "无法保存本地画廊数据。");
+      setWorkspaceDataOpen(true);
+    });
+  }, [galleryHydrated, galleryItems, isStandaloneRoute]);
 
   const navigateToModule = useCallback(
     (moduleId: ModuleId) => {
@@ -185,8 +233,18 @@ function App() {
     setUserProvider((current) => sanitizeUserProviderConfig({ ...current, ...patch }));
   }, []);
 
-  const resetUserProvider = useCallback(() => {
-    setUserProvider(defaultUserProviderConfig);
+  const updateSearchService = useCallback((next: SearchServiceConfig) => {
+    setSearchService(sanitizeSearchServiceConfig(next));
+  }, []);
+
+  const openWorkspaceData = useCallback(() => {
+    setWorkspaceDataError("");
+    setWorkspaceDataOpen(true);
+  }, []);
+
+  const reportWorkspaceError = useCallback((message: string) => {
+    setWorkspaceDataError(message);
+    setWorkspaceDataOpen(true);
   }, []);
 
   const addGalleryItem = useCallback((item: GalleryItem) => {
@@ -222,6 +280,14 @@ function App() {
     );
   }
 
+  if (isKnowledgeRoute) {
+    return (
+      <Suspense fallback={<ModuleLoading />}>
+        <KnowledgeCloudPortal />
+      </Suspense>
+    );
+  }
+
   if (loading) {
     return (
       <main className="boot-screen">
@@ -243,12 +309,14 @@ function App() {
   return (
     <>
       <AppShell
-        settings={payload.settings}
         menuItems={visibleMenuItems}
         activeModule={activeModule}
         apiReady={isUserProviderReady(userProvider)}
+        accessAddress={userProvider.baseUrl.replace(/^https?:\/\//i, "").replace(/\/$/, "") || "等待连接"}
+        accessKey={userProvider.apiKey}
         onModuleChange={navigateToModule}
-        onRequestApiConfig={() => setApiConfigOpen(true)}
+        onOpenWorkspaceData={openWorkspaceData}
+        onWorkspaceError={reportWorkspaceError}
       >
         <Suspense fallback={<ModuleLoading />}>
           <ModuleRouter
@@ -263,7 +331,9 @@ function App() {
             promptPresets={payload.promptPresets}
             toolSettings={payload.toolSettings}
             userProvider={userProvider}
+            searchService={searchService}
             onUserProviderChange={updateUserProvider}
+            onSearchServiceChange={updateSearchService}
             onGenerationResult={addGalleryItem}
             onClearGallery={clearGallery}
             onRemoveGalleryItem={removeGalleryItem}
@@ -281,9 +351,18 @@ function App() {
         required={!isUserProviderReady(userProvider)}
         userProvider={userProvider}
         onUserProviderChange={updateUserProvider}
-        onResetUserProvider={resetUserProvider}
         onClose={() => {
-          if (isUserProviderReady(userProvider)) setApiConfigOpen(false);
+          if (isUserProviderReady(userProvider)) {
+            setApiConfigOpen(false);
+          }
+        }}
+      />
+      <WorkspaceDataDialog
+        open={workspaceDataOpen}
+        initialError={workspaceDataError}
+        onClose={() => {
+          setWorkspaceDataOpen(false);
+          setWorkspaceDataError("");
         }}
       />
     </>

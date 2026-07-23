@@ -49,12 +49,42 @@ function mapMessages(messages = []) {
   return { system, messages: mapped };
 }
 
-function mapTools(tools = []) {
-  return normalizeTools(tools).map((tool) => ({
+function mapHostedTools(hostedTools = []) {
+  return (Array.isArray(hostedTools) ? hostedTools : []).map((tool) => {
+    if (tool.name === "web_search") {
+      return { type: "web_search_20250305", name: "web_search", max_uses: 5 };
+    }
+    if (tool.name === "url_context") {
+      return {
+        type: "web_fetch_20250910",
+        name: "web_fetch",
+        max_uses: 5,
+        citations: { enabled: true }
+      };
+    }
+    if (tool.name === "code_execution") {
+      return { type: "code_execution_20250825", name: "code_execution" };
+    }
+    throw new Error(`Claude hosted tool is not supported: ${tool.name}`);
+  });
+}
+
+function mapTools(tools = [], hostedTools = []) {
+  const clientTools = normalizeTools(tools).map((tool) => ({
     name: tool.name,
     description: tool.description,
     input_schema: tool.parameters
   }));
+  return [...clientTools, ...mapHostedTools(hostedTools)];
+}
+
+function assertHostedCapabilities(provider, hostedTools = []) {
+  hostedTools.forEach((tool) => {
+    if (tool.name === "web_search") assertCapability(provider, "webSearch");
+    else if (tool.name === "url_context") assertCapability(provider, "urlContext");
+    else if (tool.name === "code_execution") assertCapability(provider, "codeExecution");
+    else throw new Error(`Claude hosted tool is not supported: ${tool.name}`);
+  });
 }
 
 function extractText(json) {
@@ -75,42 +105,58 @@ function extractToolUses(json) {
     }));
 }
 
+function generationOptions({ temperature, topP, maxTokens }) {
+  return {
+    max_tokens: Number.isFinite(Number(maxTokens)) ? Math.max(1, Math.trunc(Number(maxTokens))) : 4096,
+    temperature: Number.isFinite(Number(temperature)) ? Number(temperature) : undefined,
+    top_p: Number.isFinite(Number(topP)) ? Number(topP) : undefined
+  };
+}
+
 async function completeWithTools({
   provider,
   model,
   messages,
   temperature,
+  topP,
+  maxTokens,
   tools,
+  hostedTools,
   runTool,
   maxToolRounds = 4,
   signal
 }) {
   assertCapability(provider, "chat");
   if (hasImageContent(messages)) assertCapability(provider, "vision");
-  assertCapability(provider, "toolCalling");
+  if (tools?.length) assertCapability(provider, "toolCalling");
+  assertHostedCapabilities(provider, hostedTools);
   const mapped = mapMessages(messages);
   const nextMessages = [...mapped.messages];
-  const mappedTools = mapTools(tools);
+  const mappedTools = mapTools(tools, hostedTools);
 
   for (let round = 0; round <= maxToolRounds; round += 1) {
     const json = await fetchJson(providerUrl(provider, "/messages"), {
       headers: authHeaders(provider),
       body: {
         model,
-        max_tokens: 4096,
+        ...generationOptions({ temperature, topP, maxTokens }),
         system: mapped.system || undefined,
         messages: nextMessages,
-        temperature,
         tools: mappedTools.length ? mappedTools : undefined
       },
       signal
     });
     const toolUses = extractToolUses(json);
+    if (!toolUses.length && json.stop_reason === "pause_turn") {
+      nextMessages.push({ role: "assistant", content: json.content || [] });
+      continue;
+    }
     if (!toolUses.length) return extractText(json) || JSON.stringify(json);
 
     nextMessages.push({ role: "assistant", content: json.content || [] });
     const toolResults = [];
     for (const toolUse of toolUses) {
+      if (!runTool) throw new Error(`No local executor is available for tool: ${toolUse.name}`);
       const result = await runTool(toolUse);
       toolResults.push({
         type: "tool_result",
@@ -125,8 +171,8 @@ async function completeWithTools({
 }
 
 async function completeText(params) {
-  const { provider, model, messages, temperature, signal, tools, runTool } = params;
-  if (tools?.length && runTool) return completeWithTools(params);
+  const { provider, model, messages, temperature, topP, maxTokens, signal, tools, hostedTools } = params;
+  if (tools?.length || hostedTools?.length) return completeWithTools(params);
   assertCapability(provider, "chat");
   if (hasImageContent(messages)) assertCapability(provider, "vision");
   const mapped = mapMessages(messages);
@@ -134,10 +180,9 @@ async function completeText(params) {
     headers: authHeaders(provider),
     body: {
       model,
-      max_tokens: 4096,
+      ...generationOptions({ temperature, topP, maxTokens }),
       system: mapped.system || undefined,
-      messages: mapped.messages,
-      temperature
+      messages: mapped.messages
     },
     signal
   });

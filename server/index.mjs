@@ -1,10 +1,16 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
+import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
 import { retrieveContext, formatRetrievedContext } from "./knowledge/retrieval.mjs";
 import { createProviderAdapter } from "./providers/registry.mjs";
+import {
+  formatSearchContext,
+  isSearchServiceReady,
+  runIndependentWebSearch
+} from "./search/registry.mjs";
 import {
   buildRuntimeProvider,
   catalogFromLegacyProviders,
@@ -17,8 +23,30 @@ import {
 import {
   availableTools,
   normalizeToolSettings,
+  resolveRequestedTools,
   runTool as runRegisteredTool
 } from "./tools/registry.mjs";
+import {
+  createKnowledgeRouter,
+  knowledgeErrorMiddleware
+} from "./knowledge-cloud/routes.mjs";
+import { createKnowledgeAdminRouter } from "./knowledge-cloud/admin/routes.mjs";
+import {
+  KNOWLEDGE_ERROR_CODES,
+  KnowledgeError
+} from "./knowledge-cloud/errors.mjs";
+import {
+  initializeKnowledgeRuntime,
+  publicKnowledgeRuntimeStatus
+} from "./knowledge-cloud/runtime.mjs";
+import {
+  combineCloudKnowledgeSearchChunks,
+  composeCloudKnowledgeSystemContext,
+  createCloudKnowledgeRequestIntegration,
+  isCloudKnowledgePublicRequest,
+  withCloudKnowledgeCitations,
+  withCloudKnowledgeResultRaw
+} from "./knowledge-cloud/retrieval/request-integration.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -37,10 +65,16 @@ const adminSessionSecret =
   process.env.APP_SESSION_SECRET ||
   adminPassword ||
   "dev-only-admin-session-secret";
+const knowledgeRuntime = await initializeKnowledgeRuntime();
+const cloudKnowledgeRequests = createCloudKnowledgeRequestIntegration(knowledgeRuntime);
 
 const app = express();
+const httpServer = http.createServer(app);
 app.disable("x-powered-by");
-app.use(express.json({ limit: "32mb" }));
+const trustProxyHops = Number(process.env.TRUST_PROXY_HOPS || 0);
+if (Number.isSafeInteger(trustProxyHops) && trustProxyHops > 0) {
+  app.set("trust proxy", trustProxyHops);
+}
 
 app.use((req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
@@ -48,16 +82,25 @@ app.use((req, res, next) => {
   next();
 });
 
+app.use("/api/kb", createKnowledgeRouter(knowledgeRuntime));
+app.use(
+  "/api/admin/knowledge",
+  createKnowledgeAdminRouter(knowledgeRuntime, { authorize: requireKnowledgeAdmin })
+);
+app.use(express.json({ limit: "32mb" }));
+
 const now = () => new Date().toISOString();
 
 function defaultMenuItems() {
   return [
-    { id: "chat", label: "对话", enabled: true, visible: true, order: 10 },
-    { id: "image", label: "绘画", enabled: true, visible: true, order: 20 },
-    { id: "mindmap", label: "思维导图", enabled: true, visible: true, order: 30 },
-    { id: "agents", label: "智能体", enabled: true, visible: true, order: 40 },
-    { id: "apps", label: "应用", enabled: true, visible: true, order: 50 },
-    { id: "gallery", label: "画廊", enabled: true, visible: true, order: 60 }
+    { id: "chat", label: "AI 对话", enabled: true, visible: true, order: 10 },
+    { id: "image", label: "图像生成", enabled: true, visible: true, order: 20 },
+    { id: "agents", label: "智能体", enabled: true, visible: true, order: 30 },
+    { id: "workflows", label: "工作流", enabled: true, visible: true, order: 40 },
+    { id: "ppt", label: "AI 一键 PPT", enabled: true, visible: true, order: 50 },
+    { id: "mindmap", label: "思维导图", enabled: true, visible: true, order: 60 },
+    { id: "assistants", label: "助手库", enabled: true, visible: true, order: 70 },
+    { id: "translate", label: "翻译", enabled: true, visible: true, order: 80 }
   ];
 }
 
@@ -74,32 +117,161 @@ function defaultAssistants() {
   const createdAt = now();
   return [
     {
-      id: crypto.randomUUID(),
+      id: "assistant-general",
       name: "通用助手",
       description: "稳健、直接，适合日常问答和任务拆解。",
+      category: "通用效率",
+      tags: ["问答", "规划", "执行"],
+      starterPrompts: ["帮我把今天要做的事排出优先级", "把这个复杂问题拆成可执行步骤", "检查这份计划还有哪些遗漏"],
       color: "#ff2442",
       systemPrompt:
         "你是一个可靠的中文 AI 助手。回答要清晰、准确、可执行；不确定时说明不确定，并给出可验证的下一步。",
+      enabled: true,
       createdAt,
       updatedAt: createdAt
     },
     {
-      id: crypto.randomUUID(),
+      id: "assistant-engineering",
       name: "工程顾问",
       description: "适合代码审查、架构设计、调试和技术方案。",
+      category: "编程开发",
+      tags: ["代码", "架构", "调试"],
+      starterPrompts: ["审查这段代码并按严重度列出问题", "帮我定位这个报错的根因", "为这个功能设计可验证的技术方案"],
       color: "#2364aa",
       systemPrompt:
         "你是资深全栈工程师。优先理解上下文，给出可落地的实现建议；指出风险、边界条件和验证方式。",
+      enabled: true,
       createdAt,
       updatedAt: createdAt
     },
     {
-      id: crypto.randomUUID(),
+      id: "assistant-research",
       name: "研究分析师",
       description: "适合资料整理、竞品分析、长文归纳和决策备忘。",
+      category: "学习研究",
+      tags: ["研究", "分析", "归纳"],
+      starterPrompts: ["把这些资料整理成一份决策简报", "比较这几个方案的证据与风险", "区分这段内容中的事实和推断"],
       color: "#d9822b",
       systemPrompt:
         "你是严谨的研究分析师。先区分事实、推断和建议；输出结构化结论，并标出需要进一步验证的信息。",
+      enabled: true,
+      createdAt,
+      updatedAt: createdAt
+    },
+    {
+      id: "assistant-content-editor",
+      name: "内容主笔",
+      description: "把想法写成有观点、有结构、可直接发布的内容。",
+      category: "内容创作",
+      tags: ["写作", "编辑", "内容"],
+      starterPrompts: ["把这段草稿改成一篇完整文章", "为这个主题设计标题和内容结构", "保留原意并润色这段文案"],
+      color: "#9b4fc7",
+      systemPrompt: "你是资深中文内容主笔。先明确受众、目标和渠道，再组织观点、结构和节奏；保留事实边界，避免空泛套话和夸张承诺。",
+      enabled: true,
+      createdAt,
+      updatedAt: createdAt
+    },
+    {
+      id: "assistant-rednote-planner",
+      name: "小红书策划",
+      description: "策划自然、有记忆点且不过度营销的小红书内容。",
+      category: "内容创作",
+      tags: ["小红书", "选题", "种草"],
+      starterPrompts: ["把这个产品卖点改成小红书笔记", "围绕这个主题给我 5 个选题", "优化这篇笔记的标题和开头"],
+      color: "#e83f5b",
+      systemPrompt: "你是小红书内容策划。基于真实体验和明确受众设计标题、开头、正文节奏与标签，语言自然具体，避免虚假体验、绝对化效果和生硬营销。",
+      enabled: true,
+      createdAt,
+      updatedAt: createdAt
+    },
+    {
+      id: "assistant-product-manager",
+      name: "产品经理",
+      description: "把用户问题转成范围、优先级、流程和验收标准。",
+      category: "商业办公",
+      tags: ["产品", "需求", "用户"],
+      starterPrompts: ["把这个想法整理成产品需求", "帮我设计一轮用户访谈", "为这个功能写验收标准"],
+      color: "#168f5b",
+      systemPrompt: "你是资深产品经理。围绕用户价值、业务目标和实施成本澄清需求，输出范围、优先级、关键流程、指标、风险和可验证验收标准。",
+      enabled: true,
+      createdAt,
+      updatedAt: createdAt
+    },
+    {
+      id: "assistant-data-analyst",
+      name: "数据分析师",
+      description: "解释指标变化，识别异常并形成可行动的业务洞察。",
+      category: "商业办公",
+      tags: ["数据", "指标", "洞察"],
+      starterPrompts: ["解释这组指标为什么发生变化", "帮我设计这项业务的指标体系", "从这些数据中找出异常和机会"],
+      color: "#0f8d8a",
+      systemPrompt: "你是数据分析师。先确认口径、时间范围和数据质量，再区分描述、相关性与因果推断，输出关键发现、可能原因、验证方法和行动建议。",
+      enabled: true,
+      createdAt,
+      updatedAt: createdAt
+    },
+    {
+      id: "assistant-meeting-notes",
+      name: "会议纪要官",
+      description: "从会议材料中提炼结论、分歧、待办和负责人。",
+      category: "通用效率",
+      tags: ["会议", "纪要", "协作"],
+      starterPrompts: ["把这段会议记录整理成纪要", "提取会议中的决定和待办", "找出这次讨论尚未解决的问题"],
+      color: "#3d7fc4",
+      systemPrompt: "你是会议纪要官。忠实基于输入提炼议题、结论、分歧、待办、负责人和时间点；不补写未出现的决定，缺失信息要明确标注。",
+      enabled: true,
+      createdAt,
+      updatedAt: createdAt
+    },
+    {
+      id: "assistant-learning-coach",
+      name: "学习导师",
+      description: "解释难点、诊断理解缺口并安排循序渐进的练习。",
+      category: "学习研究",
+      tags: ["学习", "讲解", "练习"],
+      starterPrompts: ["用直观例子解释这个概念", "检查我对这个主题的理解", "为我制定一周学习计划"],
+      color: "#6d63c7",
+      systemPrompt: "你是耐心而严谨的学习导师。先判断学习目标和已有基础，再用分层解释、例子、反例和小练习帮助理解；不要只给答案，要暴露推理关键点。",
+      enabled: true,
+      createdAt,
+      updatedAt: createdAt
+    },
+    {
+      id: "assistant-translation-editor",
+      name: "翻译润色师",
+      description: "在保持原意的前提下完成自然翻译与语气润色。",
+      category: "内容创作",
+      tags: ["翻译", "本地化", "润色"],
+      starterPrompts: ["把这段中文翻成自然商务英语", "保留原意并润色这段译文", "解释这两种译法的语气差异"],
+      color: "#3676b8",
+      systemPrompt: "你是专业翻译与本地化编辑。保持原文事实、语气和术语一致，优先自然目标语表达；遇到歧义时列出选项，不擅自补充原文没有的信息。",
+      enabled: true,
+      createdAt,
+      updatedAt: createdAt
+    },
+    {
+      id: "assistant-career-coach",
+      name: "职业规划师",
+      description: "梳理能力、目标与选择，形成可执行的职业行动计划。",
+      category: "生活创意",
+      tags: ["职业", "成长", "决策"],
+      starterPrompts: ["帮我分析这两个职业选择", "根据我的经历优化求职定位", "制定未来三个月的能力提升计划"],
+      color: "#aa6651",
+      systemPrompt: "你是务实的职业规划师。基于用户经历、约束和目标分析选择，区分可控因素与外部不确定性，给出阶段目标、验证动作和风险预案。",
+      enabled: true,
+      createdAt,
+      updatedAt: createdAt
+    },
+    {
+      id: "assistant-creative-curator",
+      name: "创意策展人",
+      description: "把零散灵感发展成差异清晰、可以落地的创意方向。",
+      category: "生活创意",
+      tags: ["创意", "灵感", "策划"],
+      starterPrompts: ["为这个主题提出三个不同创意方向", "把这些灵感整理成一个完整概念", "帮我避免这个方案落入常见套路"],
+      color: "#c34f8c",
+      systemPrompt: "你是创意策展人。先提炼主题、受众与限制，再提出有明显差异的创意方向，并说明核心概念、表现方式、落地步骤和可能风险。",
+      enabled: true,
       createdAt,
       updatedAt: createdAt
     }
@@ -176,7 +348,7 @@ function defaultPromptPresets() {
 
 function createDefaultData() {
   return {
-    version: 5,
+    version: 8,
     settings: defaultSettings(),
     menuItems: defaultMenuItems(),
     modelCatalog: defaultModelCatalog(),
@@ -218,23 +390,65 @@ function normalizeSettings(dataSettings) {
   };
 }
 
+function normalizeAssistantTextList(value, fallback, splitPattern, limit, maxLength) {
+  const source = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(splitPattern)
+      : Array.isArray(fallback)
+        ? fallback
+        : [];
+  return [...new Set(source
+    .map((item) => String(item || "").trim().slice(0, maxLength))
+    .filter(Boolean))]
+    .slice(0, limit);
+}
+
 function normalizeAssistant(assistant, fallback) {
   const source = assistant && typeof assistant === "object" ? assistant : {};
+  const fallbackSource = fallback && typeof fallback === "object" ? fallback : {};
   const nowStamp = now();
   return {
-    id: source.id || crypto.randomUUID(),
-    name: String(source.name || fallback.name || "").trim(),
-    description: String(source.description || fallback.description || "").trim(),
-    color: String(source.color || fallback.color || "#ff2442").trim(),
-    systemPrompt: String(source.systemPrompt || fallback.systemPrompt || "").trim(),
-    createdAt: source.createdAt || fallback.createdAt || nowStamp,
-    updatedAt: nowStamp
+    id: String(source.id || fallbackSource.id || crypto.randomUUID()).trim().slice(0, 140),
+    name: String(source.name || fallbackSource.name || "").trim().slice(0, 160),
+    description: String(source.description || fallbackSource.description || "").trim().slice(0, 1000),
+    category: String(source.category || fallbackSource.category || "通用效率").trim().slice(0, 80) || "通用效率",
+    tags: normalizeAssistantTextList(source.tags, fallbackSource.tags, /[,，\r\n]+/, 12, 80),
+    starterPrompts: normalizeAssistantTextList(source.starterPrompts, fallbackSource.starterPrompts, /[\r\n]+/, 8, 400),
+    color: String(source.color || fallbackSource.color || "#ff2442").trim().slice(0, 32),
+    systemPrompt: String(source.systemPrompt || fallbackSource.systemPrompt || "").trim().slice(0, 24000),
+    enabled: typeof source.enabled === "boolean" ? source.enabled : fallbackSource.enabled !== false,
+    createdAt: source.createdAt || fallbackSource.createdAt || nowStamp,
+    updatedAt: source.updatedAt || fallbackSource.updatedAt || nowStamp
   };
 }
 
 function normalizeAssistants(dataAssistants, fallbackAssistants = defaultAssistants()) {
   const list = Array.isArray(dataAssistants) && dataAssistants.length ? dataAssistants : fallbackAssistants;
-  return list.map((assistant, index) => normalizeAssistant(assistant, fallbackAssistants[index] || fallbackAssistants[0]));
+  const normalized = list.map((assistant, index) => {
+    const matchingFallback = fallbackAssistants.find((fallback) =>
+      (assistant?.id && fallback.id === assistant.id) ||
+      (assistant?.name && fallback.name === assistant.name)
+    );
+    const positionalFallback = list === fallbackAssistants ? fallbackAssistants[index] : undefined;
+    return normalizeAssistant(assistant, matchingFallback || positionalFallback || {});
+  }).filter((assistant) => assistant.id && assistant.name && assistant.systemPrompt);
+  return normalized.length
+    ? normalized
+    : fallbackAssistants.map((assistant) => normalizeAssistant(assistant, assistant));
+}
+
+function migrateAssistants(assistants, version) {
+  if (Number(version || 0) >= 7) return assistants;
+  const defaults = defaultAssistants();
+  const existingIds = new Set(assistants.map((assistant) => assistant.id));
+  const existingNames = new Set(assistants.map((assistant) => assistant.name));
+  const missingDefaults = defaults.filter((assistant) =>
+    !existingIds.has(assistant.id) && !existingNames.has(assistant.name)
+  );
+  return missingDefaults.length
+    ? normalizeAssistants([...assistants, ...missingDefaults], defaults)
+    : assistants;
 }
 
 function normalizeAppPreset(preset, fallback = {}) {
@@ -277,11 +491,39 @@ function normalizeToolsData(dataToolSettings) {
 }
 
 function migrateModelCatalog(modelCatalog, sourceVersion) {
-  if (Number(sourceVersion || 0) >= 5) return modelCatalog;
-  if (modelCatalog.some((entry) => entry.capabilities.includes("video"))) return modelCatalog;
+  const version = Number(sourceVersion || 0);
+  let migrated = modelCatalog;
 
-  const defaultVideoModel = defaultModelCatalog().find((entry) => entry.id === "compatible-video");
-  return defaultVideoModel ? normalizeModelCatalog([...modelCatalog, defaultVideoModel], modelCatalog) : modelCatalog;
+  if (version < 5 && !migrated.some((entry) => entry.capabilities.includes("video"))) {
+    const defaultVideoModel = defaultModelCatalog().find((entry) => entry.id === "compatible-video");
+    if (defaultVideoModel) migrated = normalizeModelCatalog([...migrated, defaultVideoModel], migrated);
+  }
+
+  if (version < 6) {
+    const defaults = defaultModelCatalog();
+    const existingModels = new Set(migrated.map((entry) => `${entry.vendor}:${entry.model}`));
+    const missingDefaults = defaults.filter((entry) => !existingModels.has(`${entry.vendor}:${entry.model}`));
+    if (missingDefaults.length) migrated = normalizeModelCatalog([...migrated, ...missingDefaults], migrated);
+  }
+
+  if (version < 8) {
+    const defaultsByModel = new Map(
+      defaultModelCatalog().map((entry) => [`${entry.vendor}:${entry.model}`, entry])
+    );
+    migrated = normalizeModelCatalog(
+      migrated.map((entry) => {
+        const shipped = defaultsByModel.get(`${entry.vendor}:${entry.model}`);
+        if (!shipped) return entry;
+        return {
+          ...entry,
+          capabilities: [...new Set([...entry.capabilities, ...shipped.capabilities])]
+        };
+      }),
+      migrated
+    );
+  }
+
+  return migrated;
 }
 
 function normalizeData(raw) {
@@ -293,13 +535,17 @@ function normalizeData(raw) {
       ? catalogFromLegacyProviders(data.providers)
       : fallback.modelCatalog;
   const modelCatalog = migrateModelCatalog(normalizedCatalog, data.version);
+  const assistants = migrateAssistants(
+    normalizeAssistants(data.assistants, fallback.assistants),
+    data.version
+  );
 
   return {
     version: fallback.version,
     settings: normalizeSettings(data.settings),
     menuItems: normalizeMenuItems(data.menuItems, fallback.menuItems),
     modelCatalog,
-    assistants: normalizeAssistants(data.assistants, fallback.assistants),
+    assistants,
     appPresets: normalizeAppPresets(data.appPresets, fallback.appPresets),
     promptPresets: normalizePromptPresets(data.promptPresets, fallback.promptPresets),
     toolSettings: normalizeToolsData(data.toolSettings || fallback.toolSettings),
@@ -421,9 +667,11 @@ const moduleCapabilityRequirements = {
   ppt: ["chat"],
   apps: ["chat"],
   agents: ["chat", "toolCalling"],
+  workflows: ["chat"],
   knowledge: ["chat", "embedding"],
   mindmap: ["chat"],
   assistants: ["chat"],
+  translate: ["chat"],
   gallery: []
 };
 
@@ -618,6 +866,26 @@ function requireAdmin(req, res, next) {
   return res.status(401).json({ error: "需要管理员登录" });
 }
 
+function requireKnowledgeAdmin(req, _res, next) {
+  if (isProduction && !adminPassword) {
+    return next(
+      new KnowledgeError(
+        KNOWLEDGE_ERROR_CODES.ADMIN_UNAVAILABLE,
+        "管理员密码未配置，知识库后台已锁定",
+        { status: 503 }
+      )
+    );
+  }
+  if (hasAdminAuth(req)) return next();
+  return next(
+    new KnowledgeError(
+      KNOWLEDGE_ERROR_CODES.ADMIN_AUTH_REQUIRED,
+      "需要管理员登录",
+      { status: 401 }
+    )
+  );
+}
+
 function setAdminCookie(req, res, token) {
   const secure = req.headers["x-forwarded-proto"] === "https" || req.secure;
   res.setHeader(
@@ -666,7 +934,14 @@ function assertModuleAllowed(id) {
 }
 
 function getAssistant(id) {
-  return db.assistants.find((assistant) => assistant.id === id) || db.assistants[0];
+  if (id) {
+    const exact = db.assistants.find((assistant) => assistant.id === id && assistant.enabled !== false);
+    if (!exact) throw httpError(410, "助手已停用或不存在");
+    return exact;
+  }
+  const fallback = db.assistants.find((assistant) => assistant.enabled !== false);
+  if (!fallback) throw httpError(503, "当前没有可用助手");
+  return fallback;
 }
 
 function getConversation(id) {
@@ -678,6 +953,59 @@ function getConversation(id) {
 function compact(value, maxLength) {
   const text = String(value || "").replace(/\s+/g, " ").trim();
   return text.length > maxLength ? `${text.slice(0, maxLength - 1)}...` : text;
+}
+
+function boundedText(value, maxLength) {
+  const text = String(value || "").trim();
+  return text.length > maxLength ? text.slice(0, maxLength) : text;
+}
+
+function boundedNumber(value, fallback, minimum, maximum) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(minimum, Math.min(maximum, parsed));
+}
+
+function optionalBoundedNumber(value, minimum, maximum) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return undefined;
+  return Math.max(minimum, Math.min(maximum, parsed));
+}
+
+function optionalBoundedInteger(value, minimum, maximum) {
+  const bounded = optionalBoundedNumber(value, minimum, maximum);
+  return bounded === undefined ? undefined : Math.trunc(bounded);
+}
+
+function inlineAgentFromBody(value) {
+  if (value === undefined || value === null) return null;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw httpError(400, "智能体定义无效");
+  }
+  const name = boundedText(value.name, 160);
+  const systemPrompt = boundedText(value.systemPrompt, 24000);
+  if (!name || !systemPrompt) throw httpError(400, "智能体名称和系统指令不能为空");
+  const skillInstructions = Array.isArray(value.skillInstructions)
+    ? value.skillInstructions
+        .slice(0, 24)
+        .map((instruction) => boundedText(instruction, 3000))
+        .filter(Boolean)
+    : [];
+  return {
+    id: compact(value.id || "browser-agent", 140),
+    name,
+    systemPrompt,
+    skillInstructions
+  };
+}
+
+function chatSkillInstructionsFromBody(value) {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) throw httpError(400, "skillInstructions 必须是数组");
+  return value
+    .slice(0, 24)
+    .map((instruction) => boundedText(instruction, 3000))
+    .filter(Boolean);
 }
 
 function conversationSummary(conversation) {
@@ -759,7 +1087,14 @@ function requestConversationFromBody(body, assistant, content) {
   };
 }
 
-function buildPromptMessages(assistant, conversation, currentAttachments = []) {
+function buildPromptMessages(
+  assistant,
+  conversation,
+  currentAttachments = [],
+  skillInstructions = [],
+  cloudKnowledge = null,
+  searchContext = ""
+) {
   const history = conversation.messages
     .filter((message) => ["user", "assistant"].includes(message.role))
     .slice(-30)
@@ -773,7 +1108,16 @@ function buildPromptMessages(assistant, conversation, currentAttachments = []) {
       };
     });
 
-  return [{ role: "system", content: assistant.systemPrompt }, ...history];
+  const trustedContext = boundedText([
+    assistant.systemPrompt,
+    ...skillInstructions.map((instruction, index) => `Skill ${index + 1}:\n${instruction}`)
+  ].filter(Boolean).join("\n\n"), 48000);
+  const systemContext = composeCloudKnowledgeSystemContext({
+    trustedContext,
+    knowledge: cloudKnowledge,
+    trailingContext: boundedText(searchContext, 24000)
+  });
+  return [{ role: "system", content: systemContext }, ...history];
 }
 
 function writeSse(res, event, payload) {
@@ -781,10 +1125,63 @@ function writeSse(res, event, payload) {
   res.write(`data: ${JSON.stringify(payload)}\n\n`);
 }
 
-function publicProviderError(error, connection) {
+function publicProviderError(error, ...connections) {
   let message = error instanceof Error ? error.message : String(error);
-  if (connection?.apiKey) message = message.replaceAll(connection.apiKey, "[redacted]");
+  connections.forEach((connection) => {
+    if (connection?.apiKey) message = message.replaceAll(connection.apiKey, "[redacted]");
+  });
   return compact(message, 700);
+}
+
+async function prepareIndependentSearch({ resolvedTools, service, query, signal, trace }) {
+  const searchTool = resolvedTools?.searchTools?.[0];
+  if (!searchTool) return "";
+  const startedAt = now();
+  try {
+    const result = await runIndependentWebSearch({ service, query, signal });
+    const context = formatSearchContext(result);
+    if (Array.isArray(trace)) {
+      trace.push({
+        id: crypto.randomUUID(),
+        toolName: searchTool.name,
+        label: searchTool.label,
+        argumentsPreview: compact(JSON.stringify({ query }), 600),
+        resultPreview: compact(JSON.stringify({
+          provider: result.provider,
+          mode: result.mode,
+          results: result.results?.length || 0,
+          sources: result.sources || []
+        }), 800),
+        status: "completed",
+        createdAt: startedAt
+      });
+    }
+    return context;
+  } catch (error) {
+    if (Array.isArray(trace)) {
+      trace.push({
+        id: crypto.randomUUID(),
+        toolName: searchTool.name,
+        label: searchTool.label,
+        argumentsPreview: compact(JSON.stringify({ query }), 600),
+        resultPreview: publicProviderError(error, service),
+        status: "failed",
+        createdAt: startedAt
+      });
+    }
+    throw error;
+  }
+}
+
+async function prepareCloudKnowledge(req, query, signal) {
+  try {
+    return await cloudKnowledgeRequests.preflight(req, { query, signal });
+  } catch (error) {
+    if (error?.name === "AbortError" || signal?.aborted) {
+      throw httpError(499, "请求已取消");
+    }
+    throw error;
+  }
 }
 
 function resultPayload(module, title, patch = {}) {
@@ -798,7 +1195,7 @@ function resultPayload(module, title, patch = {}) {
   };
 }
 
-function extractAssets(json, type) {
+function extractAssets(json, type, fallbackMimeType = "") {
   const data = Array.isArray(json?.data) ? json.data : Array.isArray(json?.output) ? json.output : [];
   const assets = [];
 
@@ -826,7 +1223,7 @@ function extractAssets(json, type) {
     }
     if (item?.url) assets.push({ type, url: item.url });
     if (item?.b64_json) {
-      const mime = type === "image" ? "image/png" : "application/octet-stream";
+      const mime = fallbackMimeType || (type === "image" ? "image/png" : "application/octet-stream");
       assets.push({ type, url: `data:${mime};base64,${item.b64_json}` });
     }
   }
@@ -900,6 +1297,23 @@ function audioFromDataUrl(dataUrl, fileName = "audio.webm", mimeType = "") {
     mimeType: mimeType || match[1],
     fileName: compact(fileName || "audio.webm", 160),
     dataUrl
+  };
+}
+
+function imageInputFrom(value, label = "图片", maxUploadMb = 8) {
+  const source = value && typeof value === "object" ? value : {};
+  const dataUrl = String(source.dataUrl || "");
+  const match = dataUrl.match(/^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/i);
+  if (!match) throw httpError(400, `请上传有效的${label}`);
+  const bytes = Buffer.from(match[2], "base64");
+  if (!bytes.length) throw httpError(400, `${label}不能为空`);
+  if (bytes.length > maxUploadMb * 1024 * 1024) {
+    throw httpError(400, `${label}不能超过 ${maxUploadMb}MB`);
+  }
+  return {
+    dataUrl,
+    mimeType: match[1].toLowerCase(),
+    name: compact(source.name || `${label}.png`, 160)
   };
 }
 
@@ -1071,23 +1485,34 @@ async function requestChatCompletion({
   model,
   messages,
   temperature,
+  topP,
+  maxTokens,
+  skillInstructions,
   signal,
   tools,
+  hostedTools,
   toolContext
 }) {
   const adapter = createProviderAdapter(provider);
   const enabledTools = Array.isArray(tools) ? tools : [];
+  const enabledToolNames = new Set(enabledTools.map((tool) => tool.name));
   return adapter.completeText({
     model,
     messages,
     temperature,
+    topP,
+    maxTokens,
     signal,
     tools: enabledTools,
+    hostedTools: Array.isArray(hostedTools) ? hostedTools : [],
     runTool: enabledTools.length
       ? async (toolCall) => {
           const trace = toolContext?.trace;
           const startedAt = now();
           try {
+            if (!enabledToolNames.has(toolCall.name)) {
+              throw new Error(`Tool is not allowed for this request: ${toolCall.name}`);
+            }
             const result = await runRegisteredTool(toolCall, toolContext || {}, db.toolSettings);
             if (Array.isArray(trace)) {
               trace.push({
@@ -1127,14 +1552,54 @@ async function streamProviderReply({
   model,
   attachments,
   temperature,
+  topP,
+  maxTokens,
+  skillInstructions,
+  cloudKnowledge,
+  searchContext,
+  tools,
+  hostedTools,
+  toolContext,
   signal,
   onToken
 }) {
   const adapter = createProviderAdapter(provider);
+  if (tools?.length || hostedTools?.length) {
+    const text = await requestChatCompletion({
+      provider,
+      model,
+      messages: buildPromptMessages(
+        assistant,
+        conversation,
+        attachments,
+        skillInstructions,
+        cloudKnowledge,
+        searchContext
+      ),
+      temperature,
+      topP,
+      maxTokens,
+      signal,
+      tools,
+      hostedTools,
+      toolContext
+    });
+    if (text) onToken(text);
+    return;
+  }
   await adapter.streamChat({
     model,
-    messages: buildPromptMessages(assistant, conversation, attachments),
+    messages: buildPromptMessages(
+      assistant,
+      conversation,
+      attachments,
+      skillInstructions,
+      cloudKnowledge,
+      searchContext
+    ),
     temperature,
+    topP,
+    maxTokens,
     signal,
     onToken
   });
@@ -1142,10 +1607,14 @@ async function streamProviderReply({
 
 function assistantFromBody(body, existing) {
   const nextNow = now();
-  const name = String(body.name ?? existing?.name ?? "").trim();
-  const description = String(body.description ?? existing?.description ?? "").trim();
-  const systemPrompt = String(body.systemPrompt ?? existing?.systemPrompt ?? "").trim();
-  const color = String(body.color ?? existing?.color ?? "#ff2442").trim();
+  const name = String(body.name ?? existing?.name ?? "").trim().slice(0, 160);
+  const description = String(body.description ?? existing?.description ?? "").trim().slice(0, 1000);
+  const category = String(body.category ?? existing?.category ?? "通用效率").trim().slice(0, 80) || "通用效率";
+  const tags = normalizeAssistantTextList(body.tags, existing?.tags, /[,，\r\n]+/, 12, 80);
+  const starterPrompts = normalizeAssistantTextList(body.starterPrompts, existing?.starterPrompts, /[\r\n]+/, 8, 400);
+  const systemPrompt = String(body.systemPrompt ?? existing?.systemPrompt ?? "").trim().slice(0, 24000);
+  const color = String(body.color ?? existing?.color ?? "#ff2442").trim().slice(0, 32);
+  const enabled = typeof body.enabled === "boolean" ? body.enabled : existing?.enabled !== false;
 
   if (!name) throw httpError(400, "助手名称不能为空");
   if (!systemPrompt) throw httpError(400, "系统提示词不能为空");
@@ -1154,8 +1623,12 @@ function assistantFromBody(body, existing) {
     id: existing?.id || crypto.randomUUID(),
     name,
     description,
+    category,
+    tags,
+    starterPrompts,
     color,
     systemPrompt,
+    enabled,
     createdAt: existing?.createdAt || nextNow,
     updatedAt: nextNow
   };
@@ -1163,8 +1636,9 @@ function assistantFromBody(body, existing) {
 
 function sanitizeAdminModelCatalogEntry(body, existing) {
   const model = String(body?.model ?? existing?.model ?? "").trim();
-  if (!model) throw httpError(400, "模型名称不能为空");
-  const label = String(body?.label ?? existing?.label ?? model).trim() || model;
+  if (!model) throw httpError(400, "实际请求模型名不能为空");
+  const label = String(body?.label ?? existing?.label ?? "").trim();
+  if (!label) throw httpError(400, "前台显示名称不能为空");
   const candidate = normalizeCatalogEntry(
     { ...(existing || {}), ...(body || {}), model, label, id: existing?.id || body?.id },
     existing
@@ -1205,7 +1679,8 @@ app.get("/api/health", (req, res) => {
   res.json({
     ok: true,
     version: "0.3.0",
-    adminConfigured: Boolean(adminPassword)
+    adminConfigured: Boolean(adminPassword),
+    knowledge: publicKnowledgeRuntimeStatus(knowledgeRuntime)
   });
 });
 
@@ -1214,7 +1689,7 @@ app.get("/api/public/bootstrap", (req, res) => {
     settings: db.settings,
     menuItems: publicMenuItems(),
     modelCatalog: publicModelCatalog(db.modelCatalog),
-    assistants: db.assistants,
+    assistants: db.assistants.filter((assistant) => assistant.enabled !== false),
     appPresets: db.appPresets.filter((preset) => preset.enabled),
     promptPresets: db.promptPresets.filter((preset) => preset.enabled),
     conversations: [],
@@ -1227,7 +1702,7 @@ app.get("/api/bootstrap", (req, res) => {
     settings: db.settings,
     menuItems: publicMenuItems(),
     modelCatalog: publicModelCatalog(db.modelCatalog),
-    assistants: db.assistants,
+    assistants: db.assistants.filter((assistant) => assistant.enabled !== false),
     appPresets: db.appPresets.filter((preset) => preset.enabled),
     promptPresets: db.promptPresets.filter((preset) => preset.enabled),
     conversations: [],
@@ -1384,11 +1859,7 @@ adminRouter.delete("/assistants/:id", (req, res) => {
   if (db.assistants.length <= 1) throw httpError(400, "至少保留一个助手");
   const index = db.assistants.findIndex((assistant) => assistant.id === req.params.id);
   if (index === -1) throw httpError(404, "助手不存在");
-  const [removed] = db.assistants.splice(index, 1);
-  const fallbackAssistant = db.assistants[0];
-  db.conversations.forEach((conversation) => {
-    if (conversation.assistantId === removed.id) conversation.assistantId = fallbackAssistant.id;
-  });
+  db.assistants.splice(index, 1);
   saveData();
   res.status(204).end();
 });
@@ -1624,7 +2095,58 @@ app.post(
     const assistant = getAssistant(req.body?.assistantId);
     const model = entry.model;
     const attachments = sanitizeChatAttachments(req.body?.attachments, entry);
+    const skillInstructions = chatSkillInstructionsFromBody(req.body?.skillInstructions);
+    if (req.body?.allowedTools !== undefined && !Array.isArray(req.body.allowedTools)) {
+      throw httpError(400, "allowedTools 必须是工具名称数组");
+    }
+    const requestedTools = Array.isArray(req.body?.allowedTools)
+      ? req.body.allowedTools
+          .slice(0, 32)
+          .filter((tool) => typeof tool === "string")
+          .map((tool) => compact(tool, 140))
+          .filter(Boolean)
+      : [];
+    const toolContext = { trace: [] };
+    const resolvedTools = resolveRequestedTools({
+      context: toolContext,
+      settings: db.toolSettings,
+      entry,
+      requestedNames: requestedTools
+    });
+    if (resolvedTools.unavailable.length) {
+      throw httpError(
+        400,
+        resolvedTools.unavailable.map((tool) => `${tool.name}：${tool.reason}`).join("；")
+      );
+    }
+    const controller = new AbortController();
+    req.on("aborted", () => controller.abort());
+    const cloudKnowledge = await prepareCloudKnowledge(req, displayContent, controller.signal);
+    let searchContext = "";
+    if (resolvedTools.searchTools.length) {
+      if (!isSearchServiceReady(req.body?.searchService)) {
+        throw httpError(400, "请先配置独立联网搜索服务的 API URL 和 Key");
+      }
+      try {
+        searchContext = await prepareIndependentSearch({
+          resolvedTools,
+          service: req.body.searchService,
+          query: displayContent,
+          signal: controller.signal,
+          trace: toolContext.trace
+        });
+      } catch (searchError) {
+        if (searchError?.name === "AbortError" || controller.signal.aborted) {
+          throw httpError(499, "请求已取消");
+        }
+        throw httpError(502, publicProviderError(searchError, connection, req.body?.searchService));
+      }
+    }
     const temperature = Number.isFinite(Number(req.body?.temperature)) ? Number(req.body.temperature) : 0.7;
+    const topP = Number.isFinite(Number(req.body?.topP)) ? Number(req.body.topP) : undefined;
+    const maxTokens = Number.isFinite(Number(req.body?.maxTokens))
+      ? Math.max(1, Math.trunc(Number(req.body.maxTokens)))
+      : undefined;
     const conversation = requestConversationFromBody(req.body || {}, assistant, displayContent);
 
     const createdAt = now();
@@ -1635,7 +2157,7 @@ app.post(
       createdAt
     };
     const providerUserMessage = { ...userMessage, content };
-    const assistantMessage = {
+    const assistantMessage = withCloudKnowledgeCitations({
       id: crypto.randomUUID(),
       role: "assistant",
       content: "",
@@ -1643,7 +2165,7 @@ app.post(
       providerId: entry.id,
       status: "streaming",
       createdAt
-    };
+    }, cloudKnowledge);
 
     if (conversation.messages.length === 0 || conversation.title === "新对话") {
       conversation.title = makeTitle(displayContent);
@@ -1663,11 +2185,10 @@ app.post(
       assistantMessageId: assistantMessage.id
     });
 
-    const controller = new AbortController();
     let finished = false;
     let clientClosed = false;
-    req.on("close", () => {
-      if (!finished) {
+    res.on("close", () => {
+      if (!finished && !res.writableEnded) {
         clientClosed = true;
         controller.abort();
       }
@@ -1681,6 +2202,14 @@ app.post(
         model,
         attachments,
         temperature,
+        topP,
+        maxTokens,
+        skillInstructions,
+        cloudKnowledge,
+        searchContext,
+        tools: resolvedTools.localTools,
+        hostedTools: resolvedTools.hostedTools,
+        toolContext,
         signal: controller.signal,
         onToken: (token) => {
           assistantMessage.content += token;
@@ -1701,12 +2230,12 @@ app.post(
       const aborted = error?.name === "AbortError" || controller.signal.aborted;
       assistantMessage.status = aborted ? "stopped" : "error";
       if (!assistantMessage.content && !aborted) {
-        assistantMessage.content = `请求失败：${publicProviderError(error, connection)}`;
+        assistantMessage.content = `请求失败：${publicProviderError(error, connection, req.body?.searchService)}`;
       }
       conversation.updatedAt = now();
 
       if (!clientClosed) {
-        if (!aborted) writeSse(res, "error", { error: publicProviderError(error, connection) });
+        if (!aborted) writeSse(res, "error", { error: publicProviderError(error, connection, req.body?.searchService) });
         writeSse(res, "done", {
           conversation: conversationSummary(conversation),
           message: assistantMessage
@@ -1714,7 +2243,7 @@ app.post(
       }
     } finally {
       finished = true;
-      if (!clientClosed) res.end();
+      if (!res.writableEnded && !res.destroyed) res.end();
     }
   })
 );
@@ -1722,50 +2251,111 @@ app.post(
 app.post(
   "/api/agents/run",
   asyncRoute(async (req, res) => {
-    assertModuleAllowed("agents");
-    const prompt = String(req.body?.prompt || "").trim();
+    const sourceModule = req.body?.moduleId === "workflows" ? "workflows" : "agents";
+    assertModuleAllowed(sourceModule);
+    const prompt = boundedText(req.body?.prompt, 24000);
     if (!prompt) throw httpError(400, "请输入智能体任务");
     const { connection, entry, provider } = resolveRuntimeProvider(req.body || {}, "chat");
-    if (!entry.capabilities.includes("toolCalling")) {
-      throw httpError(400, "所选模型未启用工具调用能力");
+    const inlineAgent = inlineAgentFromBody(req.body?.agent);
+    const assistant = inlineAgent || getAssistant(req.body?.assistantId);
+    if (!assistant) throw httpError(400, "没有可用智能体");
+    if (req.body?.allowedTools !== undefined && !Array.isArray(req.body.allowedTools)) {
+      throw httpError(400, "allowedTools 必须是工具名称数组");
     }
-    const assistant = getAssistant(req.body?.assistantId);
-    const requestedTools = Array.isArray(req.body?.allowedTools) ? req.body.allowedTools.map(String) : [];
-    const enabledToolNames = new Set(normalizeToolSettings(db.toolSettings).filter((tool) => tool.enabled).map((tool) => tool.name));
-    const tools = availableTools({}, db.toolSettings).filter((tool) =>
-      requestedTools.length ? requestedTools.includes(tool.name) && enabledToolNames.has(tool.name) : enabledToolNames.has(tool.name)
-    );
-    const trace = [];
+    const requestedTools = Array.isArray(req.body?.allowedTools)
+      ? req.body.allowedTools
+          .slice(0, 32)
+          .filter((tool) => typeof tool === "string")
+          .map((tool) => compact(tool, 140))
+          .filter(Boolean)
+      : [];
+    const contextChunks = requestKnowledgeChunks(req.body?.contextChunks);
     const controller = new AbortController();
     req.on("aborted", () => controller.abort());
+    const cloudKnowledge = await prepareCloudKnowledge(req, prompt, controller.signal);
+    const searchableKnowledgeChunks = combineCloudKnowledgeSearchChunks(
+      contextChunks,
+      cloudKnowledge
+    );
+    const hasKnowledgeContext = searchableKnowledgeChunks.length > 0 || Boolean(cloudKnowledge);
+    const toolContext = {
+      trace: [],
+      searchKnowledge: hasKnowledgeContext
+        ? async (query, topK) => (
+            await retrieveContext({ query, chunks: searchableKnowledgeChunks, topK })
+          ).chunks
+        : undefined
+    };
+    const resolvedTools = resolveRequestedTools({
+      context: toolContext,
+      settings: db.toolSettings,
+      entry,
+      requestedNames: requestedTools
+    });
+    if (resolvedTools.unavailable.length) {
+      throw httpError(
+        400,
+        resolvedTools.unavailable.map((tool) => `${tool.name}：${tool.reason}`).join("；")
+      );
+    }
+    const tools = resolvedTools.localTools;
+    const hostedTools = resolvedTools.hostedTools;
+    const searchTools = resolvedTools.searchTools;
+    const trace = toolContext.trace;
+    if (searchTools.length && !isSearchServiceReady(req.body?.searchService)) {
+      throw httpError(400, "请先配置独立联网搜索服务的 API URL 和 Key");
+    }
 
     try {
+      const searchContext = await prepareIndependentSearch({
+        resolvedTools,
+        service: req.body?.searchService,
+        query: prompt,
+        signal: controller.signal,
+        trace
+      });
+      const trustedSystemContext = boundedText([
+        "你正在作为智能体执行任务。必要时使用允许的工具；最终回答必须包含目标拆解、执行结果、风险和下一步。",
+        assistant.systemPrompt,
+        ...(inlineAgent?.skillInstructions || []).map((instruction, index) => `Skill ${index + 1}:\n${instruction}`)
+      ].join("\n\n"), 48000);
+      const providerSystemContext = composeCloudKnowledgeSystemContext({
+        trustedContext: trustedSystemContext,
+        knowledge: cloudKnowledge,
+        trailingContext: boundedText(searchContext, 24000)
+      });
       const content = await requestChatCompletion({
         provider,
         model: entry.model,
-        temperature: Number.isFinite(Number(req.body?.options?.temperature))
-          ? Number(req.body.options.temperature)
-          : 0.35,
+        temperature: boundedNumber(req.body?.options?.temperature, 0.35, 0, 2),
+        topP: optionalBoundedNumber(req.body?.options?.topP, 0, 1),
+        maxTokens: optionalBoundedInteger(req.body?.options?.maxTokens, 1, 32768),
         messages: [
           {
             role: "system",
-            content: `${assistant.systemPrompt}\n你正在作为智能体执行任务。必要时使用允许的工具；最终回答必须包含目标拆解、执行结果、风险和下一步。`
+            content: providerSystemContext
           },
           { role: "user", content: prompt }
         ],
         signal: controller.signal,
         tools,
-        toolContext: { trace }
+        hostedTools,
+        toolContext
       });
       res.json(
         resultPayload("agents", "智能体结果", {
           text: content,
-          raw: { toolTrace: trace, tools: tools.map((tool) => tool.name) }
+          raw: withCloudKnowledgeResultRaw({
+            toolTrace: trace,
+            tools: [...tools, ...hostedTools, ...searchTools].map((tool) => tool.name),
+            agent: { id: assistant.id, name: assistant.name, source: inlineAgent ? "browser" : "server" },
+            sourceModule
+          }, cloudKnowledge)
         })
       );
     } catch (error) {
       if (error?.name === "AbortError" || controller.signal.aborted) throw httpError(499, "请求已取消");
-      throw httpError(502, publicProviderError(error, connection));
+      throw httpError(502, publicProviderError(error, connection, req.body?.searchService));
     }
   })
 );
@@ -1887,7 +2477,7 @@ app.post(
   "/api/generate/:module",
   asyncRoute(async (req, res) => {
     const module = String(req.params.module || "");
-    const allowedModules = new Set(["image", "audio", "video", "agents", "knowledge", "ppt", "mindmap"]);
+    const allowedModules = new Set(["image", "audio", "video", "agents", "knowledge", "ppt", "mindmap", "translate"]);
     if (!allowedModules.has(module)) throw httpError(404, "功能不存在");
     assertModuleAllowed(module);
 
@@ -1904,6 +2494,33 @@ app.post(
 
     try {
       if (module === "image") {
+        const mode = options.mode === "edit" ? "edit" : "generate";
+        if (mode === "edit" && !entry.capabilities.includes("imageEdit")) {
+          throw httpError(400, "所选模型未启用图片编辑能力");
+        }
+        const inputImage = mode === "edit" ? imageInputFrom(options.inputImage, "原图") : undefined;
+        const maskImage = mode === "edit" && options.maskImage
+          ? imageInputFrom(options.maskImage, "蒙版", 4)
+          : undefined;
+        if (entry.vendor === "openai" && maskImage && maskImage.mimeType !== "image/png") {
+          throw httpError(400, "OpenAI 图片编辑蒙版必须为 PNG");
+        }
+        const maxImageCount = entry.vendor === "gemini" ? 4 : 10;
+        const requestedCount = Number.isFinite(Number(options.count))
+          ? Math.max(1, Math.min(maxImageCount, Math.trunc(Number(options.count))))
+          : 1;
+        const aspectRatio = ["1:1", "3:2", "2:3", "16:9", "9:16"].includes(options.aspectRatio)
+          ? options.aspectRatio
+          : undefined;
+        const imageSize = ["512px", "1K", "2K", "4K"].includes(options.imageSize)
+          ? options.imageSize
+          : undefined;
+        const outputFormat = ["png", "jpeg", "webp"].includes(options.outputFormat)
+          ? options.outputFormat
+          : undefined;
+        const outputCompression = Number.isFinite(Number(options.outputCompression))
+          ? Math.max(0, Math.min(100, Math.trunc(Number(options.outputCompression))))
+          : undefined;
         const styledPrompt = [
           prompt,
           options.stylePreset ? `风格：${compact(options.stylePreset, 120)}` : "",
@@ -1915,14 +2532,38 @@ app.post(
         const json = await createProviderAdapter(provider).generateImage({
           model,
           prompt: styledPrompt,
+          mode,
+          inputImage,
+          maskImage,
           size: options.size || "1024x1024",
+          aspectRatio,
+          imageSize,
+          count: requestedCount,
+          quality: options.quality,
+          outputFormat,
+          outputCompression,
           signal: controller.signal
         });
+        const fallbackMimeType = outputFormat === "jpeg"
+          ? "image/jpeg"
+          : outputFormat === "webp"
+            ? "image/webp"
+            : "image/png";
+        const assets = extractAssets(json, "image", fallbackMimeType).slice(0, requestedCount);
+        const revisedPrompts = Array.isArray(json?.data)
+          ? json.data.map((item) => item?.revised_prompt).filter(Boolean)
+          : [];
         return res.json(
           resultPayload("image", "画图结果", {
-            assets: extractAssets(json, "image"),
-            text: json.text || json.revised_prompt || "",
-            raw: json
+            assets,
+            text: json.text || json.revised_prompt || revisedPrompts.join("\n"),
+            raw: {
+              provider: entry.vendor,
+              model,
+              mode,
+              requestedCount,
+              assetCount: assets.length
+            }
           })
         );
       }
@@ -1979,37 +2620,48 @@ app.post(
         );
       }
 
-      if (module === "ppt" || module === "mindmap") {
-        const isPpt = module === "ppt";
+      if (module === "ppt" || module === "mindmap" || module === "translate") {
+        const systemPrompt =
+          module === "ppt"
+            ? [
+                "你是专业的演示文稿策划助手。",
+                "根据用户主题生成可直接用于制作 PPT 的结构化内容。",
+                "输出 Markdown，必须包含：标题、受众、核心观点、8-10 页幻灯片大纲、每页标题、要点、讲述备注。",
+                "内容要具体、可执行，不要写成泛泛的目录。"
+              ].join("\n")
+            : module === "mindmap"
+              ? [
+                  "你是专业的信息架构和思维导图助手。",
+                  "根据用户主题生成层级清晰的思维导图内容。",
+                  "输出 Markdown，先给出 Mermaid mindmap 代码块，再给出简短的层级说明。",
+                  "节点名称要短，层级不超过 4 层，避免无意义空话。"
+                ].join("\n")
+              : [
+                  "你是专业翻译助手。",
+                  "识别原文语言，并翻译为用户指定的目标语言；未指定目标语言时，默认翻译为简体中文。",
+                  "保留原文格式、专有名词、数字和代码，只输出译文，不添加解释。"
+                ].join("\n");
         const content = await requestChatCompletion({
           provider,
           model,
           temperature: Number.isFinite(Number(options.temperature))
             ? Number(options.temperature)
             : 0.4,
+          topP: Number.isFinite(Number(options.topP)) ? Number(options.topP) : undefined,
+          maxTokens: Number.isFinite(Number(options.maxTokens))
+            ? Math.max(1, Math.trunc(Number(options.maxTokens)))
+            : undefined,
           messages: [
             {
               role: "system",
-              content: isPpt
-                ? [
-                    "你是专业的演示文稿策划助手。",
-                    "根据用户主题生成可直接用于制作 PPT 的结构化内容。",
-                    "输出 Markdown，必须包含：标题、受众、核心观点、8-10 页幻灯片大纲、每页标题、要点、讲述备注。",
-                    "内容要具体、可执行，不要写成泛泛的目录。"
-                  ].join("\n")
-                : [
-                    "你是专业的信息架构和思维导图助手。",
-                    "根据用户主题生成层级清晰的思维导图内容。",
-                    "输出 Markdown，先给出 Mermaid mindmap 代码块，再给出简短的层级说明。",
-                    "节点名称要短，层级不超过 4 层，避免无意义空话。"
-                  ].join("\n")
+              content: systemPrompt
             },
             { role: "user", content: prompt }
           ],
           signal: controller.signal
         });
         return res.json(
-          resultPayload(module, isPpt ? "PPT 大纲" : "思维导图", {
+          resultPayload(module, module === "ppt" ? "PPT 大纲" : module === "mindmap" ? "思维导图" : "翻译结果", {
             text: content
           })
         );
@@ -2025,6 +2677,10 @@ app.post(
           temperature: Number.isFinite(Number(options.temperature))
             ? Number(options.temperature)
             : 0.4,
+          topP: Number.isFinite(Number(options.topP)) ? Number(options.topP) : undefined,
+          maxTokens: Number.isFinite(Number(options.maxTokens))
+            ? Math.max(1, Math.trunc(Number(options.maxTokens)))
+            : undefined,
           messages: [
             {
               role: "system",
@@ -2064,6 +2720,10 @@ app.post(
         temperature: Number.isFinite(Number(options.temperature))
           ? Number(options.temperature)
           : 0.2,
+        topP: Number.isFinite(Number(options.topP)) ? Number(options.topP) : undefined,
+        maxTokens: Number.isFinite(Number(options.maxTokens))
+          ? Math.max(1, Math.trunc(Number(options.maxTokens)))
+          : undefined,
         messages: [
           {
             role: "system",
@@ -2121,6 +2781,9 @@ if (isProduction) {
       root: rootDir,
       server: {
         middlewareMode: true,
+        ws: {
+          server: httpServer
+        },
         watch: {
           ignored: [
             "**/.git/**",
@@ -2147,13 +2810,24 @@ if (isProduction) {
 }
 
 app.use((error, req, res, next) => {
+  if (
+    /^\/api\/kb(?:\/|$)/.test(req.originalUrl || "") ||
+    (error instanceof KnowledgeError && isCloudKnowledgePublicRequest(req))
+  ) {
+    req.knowledgeRuntime = knowledgeRuntime;
+    return knowledgeErrorMiddleware(error, req, res, next);
+  }
+  return next(error);
+});
+
+app.use((error, req, res, next) => {
   if (res.headersSent) return next(error);
   const status = error.status || 500;
   if (status >= 500) console.error(error);
   res.status(status).json({ error: error.message || "服务器错误" });
 });
 
-app.listen(port, "0.0.0.0", () => {
+httpServer.listen(port, "0.0.0.0", () => {
   const mode = isProduction ? "production" : "development";
   console.log(`xi-ai-web listening on http://localhost:${port} (${mode})`);
   if (!isProduction && !adminPassword) {
@@ -2163,3 +2837,20 @@ app.listen(port, "0.0.0.0", () => {
     console.log("ADMIN_PASSWORD is not set; admin APIs are locked in production.");
   }
 });
+
+let shuttingDown = false;
+async function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`xi-ai-web stopping (${signal})`);
+  const forceExit = setTimeout(() => process.exit(1), 10_000);
+  forceExit.unref();
+  httpServer.close(async () => {
+    await knowledgeRuntime.close().catch((error) => console.error(error));
+    clearTimeout(forceExit);
+    process.exit(0);
+  });
+}
+
+process.once("SIGINT", () => void shutdown("SIGINT"));
+process.once("SIGTERM", () => void shutdown("SIGTERM"));

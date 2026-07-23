@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Required storage privacy, E2E and full validation gates"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Verify BYOK isolation and persistence ownership"}
+{"file": ".trellis/tasks/07-20-workspace-indexeddb-backup/research/storage-inventory.md", "reason": "Verify all legacy storage owners are migrated safely"}
+{"file": ".trellis/tasks/07-20-workspace-indexeddb-backup/research/backup-architecture.md", "reason": "Verify atomic import, credential exclusion and provider boundary"}
+{"file": ".trellis\\tasks\\07-20-workspace-indexeddb-backup\\research\\workflow-catalog-reference.md", "reason": "Verify Phase 8 catalog, safe node, and deferred-capability boundaries"}
+{"file": ".trellis/tasks/07-20-workspace-indexeddb-backup/research/agent-assistant-library-reference.md", "reason": "Verify Phase 9 catalog, activation, and persistence-boundary decisions"}
+{"file": ".trellis\\tasks\\07-20-workspace-indexeddb-backup\\research\\provider-tool-capability-matrix.md", "reason": "Verify provider mappings and fail-closed capability claims against official documentation"}
+{"file": ".trellis/tasks/07-20-workspace-indexeddb-backup/research/phase-12-independent-web-search.md", "reason": "Verify independent search implementation against official contracts"}

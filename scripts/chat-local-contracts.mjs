@@ -19,6 +19,15 @@ function importTsSource(source) {
 }
 const archive = await importTsSource(archiveSource);
 const masks = await importTsSource(fs.readFileSync(maskPath, "utf8"));
+const workflowGraph = await importTsSource(
+  fs.readFileSync(path.join(rootDir, "src/features/automation/workflowGraph.ts"), "utf8")
+);
+const chatCommands = await importTsSource(
+  fs.readFileSync(path.join(rootDir, "src/features/chat/chatCommands.ts"), "utf8")
+);
+const workflowRuntime = await importTsSource(
+  fs.readFileSync(path.join(rootDir, "src/features/automation/workflowRuntime.ts"), "utf8")
+);
 
 const now = "2026-06-13T13:50:00.000Z";
 const conversation = {
@@ -135,17 +144,178 @@ assert.equal(maskList[1].type, "app");
 assert(masks.starterPromptFromMask(maskList[1], "done tasks").includes("write weekly report"));
 assert(masks.starterPromptFromMask(maskList[1], "done tasks").includes("done tasks"));
 
+const visualWorkflow = {
+  version: 1,
+  nodes: [
+    { id: "start", kind: "start", name: "开始", position: { x: 0, y: 0 } },
+    { id: "agent-1-node", kind: "agent", name: "分析", instruction: "分析输入", agentId: "agent-1", position: { x: 260, y: 0 } },
+    { id: "agent-2-node", kind: "agent", name: "复核", instruction: "复核输出", agentId: "agent-1", position: { x: 520, y: 0 } },
+    { id: "reply", kind: "reply", name: "输出", position: { x: 780, y: 0 } }
+  ],
+  edges: [
+    { id: "start-agent-1", source: "start", target: "agent-1-node" },
+    { id: "agent-1-agent-2", source: "agent-1-node", target: "agent-2-node" },
+    { id: "agent-2-reply", source: "agent-2-node", target: "reply" }
+  ]
+};
+const visualWorkflowValidation = workflowGraph.validateWorkflowGraph(visualWorkflow, { agentIds: ["agent-1"] });
+assert.equal(visualWorkflowValidation.valid, true, "a connected local workflow graph must validate");
+assert.deepEqual(visualWorkflowValidation.orderedNodes.map((node) => node.id), ["start", "agent-1-node", "agent-2-node", "reply"]);
+assert.equal(workflowGraph.canConnectWorkflowNodes(visualWorkflow, "reply", "agent-1-node"), false, "reply nodes cannot emit edges");
+assert.equal(workflowGraph.canConnectWorkflowNodes(visualWorkflow, "agent-2-node", "agent-1-node"), false, "workflow connections must reject cycles");
+assert.equal(
+  workflowGraph.validateWorkflowGraph(visualWorkflow, { agentIds: [] }).valid,
+  false,
+  "a graph that references a deleted local agent must fail before provider access"
+);
+
+const skillCommand = chatCommands.activeChatCommand("总结发布风险 $发布");
+assert.deepEqual(
+  skillCommand && { kind: skillCommand.kind, query: skillCommand.query, token: skillCommand.token },
+  { kind: "skill", query: "发布", token: "$发布" },
+  "the trailing dollar token must open a Skill command"
+);
+assert.equal(chatCommands.removeChatCommand("总结发布风险 $发布", skillCommand), "总结发布风险", "selecting a command must remove it from the visible draft");
+const appCommand = chatCommands.activeChatCommand("/周报");
+assert.equal(appCommand?.kind, "app", "the slash token must open an app command");
+assert.equal(chatCommands.chatCommandMatches("周", "周报助手", "办公"), true);
+
+assert.equal(
+  workflowRuntime.renderWorkflowTemplate("任务：{{task}}\n输入：{{input}}", "发布检查", "上游结果"),
+  "任务：发布检查\n输入：上游结果",
+  "template nodes must replace only documented placeholders"
+);
+assert.equal(
+  workflowRuntime.renderWorkflowTemplate("{{input}}", "", "x".repeat(20000)).length,
+  12000,
+  "template output must remain bounded after placeholder expansion"
+);
+const knowledgeResult = workflowRuntime.retrieveWorkflowKnowledge([
+  {
+    id: "release-doc",
+    name: "发布手册",
+    type: "text/plain",
+    size: 24,
+    text: "发布前验证回滚和监控。",
+    chunks: [{ id: "release-doc-0", documentId: "release-doc", documentName: "发布手册", index: 0, text: "发布前验证回滚和监控。" }],
+    createdAt: now,
+    updatedAt: now
+  }
+], ["release-doc"], "发布前如何回滚", 4);
+assert.match(knowledgeResult.text, /发布手册/);
+assert.match(knowledgeResult.text, /回滚/);
+
 const moduleRegistry = fs.readFileSync(path.join(rootDir, "src/app/moduleRegistry.tsx"), "utf8");
 const publicOrder = moduleRegistry.match(/portalModuleOrder[\s\S]*?\];/)?.[0] || "";
 assert.deepEqual(
   [...publicOrder.matchAll(/"([^"]+)"/g)].map((match) => match[1]),
-  ["chat", "image", "mindmap", "agents", "apps", "gallery"],
-  "public menu order must stay unchanged"
+  ["chat", "image", "agents", "workflows", "ppt", "mindmap", "assistants", "translate"],
+  "public menu order must match the exact Figma destinations"
 );
+
+const publicRoutes = fs.readFileSync(path.join(rootDir, "src/app/publicRoutes.ts"), "utf8");
+assert.deepEqual(
+  [...publicRoutes.matchAll(/\{\s*id:\s*"([^"]+)",\s*path:\s*"([^"]+)"\s*\}/g)]
+    .map((match) => [match[1], match[2]]),
+  [
+    ["chat", "/chat"],
+    ["image", "/image"],
+    ["agents", "/agents"],
+    ["workflows", "/workflows"],
+    ["ppt", "/ppt"],
+    ["mindmap", "/mindmap"],
+    ["assistants", "/assistants"],
+    ["translate", "/translate"]
+  ],
+  "public routes must match the exact Figma destinations"
+);
+
+const topBar = fs.readFileSync(path.join(rootDir, "src/app/TopBar.tsx"), "utf8");
+const navigationBlock = topBar.match(/const navigationMeta[\s\S]*?\n};/)?.[0] || "";
+assert.deepEqual(
+  [...navigationBlock.matchAll(/^\s*(\w+):\s*\{\s*label:\s*"([^"]+)"/gm)]
+    .map((match) => [match[1], match[2]]),
+  [
+    ["chat", "AI \u5bf9\u8bdd"],
+    ["image", "\u56fe\u50cf\u751f\u6210"],
+    ["agents", "\u667a\u80fd\u4f53"],
+    ["workflows", "\u5de5\u4f5c\u6d41"],
+    ["ppt", "AI \u4e00\u952e PPT"],
+    ["mindmap", "\u601d\u7ef4\u5bfc\u56fe"],
+    ["assistants", "\u52a9\u624b\u5e93"],
+    ["translate", "\u7ffb\u8bd1"]
+  ],
+  "TopBar labels and order must match the exact Figma navigation"
+);
+assert(topBar.includes('navigation("figma-navigation")'), "TopBar must mount .figma-navigation");
+assert(topBar.includes('className="figma-mobile-header"'), "TopBar must mount .figma-mobile-header");
+assert(topBar.includes('"figma-sidebar mobile-open"'), "TopBar must expose the mobile .figma-sidebar state");
+assert(!topBar.includes("onRequestApiConfig"), "public shell must not mount a persistent API button");
+
+const chatModule = fs.readFileSync(path.join(rootDir, "src/features/chat/ChatModule.tsx"), "utf8");
+const studioModule = fs.readFileSync(path.join(rootDir, "src/features/studio/StudioModule.tsx"), "utf8");
+const automationModule = fs.readFileSync(path.join(rootDir, "src/features/automation/AutomationModule.tsx"), "utf8");
+const assistantLaunch = fs.readFileSync(path.join(rootDir, "src/features/assistants/assistantLaunch.ts"), "utf8");
+for (const requiredClass of [
+  "figma-workspace-heading",
+  "figma-chat-session",
+  "figma-session-header",
+  "figma-message-history",
+  "figma-composer"
+]) {
+  assert(chatModule.includes(requiredClass), `Chat must include ${requiredClass}`);
+}
+for (const exactCopy of [
+  "AI \u5bf9\u8bdd\u5de5\u4f5c\u53f0",
+  "\u7f51\u7edc\u641c\u7d22",
+  "\u56fe\u7247\u8f93\u5165",
+  "\u6e05\u9664\u6b64\u5bf9\u8bdd\u4e0a\u4e0b\u6587",
+  "Shift + Enter"
+]) {
+  assert(chatModule.includes(exactCopy), `Chat must include exact Figma copy: ${exactCopy}`);
+}
+assert(chatModule.includes("commitConversations((current) => [conversation, ...current])"), "new Chat sessions must be added at the top");
+assert(chatModule.includes("collapsed: true"), "new Chat sessions must fold older sessions");
+assert(chatModule.includes("[conversation.id]: defaultSessionUi(false)"), "new Chat sessions must start expanded");
+assert(chatModule.includes("ChatSkillManagerDialog"), "Chat must own the local Skill manager");
+assert(chatModule.includes("skillInstructions: selectedSkills.map"), "Chat must send resolved Skill instructions with its request");
+assert(chatModule.includes('aria-label="管理对话 Skill"'), "Chat must expose Skill management from the workspace header");
+assert(chatModule.includes("ChatCommandPalette"), "Chat must expose the inline command palette");
+assert(chatModule.includes("activeChatCommand"), "Chat must resolve $ and / command tokens locally");
+assert(chatModule.includes("selectedApp.prompt"), "Chat must compose the selected application prompt only for the outbound request");
+assert(chatModule.includes("consumeAssistantLaunch"), "Chat must consume the versioned assistant launch contract");
+assert(chatModule.includes("conversation.assistantId && item.enabled !== false"), "Chat requests must resolve the exact enabled conversation assistant");
+assert(chatModule.includes("figma-session-assistant"), "Chat sessions must expose their bound assistant identity");
+assert(studioModule.includes("queueAssistantLaunch(selected.id, selectedStarterPrompt)"), "Assistant library must launch the exact selected assistant and optional visible starter");
+assert(!studioModule.includes("assistantProfiles"), "Assistant library must not map decorative hard-coded profiles onto backend assistants");
+assert(assistantLaunch.includes('ASSISTANT_LAUNCH_STORAGE_KEY = "xi-ai-web-assistant-launch"'), "Assistant launch must use the versioned session handoff key");
+assert(assistantLaunch.includes("window.sessionStorage"), "Assistant launch must stay session-scoped");
+assert(!assistantLaunch.includes("localStorage"), "Assistant launch must never persist to localStorage");
+assert(automationModule.includes('aria-label="智能体目录"'), "Agents must open as a catalog before the editor");
+assert(automationModule.includes('contextChunks'), "Agent knowledge selections must flow into the bounded request");
+for (const retiredToken of ["conversation-rail", "thread-main", "composer-status-row", "mask-workflow"]) {
+  assert(!chatModule.includes(retiredToken), `retired Chat token must stay absent: ${retiredToken}`);
+}
 
 const server = fs.readFileSync(path.join(rootDir, "server/index.mjs"), "utf8");
 const indexHtml = fs.readFileSync(path.join(rootDir, "index.html"), "utf8");
 const mainTsx = fs.readFileSync(path.join(rootDir, "src/main.tsx"), "utf8");
+const defaultMenuBlock = server.match(/function defaultMenuItems\(\)[\s\S]*?\n}/)?.[0] || "";
+assert.deepEqual(
+  [...defaultMenuBlock.matchAll(/\{\s*id:\s*"([^"]+)",\s*label:\s*"([^"]+)"/g)]
+    .map((match) => [match[1], match[2]]),
+  [
+    ["chat", "AI \u5bf9\u8bdd"],
+    ["image", "\u56fe\u50cf\u751f\u6210"],
+    ["agents", "\u667a\u80fd\u4f53"],
+    ["workflows", "\u5de5\u4f5c\u6d41"],
+    ["ppt", "AI \u4e00\u952e PPT"],
+    ["mindmap", "\u601d\u7ef4\u5bfc\u56fe"],
+    ["assistants", "\u52a9\u624b\u5e93"],
+    ["translate", "\u7ffb\u8bd1"]
+  ],
+  "server defaults must match the exact Figma navigation"
+);
 assert(server.includes("conversations: []"), "public bootstrap must keep conversations empty");
 assert(server.includes("410"), "legacy public conversation routes must remain unavailable");
 assert(!server.includes("/api/conversations/share"), "must not add public share route");

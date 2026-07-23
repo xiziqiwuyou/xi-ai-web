@@ -1,6 +1,8 @@
 import {
   assertCapability,
+  bufferFromDataUrl,
   fetchAsset,
+  fetchMultipartForm,
   fetchMultipartJson,
   fetchJson,
   hasImageContent,
@@ -37,13 +39,32 @@ function mapOpenAIContent(content) {
     .filter((part) => part.type === "input_image" || part.text);
 }
 
-function mapTools(tools = []) {
-  return normalizeTools(tools).map((tool) => ({
+function mapHostedTools(hostedTools = []) {
+  return (Array.isArray(hostedTools) ? hostedTools : []).map((tool) => {
+    if (tool.name === "web_search") return { type: "web_search" };
+    if (tool.name === "code_execution") {
+      return { type: "code_interpreter", container: { type: "auto" } };
+    }
+    throw new Error(`OpenAI hosted tool is not supported: ${tool.name}`);
+  });
+}
+
+function mapTools(tools = [], hostedTools = []) {
+  const functionTools = normalizeTools(tools).map((tool) => ({
     type: "function",
     name: tool.name,
     description: tool.description,
     parameters: tool.parameters
   }));
+  return [...functionTools, ...mapHostedTools(hostedTools)];
+}
+
+function assertHostedCapabilities(provider, hostedTools = []) {
+  hostedTools.forEach((tool) => {
+    if (tool.name === "web_search") assertCapability(provider, "webSearch");
+    else if (tool.name === "code_execution") assertCapability(provider, "codeExecution");
+    else throw new Error(`OpenAI hosted tool is not supported: ${tool.name}`);
+  });
 }
 
 function extractResponseText(json) {
@@ -77,21 +98,35 @@ function extractEmbeddings(json) {
     .filter((embedding) => Array.isArray(embedding));
 }
 
+function textOptions({ temperature, topP, maxTokens }) {
+  return {
+    temperature: Number.isFinite(Number(temperature)) ? Number(temperature) : undefined,
+    top_p: Number.isFinite(Number(topP)) ? Number(topP) : undefined,
+    max_output_tokens: Number.isFinite(Number(maxTokens))
+      ? Math.max(1, Math.trunc(Number(maxTokens)))
+      : undefined
+  };
+}
+
 async function completeWithTools({
   provider,
   model,
   messages,
   temperature,
+  topP,
+  maxTokens,
   tools,
+  hostedTools,
   runTool,
   maxToolRounds = 4,
   signal
 }) {
   assertCapability(provider, "chat");
   if (hasImageContent(messages)) assertCapability(provider, "vision");
-  assertCapability(provider, "toolCalling");
+  if (tools?.length) assertCapability(provider, "toolCalling");
+  assertHostedCapabilities(provider, hostedTools);
   const { system, input: firstInput } = splitSystem(messages);
-  const mappedTools = mapTools(tools);
+  const mappedTools = mapTools(tools, hostedTools);
   let previousResponseId = "";
   let input = firstInput;
 
@@ -103,7 +138,7 @@ async function completeWithTools({
         input,
         previous_response_id: previousResponseId || undefined,
         instructions: previousResponseId ? undefined : system || undefined,
-        temperature,
+        ...textOptions({ temperature, topP, maxTokens }),
         tools: mappedTools.length ? mappedTools : undefined
       },
       signal
@@ -114,6 +149,7 @@ async function completeWithTools({
     previousResponseId = json.id || previousResponseId;
     input = [];
     for (const toolCall of toolCalls) {
+      if (!runTool) throw new Error(`No local executor is available for tool: ${toolCall.name}`);
       const result = await runTool(toolCall);
       input.push({
         type: "function_call_output",
@@ -127,8 +163,8 @@ async function completeWithTools({
 }
 
 async function completeText(params) {
-  const { provider, model, messages, temperature, signal, tools, runTool } = params;
-  if (tools?.length && runTool) return completeWithTools(params);
+  const { provider, model, messages, temperature, topP, maxTokens, signal, tools, hostedTools } = params;
+  if (tools?.length || hostedTools?.length) return completeWithTools(params);
   assertCapability(provider, "chat");
   if (hasImageContent(messages)) assertCapability(provider, "vision");
   const { system, input } = splitSystem(messages);
@@ -138,18 +174,88 @@ async function completeText(params) {
       model,
       input,
       instructions: system || undefined,
-      temperature
+      ...textOptions({ temperature, topP, maxTokens })
     },
     signal
   });
   return extractResponseText(json) || JSON.stringify(json);
 }
 
-async function generateImage({ provider, model, prompt, size, signal }) {
+function normalizedImageCount(count) {
+  return Number.isFinite(Number(count)) ? Math.max(1, Math.min(10, Math.trunc(Number(count)))) : 1;
+}
+
+function normalizedImageSize(model, size, aspectRatio) {
+  const requested = String(size || "").trim();
+  if (/^gpt-image-2(?:$|-)/i.test(model)) return requested || "auto";
+  if (["1024x1024", "1536x1024", "1024x1536", "auto"].includes(requested)) return requested;
+  if (aspectRatio === "3:2" || aspectRatio === "16:9") return "1536x1024";
+  if (aspectRatio === "2:3" || aspectRatio === "9:16") return "1024x1536";
+  return "1024x1024";
+}
+
+function outputFields({ quality, outputFormat, outputCompression }) {
+  const format = ["png", "jpeg", "webp"].includes(outputFormat) ? outputFormat : undefined;
+  const compression = Number.isFinite(Number(outputCompression))
+    ? Math.max(0, Math.min(100, Math.trunc(Number(outputCompression))))
+    : undefined;
+  return {
+    quality: ["auto", "low", "medium", "high"].includes(quality) ? quality : undefined,
+    output_format: format,
+    output_compression: format === "jpeg" || format === "webp" ? compression : undefined
+  };
+}
+
+function imageFile(input, fieldName, fallbackName) {
+  const payload = bufferFromDataUrl(input?.dataUrl);
+  if (!payload) throw new Error(`${fieldName === "mask" ? "Mask" : "Input image"} is invalid`);
+  return {
+    fieldName,
+    buffer: payload.buffer,
+    fileName: input?.name || fallbackName,
+    mimeType: input?.mimeType || payload.mimeType
+  };
+}
+
+async function generateImage({
+  provider,
+  model,
+  prompt,
+  mode,
+  inputImage,
+  maskImage,
+  size,
+  aspectRatio,
+  count,
+  quality,
+  outputFormat,
+  outputCompression,
+  signal
+}) {
   assertCapability(provider, "image");
+  const fields = {
+    model,
+    prompt,
+    n: normalizedImageCount(count),
+    size: normalizedImageSize(model, size, aspectRatio),
+    ...outputFields({ quality, outputFormat, outputCompression })
+  };
+
+  if (mode === "edit") {
+    assertCapability(provider, "imageEdit");
+    const files = [imageFile(inputImage, "image", "input.png")];
+    if (maskImage?.dataUrl) files.push(imageFile(maskImage, "mask", "mask.png"));
+    return fetchMultipartForm(providerUrl(provider, "/images/edits"), {
+      headers: authHeaders(provider),
+      fields,
+      files,
+      signal
+    });
+  }
+
   return fetchJson(providerUrl(provider, "/images/generations"), {
     headers: authHeaders(provider),
-    body: { model, prompt, n: 1, size },
+    body: fields,
     signal
   });
 }

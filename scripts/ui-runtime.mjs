@@ -9,6 +9,16 @@ const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const baseUrlObject = new URL(requestedBaseUrl);
 const baseUrl = `${baseUrlObject.origin}${baseUrlObject.pathname === "/" ? "" : baseUrlObject.pathname}`;
 const appPort = Number(baseUrlObject.port || (baseUrlObject.protocol === "https:" ? 443 : 80));
+const expectedDestinations = [
+  { id: "chat", label: "AI \u5bf9\u8bdd" },
+  { id: "image", label: "\u56fe\u50cf\u751f\u6210" },
+  { id: "agents", label: "\u667a\u80fd\u4f53" },
+  { id: "workflows", label: "\u5de5\u4f5c\u6d41" },
+  { id: "ppt", label: "AI \u4e00\u952e PPT" },
+  { id: "mindmap", label: "\u601d\u7ef4\u5bfc\u56fe" },
+  { id: "assistants", label: "\u52a9\u624b\u5e93" },
+  { id: "translate", label: "\u7ffb\u8bd1" }
+];
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -101,25 +111,72 @@ const appServer = await ensureAppServer();
 try {
   const bootstrap = await fetchJson(`${baseUrl}/api/public/bootstrap`);
   assert(bootstrap.settings?.siteName === "xi-ai-web", "Public bootstrap should expose xi-ai-web as the site name");
-  const menuIds = Array.isArray(bootstrap.menuItems)
-    ? bootstrap.menuItems.map((item) => item.id)
+  const destinations = Array.isArray(bootstrap.menuItems)
+    ? bootstrap.menuItems.map(({ id, label }) => ({ id, label }))
     : [];
   assert(
-    JSON.stringify(menuIds) === JSON.stringify(["chat", "image", "mindmap", "agents", "apps", "gallery"]),
-    "Public bootstrap should expose only the six core menu items"
+    JSON.stringify(destinations) === JSON.stringify(expectedDestinations),
+    `Public bootstrap must expose the exact Figma destinations: ${JSON.stringify(destinations)}`
   );
 
   const topBar = readProjectFile("src/app/TopBar.tsx");
+  const appShell = readProjectFile("src/app/AppShell.tsx");
+  const chatModule = readProjectFile("src/features/chat/ChatModule.tsx");
   const shellCss = readProjectFile("src/styles/rednote-flat-v2.shell.css");
+  const chatCss = readProjectFile("src/styles/rednote-flat-v2.chat.css");
   const responsiveCss = readProjectFile("src/styles/rednote-flat-v2.responsive.css");
-  assert(topBar.includes("className=\"top-module-nav\""), "Top navigation should render the module nav");
-  assert(topBar.includes("top-module-button active"), "Top navigation should expose active module styling");
-  assert(!topBar.includes("global-search-input"), "Top search should remain removed from TopBar");
-  assert(shellCss.includes("flex: 0 0 auto"), "Top module buttons should use compact content-width sizing");
-  assert(shellCss.includes("border-radius: 8px"), "Top module buttons should use the small-radius design contract");
-  assert(topBar.includes('className="mobile-nav"'), "TopBar should render the mobile primary navigation");
-  assert(topBar.includes('variant="sheet"'), "Mobile More navigation should use an accessible sheet");
-  assert(responsiveCss.includes("topButton") === false, "Responsive CSS should not depend on old runtime-only markers");
+  assert(topBar.includes('navigation("figma-navigation")'), "Shell should render .figma-navigation");
+  assert(topBar.includes('"figma-nav-item active"'), "Figma navigation should expose active item styling");
+  assert(topBar.includes('className="figma-mobile-header"'), "TopBar should render .figma-mobile-header");
+  assert(topBar.includes('"figma-sidebar mobile-open"'), "TopBar should render the mobile .figma-sidebar state");
+  assert(topBar.includes('"\u6253\u5f00\u529f\u80fd\u83dc\u5355"'), "Mobile navigation trigger name changed");
+  assert(!topBar.includes("onRequestApiConfig"), "Public shell must not expose a persistent API configuration action");
+
+  assert(appShell.includes('className="figma-studio-shell"'), "AppShell lacks .figma-studio-shell");
+  assert(appShell.includes('className="figma-workspace"'), "AppShell lacks .figma-workspace");
+  assert(appShell.includes('data-scroll-owner="public-workspace"'), "Figma workspace must own public scrolling");
+
+  for (const requiredClass of [
+    "figma-workspace-heading",
+    "figma-chat-session",
+    "figma-session-header",
+    "figma-message-history",
+    "figma-composer"
+  ]) {
+    assert(chatModule.includes(requiredClass), `Chat source lacks ${requiredClass}`);
+  }
+  for (const exactCopy of [
+    "AI \u5bf9\u8bdd\u5de5\u4f5c\u53f0",
+    "\u7f51\u7edc\u641c\u7d22",
+    "\u56fe\u7247\u8f93\u5165",
+    "\u6e05\u9664\u6b64\u5bf9\u8bdd\u4e0a\u4e0b\u6587",
+    "Shift + Enter"
+  ]) {
+    assert(chatModule.includes(exactCopy), `Chat source lacks exact Figma copy: ${exactCopy}`);
+  }
+
+  assert(shellCss.includes("grid-template-columns: 224px minmax(0, 1fr)"), "Desktop Figma shell width changed");
+  assert(shellCss.includes(".figma-navigation"), "Shell CSS lacks .figma-navigation");
+  assert(shellCss.includes(".figma-nav-item"), "Shell CSS lacks .figma-nav-item");
+  assert(chatCss.includes(".figma-chat-session"), "Chat CSS lacks .figma-chat-session");
+  assert(chatCss.includes(".figma-composer"), "Chat CSS lacks .figma-composer");
+  assert(responsiveCss.includes(".figma-sidebar.mobile-open"), "Responsive CSS lacks the mobile Figma navigation state");
+  assert(!responsiveCss.includes("214px"), "The 1024px Figma rail must not use the retired 214px width");
+  assert(responsiveCss.includes("grid-template-columns: 224px minmax(0, 1fr)"), "The 1024px Figma rail must keep its 224px width");
+
+  for (const retiredToken of [
+    'navigation("studio-nav")',
+    'navigation("studio-mobile-nav")',
+    "studio-nav-item active",
+    'className="studio-mobile-header"',
+    'className="studio-mobile-menu"',
+    'className="top-module-nav"'
+  ]) {
+    assert(!topBar.includes(retiredToken), `Retired public shell token remains: ${retiredToken}`);
+  }
+  for (const retiredToken of ["conversation-rail", "thread-main", "composer-status-row", "mask-workflow"]) {
+    assert(!chatModule.includes(retiredToken), `Retired Chat token remains: ${retiredToken}`);
+  }
 
   console.log("Runtime UI checks passed");
 } finally {
