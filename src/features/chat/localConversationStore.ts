@@ -1,4 +1,5 @@
 import type { Assistant, Conversation, ConversationSummary, Message } from "../../types";
+import { createClientId } from "../../utils/clientId";
 import { sanitizeWorkspaceConversation } from "../workspace/workspaceArchive";
 import {
   loadWorkspaceConversations,
@@ -52,10 +53,7 @@ export async function saveLocalConversations(conversations: Conversation[]) {
 export function createLocalConversation(assistant: Assistant, title = "新对话"): Conversation {
   const createdAt = new Date().toISOString();
   return {
-    id:
-      typeof crypto !== "undefined" && "randomUUID" in crypto
-        ? crypto.randomUUID()
-        : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`,
+    id: createClientId(),
     title,
     assistantId: assistant.id,
     pinned: false,

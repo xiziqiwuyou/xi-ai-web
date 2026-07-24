@@ -1,0 +1,23 @@
+[Unit]
+Description=xi-ai-web
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/xi-ai-web
+Environment=NODE_ENV=production
+EnvironmentFile=/etc/xi-ai-web/xi-ai-web.env
+ExecStart=/usr/bin/npm start
+Restart=always
+RestartSec=5
+User=xi-ai-web
+Group=xi-ai-web
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/xi-ai-web/data
+
+[Install]
+WantedBy=multi-user.target

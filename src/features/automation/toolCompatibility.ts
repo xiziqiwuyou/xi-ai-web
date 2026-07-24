@@ -12,6 +12,7 @@ const allVendors: ModelCatalogEntry["vendor"][] = [
   "kimi",
   "deepseek",
   "qwen",
+  "botcf",
   "openai-compatible"
 ];
 
@@ -118,6 +119,7 @@ export function supportedVendorLabels(tool: ToolSetting) {
     kimi: "Kimi",
     deepseek: "DeepSeek",
     qwen: "Qwen",
+    botcf: "BotCF",
     "openai-compatible": "兼容接口"
   };
   return (tool.supportedVendors?.length ? tool.supportedVendors : allVendors)

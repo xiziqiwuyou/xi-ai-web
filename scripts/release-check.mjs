@@ -190,6 +190,11 @@ try {
   const publicJson = JSON.stringify(publicBootstrap);
   assert(!publicJson.includes("apiKey"), "Public bootstrap leaked apiKey");
   assert(!publicJson.includes("baseUrl"), "Public bootstrap leaked baseUrl");
+  assert(!publicJson.includes("LANGFLOW_API_KEY"), "Public bootstrap leaked Langflow configuration");
+  assert(
+    !publicBootstrap.langflowWorkflows?.some((workflow) => Object.prototype.hasOwnProperty.call(workflow, "flowId")),
+    "Public bootstrap leaked a private Langflow Flow ID"
+  );
   assert(!publicJson.includes("backups"), "Public bootstrap leaked backups");
   assert(!publicJson.includes("checklist"), "Public bootstrap leaked ops checklist");
 

@@ -6,6 +6,7 @@ export const connectionPresets = [
   { id: "openai", label: "OpenAI", baseUrl: "https://api.openai.com/v1" },
   { id: "anthropic", label: "Claude", baseUrl: "https://api.anthropic.com/v1" },
   { id: "gemini", label: "Gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta" },
+  { id: "botcf", label: "BotCF", baseUrl: "https://botcf.com/v1" },
   { id: "compatible", label: "兼容接口", baseUrl: "https://api.openai.com/v1" }
 ];
 

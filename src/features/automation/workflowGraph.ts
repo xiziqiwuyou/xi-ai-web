@@ -5,6 +5,10 @@ import type {
   AgentWorkflowNode,
   AgentWorkflowStep
 } from "../../types";
+import {
+  workflowComponentForNode,
+  workflowPortCompatible
+} from "./workflowComponents";
 
 export type WorkflowGraphValidation = {
   valid: boolean;
@@ -32,7 +36,10 @@ function cloneNode(node: AgentWorkflowNode): AgentWorkflowNode {
     position: { ...node.position },
     skillIds: node.skillIds ? [...node.skillIds] : undefined,
     knowledgeDocumentIds: node.knowledgeDocumentIds ? [...node.knowledgeDocumentIds] : undefined,
-    knowledgeBaseIds: node.knowledgeBaseIds ? [...node.knowledgeBaseIds] : undefined
+    knowledgeBaseIds: node.knowledgeBaseIds ? [...node.knowledgeBaseIds] : undefined,
+    config: node.config ? Object.fromEntries(
+      Object.entries(node.config).map(([key, value]) => [key, Array.isArray(value) ? [...value] : value])
+    ) : undefined
   };
 }
 
@@ -42,6 +49,22 @@ function cloneEdge(edge: AgentWorkflowEdge): AgentWorkflowEdge {
     sourceHandle: edge.sourceHandle || "output",
     targetHandle: edge.targetHandle || "input"
   };
+}
+
+function inputPorts(node: AgentWorkflowNode) {
+  return workflowComponentForNode(node).ports.inputs;
+}
+
+function outputPorts(node: AgentWorkflowNode) {
+  return workflowComponentForNode(node).ports.outputs;
+}
+
+function defaultInputHandle(node: AgentWorkflowNode) {
+  return inputPorts(node)[0]?.id || "input";
+}
+
+function defaultOutputHandle(node: AgentWorkflowNode) {
+  return outputPorts(node)[0]?.id || "output";
 }
 
 function startNodeId(workflowId: string) {
@@ -59,12 +82,16 @@ export function graphFromLegacySteps(workflow: Pick<AgentWorkflowDefinition, "id
     {
       id: startId,
       kind: "start",
+      componentId: "core.start",
+      componentVersion: 1,
       name: "开始",
       position: { x: 44, y: defaultY }
     },
     ...workflow.steps.map((step, index) => ({
       id: step.id,
       kind: "agent" as const,
+      componentId: "core.agent",
+      componentVersion: 1,
       name: step.name,
       position: { x: 44 + nodeSpacing * (index + 1), y: defaultY },
       instruction: step.instruction,
@@ -74,6 +101,8 @@ export function graphFromLegacySteps(workflow: Pick<AgentWorkflowDefinition, "id
     {
       id: replyId,
       kind: "reply",
+      componentId: "core.reply",
+      componentVersion: 1,
       name: "输出结果",
       position: { x: 44 + nodeSpacing * (workflow.steps.length + 1), y: defaultY }
     }
@@ -126,12 +155,14 @@ export function workflowGraphToSteps(graph: AgentWorkflowGraph): AgentWorkflowSt
     }));
 }
 
-function acceptsInput(node: AgentWorkflowNode) {
-  return node.kind !== "start";
+function acceptsInput(node: AgentWorkflowNode, handle?: string) {
+  const ports = inputPorts(node);
+  return handle ? ports.some((port) => port.id === handle) : ports.length > 0;
 }
 
-function providesOutput(node: AgentWorkflowNode) {
-  return node.kind !== "reply";
+function providesOutput(node: AgentWorkflowNode, handle?: string) {
+  const ports = outputPorts(node);
+  return handle ? ports.some((port) => port.id === handle) : ports.length > 0;
 }
 
 export function wouldCreateWorkflowCycle(
@@ -161,13 +192,25 @@ export function wouldCreateWorkflowCycle(
 export function canConnectWorkflowNodes(
   graph: AgentWorkflowGraph,
   sourceId: string | null | undefined,
-  targetId: string | null | undefined
+  targetId: string | null | undefined,
+  sourceHandle?: string | null,
+  targetHandle?: string | null
 ) {
   if (!sourceId || !targetId || sourceId === targetId) return false;
   const source = graph.nodes.find((node) => node.id === sourceId);
   const target = graph.nodes.find((node) => node.id === targetId);
-  if (!source || !target || !providesOutput(source) || !acceptsInput(target)) return false;
-  if (graph.edges.some((edge) => edge.source === sourceId && edge.target === targetId)) return false;
+  if (!source || !target) return false;
+  const resolvedSourceHandle = sourceHandle || defaultOutputHandle(source);
+  const resolvedTargetHandle = targetHandle || defaultInputHandle(target);
+  const sourcePort = outputPorts(source).find((port) => port.id === resolvedSourceHandle);
+  const targetPort = inputPorts(target).find((port) => port.id === resolvedTargetHandle);
+  if (!sourcePort || !targetPort || !providesOutput(source, resolvedSourceHandle) || !acceptsInput(target, resolvedTargetHandle)) return false;
+  if (!workflowPortCompatible(sourcePort, targetPort)) return false;
+  if (graph.edges.some((edge) => (
+    edge.source === sourceId && edge.target === targetId &&
+    (edge.sourceHandle || defaultOutputHandle(source)) === resolvedSourceHandle &&
+    (edge.targetHandle || defaultInputHandle(target)) === resolvedTargetHandle
+  ))) return false;
   return !wouldCreateWorkflowCycle(graph, sourceId, targetId);
 }
 
@@ -178,7 +221,7 @@ export function validateWorkflowGraph(
   const errors: string[] = [];
   const nodes = Array.isArray(graph.nodes) ? graph.nodes : [];
   const edges = Array.isArray(graph.edges) ? graph.edges : [];
-  const requireAgent = options.requireAgent !== false;
+  const requireAgent = options.requireAgent === true;
   const knownAgentIds = options.agentIds ? new Set(options.agentIds) : null;
   const knownKnowledgeDocumentIds = options.knowledgeDocumentIds ? new Set(options.knowledgeDocumentIds) : null;
   const knownKnowledgeBaseIds = options.knowledgeBaseIds ? new Set(options.knowledgeBaseIds) : null;
@@ -207,7 +250,9 @@ export function validateWorkflowGraph(
   for (const edge of edges) {
     const source = nodeMap.get(edge.source);
     const target = nodeMap.get(edge.target);
-    const pair = `${edge.source}->${edge.target}`;
+    const sourceHandle = edge.sourceHandle || (source ? defaultOutputHandle(source) : "output");
+    const targetHandle = edge.targetHandle || (target ? defaultInputHandle(target) : "input");
+    const pair = `${edge.source}:${sourceHandle}->${edge.target}:${targetHandle}`;
     if (!source || !target) {
       errors.push("连线引用了不存在的节点。");
       continue;
@@ -221,11 +266,13 @@ export function validateWorkflowGraph(
       continue;
     }
     edgePairs.add(pair);
-    if ((edge.sourceHandle || "output") !== "output" || (edge.targetHandle || "input") !== "input") {
-      errors.push("连线端口无效，请从输出端口连接到输入端口。");
+    const sourcePort = outputPorts(source).find((port) => port.id === sourceHandle);
+    const targetPort = inputPorts(target).find((port) => port.id === targetHandle);
+    if (!sourcePort || !targetPort || !workflowPortCompatible(sourcePort, targetPort)) {
+      errors.push("连线端口无效或数据类型不兼容。");
       continue;
     }
-    if (!providesOutput(source) || !acceptsInput(target)) {
+    if (!providesOutput(source, sourceHandle) || !acceptsInput(target, targetHandle)) {
       errors.push("连线必须从可输出节点流向可接收输入的节点。");
       continue;
     }
@@ -251,6 +298,17 @@ export function validateWorkflowGraph(
     if (!(incoming.get(node.id)?.length || 0)) errors.push(`节点“${node.name}”缺少输入连线。`);
     if (!(outgoing.get(node.id)?.length || 0)) errors.push(`节点“${node.name}”缺少输出连线。`);
     if (node.kind === "template" && !node.template?.trim()) errors.push(`文本模板节点“${node.name}”缺少模板内容。`);
+    if (node.kind === "unsupported") {
+      const originalType = typeof node.config?.originalType === "string" ? node.config.originalType : "未知组件";
+      errors.push(`节点“${node.name}”使用尚未支持的 Langflow 组件：${originalType}。`);
+    }
+    if (node.kind === "conditional") {
+      const operator = typeof node.config?.operator === "string" ? node.config.operator : "contains";
+      const value = typeof node.config?.value === "string" ? node.config.value : "";
+      if (operator !== "isEmpty" && operator !== "isNotEmpty" && !value) {
+        errors.push(`条件分支节点“${node.name}”缺少比较值。`);
+      }
+    }
     if (node.kind === "knowledge") {
       const localIds = node.knowledgeDocumentIds || [];
       const cloudIds = [...new Set(node.knowledgeBaseIds || [])];
@@ -321,15 +379,30 @@ export function addWorkflowNodeToGraph(
     : [...graph.edges];
   const rewiredEdges = inboundReplyEdges.map((edge) => ({
     ...edge,
-    id: `${edge.source}->${node.id}`,
-    target: node.id
+    id: `${edge.source}:${edge.sourceHandle || "output"}->${node.id}:${defaultInputHandle(node)}`,
+    target: node.id,
+    targetHandle: defaultInputHandle(node)
   }));
   if (!inboundReplyEdges.length) {
     const start = graph.nodes.find((item) => item.kind === "start");
-    if (start) rewiredEdges.push({ id: `${start.id}->${node.id}`, source: start.id, target: node.id, sourceHandle: "output", targetHandle: "input" });
+    if (start) rewiredEdges.push({
+      id: `${start.id}:${defaultOutputHandle(start)}->${node.id}:${defaultInputHandle(node)}`,
+      source: start.id,
+      target: node.id,
+      sourceHandle: defaultOutputHandle(start),
+      targetHandle: defaultInputHandle(node)
+    });
   }
   if (reply) {
-    rewiredEdges.push({ id: `${node.id}->${reply.id}`, source: node.id, target: reply.id, sourceHandle: "output", targetHandle: "input" });
+    for (const port of outputPorts(node)) {
+      rewiredEdges.push({
+        id: `${node.id}:${port.id}->${reply.id}:${defaultInputHandle(reply)}`,
+        source: node.id,
+        target: reply.id,
+        sourceHandle: port.id,
+        targetHandle: defaultInputHandle(reply)
+      });
+    }
   }
   return {
     ...graph,
@@ -347,12 +420,16 @@ export function removeWorkflowNode(graph: AgentWorkflowGraph, nodeId: string): A
   const outbound = graph.edges.filter((edge) => edge.source === nodeId);
   const retainedEdges = graph.edges.filter((edge) => edge.source !== nodeId && edge.target !== nodeId);
   const restoredEdges = inbound.flatMap((sourceEdge) => outbound.map((targetEdge) => ({
-    id: `${sourceEdge.source}->${targetEdge.target}`,
+    id: `${sourceEdge.source}:${sourceEdge.sourceHandle || "output"}->${targetEdge.target}:${targetEdge.targetHandle || "input"}`,
     source: sourceEdge.source,
     target: targetEdge.target,
-    sourceHandle: "output" as const,
-    targetHandle: "input" as const
-  }))).filter((edge) => !retainedEdges.some((item) => item.source === edge.source && item.target === edge.target));
+    sourceHandle: sourceEdge.sourceHandle || "output",
+    targetHandle: targetEdge.targetHandle || "input"
+  }))).filter((edge) => !retainedEdges.some((item) => (
+    item.source === edge.source && item.target === edge.target &&
+    (item.sourceHandle || "output") === edge.sourceHandle &&
+    (item.targetHandle || "input") === edge.targetHandle
+  )));
   return {
     ...graph,
     nodes: graph.nodes.filter((item) => item.id !== nodeId),

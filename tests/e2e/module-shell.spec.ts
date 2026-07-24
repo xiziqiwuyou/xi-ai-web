@@ -4,6 +4,7 @@ import {
   expect,
   isMobileProject,
   publicDestinations,
+  publicBootstrapFixture,
   readWorkspaceRecords,
   seedReadyProvider,
   test,
@@ -297,6 +298,75 @@ test("Image sends provider-aware generation and edit options and renders every a
   expect(editOptions?.inputImage?.dataUrl).toMatch(/^data:image\/png;base64,/);
   expect(editOptions?.maskImage?.dataUrl).toMatch(/^data:image\/png;base64,/);
   await expect(module.getByRole("list", { name: "\u672c\u6b21\u751f\u6210\u56fe\u7247", exact: true }).getByRole("listitem")).toHaveCount(4);
+});
+
+test("Image supports BotCF local references and Gemini HTTPS reference URLs", async ({ page, apiHarness }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-1440", "BotCF image request shape needs one deterministic pass");
+  const botcfBootstrap = structuredClone(publicBootstrapFixture);
+  botcfBootstrap.modelCatalog.push(
+    {
+      id: "botcf-image2-e2e",
+      vendor: "botcf",
+      model: "gpt-image-2",
+      label: "BotCF Image2",
+      capabilities: ["image", "imageEdit"],
+      defaultFor: [],
+      enabled: true
+    },
+    {
+      id: "botcf-gemini-image-e2e",
+      vendor: "botcf",
+      model: "gemini-3.1-flash-image",
+      label: "BotCF Gemini Image",
+      capabilities: ["image", "imageEdit"],
+      defaultFor: [],
+      enabled: true
+    }
+  );
+  apiHarness.setBootstrap(botcfBootstrap);
+
+  await openPublicModule(page, 1);
+  const module = page.getByTestId("image-module");
+
+  await chooseFigmaMenu(module, "\u56fe\u50cf\u751f\u6210\u6a21\u578b", "BotCF Image2");
+  await module.getByRole("button", { name: "\u56fe\u7247\u7f16\u8f91", exact: true }).click();
+  await module.locator('input[type="file"][accept="image/png,image/jpeg,image/webp"]').setInputFiles([
+    {
+      name: "reference-one.png",
+      mimeType: "image/png",
+      buffer: Buffer.from("reference-one")
+    },
+    {
+      name: "reference-two.webp",
+      mimeType: "image/webp",
+      buffer: Buffer.from("reference-two")
+    }
+  ]);
+  await expect(module.getByRole("img", { name: "\u53c2\u8003\u56fe 1", exact: true })).toBeVisible();
+  await expect(module.getByRole("img", { name: "\u53c2\u8003\u56fe 2", exact: true })).toBeVisible();
+  await expect(module.getByRole("button", { name: "\u6dfb\u52a0\u53c2\u8003\u56fe", exact: true })).toBeVisible();
+
+  await module.getByRole("button", { name: "\u7acb\u5373\u751f\u6210", exact: true }).click();
+  await expect.poll(() => apiHarness.generationRequests.length).toBe(1);
+  const nativeOptions = apiHarness.generationRequests[0].payload.options;
+  expect(apiHarness.generationRequests[0].payload.modelId).toBe("botcf-image2-e2e");
+  expect(nativeOptions?.inputImages).toHaveLength(2);
+  expect(nativeOptions?.inputImage?.dataUrl).toMatch(/^data:image\/png;base64,/);
+  expect(nativeOptions?.referenceImageUrls).toEqual([]);
+
+  await chooseFigmaMenu(module, "\u56fe\u50cf\u751f\u6210\u6a21\u578b", "BotCF Gemini Image");
+  await expect(module.locator(".figma-image-reference-field")).toHaveCount(0);
+  const urlInput = module.getByRole("textbox", { name: "\u53c2\u8003\u56fe\u94fe\u63a5", exact: true });
+  await urlInput.fill("https://example.com/reference.png");
+  await module.getByRole("button", { name: "\u6dfb\u52a0\u53c2\u8003\u56fe\u94fe\u63a5", exact: true }).click();
+  await expect(module.getByText("\u94fe\u63a5 1", { exact: true })).toBeVisible();
+
+  await module.getByRole("button", { name: "\u7acb\u5373\u751f\u6210", exact: true }).click();
+  await expect.poll(() => apiHarness.generationRequests.length).toBe(2);
+  const geminiOptions = apiHarness.generationRequests[1].payload.options;
+  expect(apiHarness.generationRequests[1].payload.modelId).toBe("botcf-gemini-image-e2e");
+  expect(geminiOptions?.inputImages).toEqual([]);
+  expect(geminiOptions?.referenceImageUrls).toEqual(["https://example.com/reference.png"]);
 });
 
 test("authored menus keep selected state, focus restoration, and mobile touch targets", async ({ page }, testInfo) => {

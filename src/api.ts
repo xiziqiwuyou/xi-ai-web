@@ -2,6 +2,7 @@ import type {
   AdminAuditEntry,
   AdminBackupItem,
   AdminBootstrapPayload,
+  AdminLangflowWorkflow,
   AdminOpsPayload,
   AdminStatus,
   AgentRunPayload,
@@ -38,6 +39,7 @@ import type {
   KnowledgeRetrievalRequest,
   KnowledgeRetrievalResult,
   KnowledgeUploadGrant,
+  LangflowStreamEvent,
   MenuItem,
   ModelCatalogEntry,
   PromptPreset,
@@ -607,6 +609,20 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ toolSettings })
     }),
+  createLangflowWorkflow: (workflow: Partial<AdminLangflowWorkflow>) =>
+    apiJson<AdminLangflowWorkflow>("/api/admin/langflow-workflows", {
+      method: "POST",
+      body: JSON.stringify(workflow)
+    }),
+  updateLangflowWorkflow: (id: string, workflow: Partial<AdminLangflowWorkflow>) =>
+    apiJson<AdminLangflowWorkflow>(`/api/admin/langflow-workflows/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(workflow)
+    }),
+  deleteLangflowWorkflow: (id: string) =>
+    apiJson<void>(`/api/admin/langflow-workflows/${encodeURIComponent(id)}`, {
+      method: "DELETE"
+    }),
   runAgent: (payload: AgentRunPayload, knowledgeCsrfToken = "") =>
     apiJson<GenerationResult>("/api/agents/run", {
       method: "POST",
@@ -627,6 +643,63 @@ export const api = {
       body: JSON.stringify(payload)
     })
 };
+
+export async function streamLangflowWorkflow(
+  workflowId: string,
+  payload: {
+    input: string;
+    sessionId: string;
+    connection: GenerationPayload["connection"];
+    modelId: string;
+  },
+  onEvent: (event: LangflowStreamEvent) => void,
+  signal?: AbortSignal
+) {
+  const response = await fetch(`/api/workflows/${encodeURIComponent(workflowId)}/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    signal
+  });
+
+  if (!response.ok || !response.body) {
+    const body = await response.json().catch(() => ({}));
+    const error = body?.error;
+    if (error && typeof error === "object") {
+      throw new ApiError(response.status, error.message || "无法运行工作流", {
+        code: error.code,
+        details: error.details,
+        requestId: error.requestId
+      });
+    }
+    throw new ApiError(response.status, error || "无法运行工作流");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  const flushEvent = (rawEvent: string) => {
+    const lines = rawEvent.split(/\r?\n/);
+    const eventName = lines.find((line) => line.startsWith("event:"))?.slice(6).trim();
+    const data = lines
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trim())
+      .join("\n");
+    if (!eventName || !data) return;
+    onEvent({ type: eventName, ...JSON.parse(data) } as LangflowStreamEvent);
+  };
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const events = buffer.split(/\r?\n\r?\n/);
+    buffer = events.pop() || "";
+    events.filter(Boolean).forEach(flushEvent);
+  }
+  if (buffer.trim()) flushEvent(buffer);
+}
 
 export async function streamChat(
   payload: ChatStreamPayload,

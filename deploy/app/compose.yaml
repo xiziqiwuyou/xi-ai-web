@@ -1,0 +1,45 @@
+services:
+  xi-ai-web:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: xi-ai-web:local
+    container_name: xi-ai-web
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: ${PORT:-8787}
+      DATA_DIR: /app/data
+      KNOWLEDGE_ENABLED: ${KNOWLEDGE_ENABLED:-false}
+      LANGFLOW_ENABLED: ${LANGFLOW_ENABLED:-false}
+      LANGFLOW_BASE_URL: ${LANGFLOW_BASE_URL:-http://langflow:7860}
+      LANGFLOW_API_KEY: ${LANGFLOW_API_KEY:-}
+      LANGFLOW_WORKFLOW_PATH: ${LANGFLOW_WORKFLOW_PATH:-/api/v2/workflows}
+      LANGFLOW_REQUEST_TIMEOUT_MS: ${LANGFLOW_REQUEST_TIMEOUT_MS:-120000}
+      LANGFLOW_RATE_LIMIT_WINDOW_MS: ${LANGFLOW_RATE_LIMIT_WINDOW_MS:-60000}
+      LANGFLOW_RATE_LIMIT_MAX_REQUESTS: ${LANGFLOW_RATE_LIMIT_MAX_REQUESTS:-12}
+    ports:
+      - "127.0.0.1:${PORT:-8787}:8787"
+    volumes:
+      - xi-ai-web-data:/app/data
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8787/api/health').then((r)=>{if(!r.ok)process.exit(1);return r.json();}).then((j)=>process.exit(j.ok?0:1)).catch(()=>process.exit(1));"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - xi-ai
+
+volumes:
+  xi-ai-web-data:
+
+networks:
+  xi-ai:
+    name: xi-ai

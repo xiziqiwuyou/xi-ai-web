@@ -342,6 +342,32 @@ function cleanFiniteNumber(value: unknown, minimum: number, maximum: number) {
   return Math.max(minimum, Math.min(maximum, parsed));
 }
 
+function sanitizeWorkflowNodeConfig(value: unknown): AgentWorkflowNode["config"] | undefined {
+  const source = recordFrom(value);
+  if (!source) return undefined;
+  const entries: Array<[string, NonNullable<AgentWorkflowNode["config"]>[string]]> = [];
+  for (const [rawKey, rawValue] of Object.entries(source).slice(0, 40)) {
+    const key = cleanText(rawKey, 80);
+    if (!key) continue;
+    if (typeof rawValue === "boolean") {
+      entries.push([key, rawValue]);
+      continue;
+    }
+    if (typeof rawValue === "number" && Number.isFinite(rawValue)) {
+      entries.push([key, Math.max(-1000000, Math.min(1000000, rawValue))]);
+      continue;
+    }
+    if (typeof rawValue === "string") {
+      entries.push([key, cleanText(rawValue, 12000, false)]);
+      continue;
+    }
+    if (Array.isArray(rawValue)) {
+      entries.push([key, cleanStringList(rawValue, 40, 500)]);
+    }
+  }
+  return entries.length ? Object.fromEntries(entries) : undefined;
+}
+
 function sanitizeWorkflowGraphNode(value: unknown): AgentWorkflowNode | null {
   const source = recordFrom(value);
   const id = cleanText(source?.id, 140);
@@ -352,7 +378,12 @@ function sanitizeWorkflowGraphNode(value: unknown): AgentWorkflowNode | null {
   const y = cleanFiniteNumber(position?.y, -100000, 100000);
   if (
     !id || !name || x === null || y === null ||
-    (kind !== "start" && kind !== "agent" && kind !== "template" && kind !== "knowledge" && kind !== "reply")
+    (
+      kind !== "start" && kind !== "agent" && kind !== "template" && kind !== "knowledge" &&
+      kind !== "reply" && kind !== "model" && kind !== "conditional" && kind !== "structured" &&
+      kind !== "webSearch" && kind !== "textSplit" && kind !== "merge" && kind !== "transform" &&
+      kind !== "approval" && kind !== "loop" && kind !== "unsupported"
+    )
   ) {
     return null;
   }
@@ -362,11 +393,13 @@ function sanitizeWorkflowGraphNode(value: unknown): AgentWorkflowNode | null {
   if (kind === "template" && !template) return null;
   const knowledgeDocumentIds = cleanStringList(source?.knowledgeDocumentIds, 40, 160);
   const knowledgeBaseIds = cleanUniqueStringList(source?.knowledgeBaseIds, 3, 160);
-  if (kind === "knowledge" && !knowledgeDocumentIds.length && !knowledgeBaseIds.length) return null;
   const maxKnowledgeChunks = cleanFiniteNumber(source?.maxKnowledgeChunks, 1, 12);
+  const componentVersion = cleanFiniteNumber(source?.componentVersion, 1, 1000);
   return {
     id,
     kind,
+    componentId: cleanText(source?.componentId, 120) || undefined,
+    componentVersion: componentVersion === null ? undefined : Math.round(componentVersion),
     name,
     position: { x, y },
     instruction: instruction || undefined,
@@ -375,7 +408,8 @@ function sanitizeWorkflowGraphNode(value: unknown): AgentWorkflowNode | null {
     template: template || undefined,
     knowledgeDocumentIds,
     ...(Array.isArray(source?.knowledgeBaseIds) ? { knowledgeBaseIds } : {}),
-    maxKnowledgeChunks: kind === "knowledge" ? Math.round(maxKnowledgeChunks || 4) : undefined
+    maxKnowledgeChunks: kind === "knowledge" ? Math.round(maxKnowledgeChunks || 4) : undefined,
+    config: sanitizeWorkflowNodeConfig(source?.config)
   };
 }
 
@@ -387,14 +421,25 @@ function sanitizeWorkflowGraphEdge(value: unknown): AgentWorkflowEdge | null {
   if (!id || !sourceId || !target) return null;
   const sourceHandle = cleanText(source?.sourceHandle, 40);
   const targetHandle = cleanText(source?.targetHandle, 40);
-  if (sourceHandle && sourceHandle !== "output") return null;
-  if (targetHandle && targetHandle !== "input") return null;
   return {
     id,
     source: sourceId,
     target,
-    sourceHandle: sourceHandle ? "output" : undefined,
-    targetHandle: targetHandle ? "input" : undefined
+    sourceHandle: sourceHandle || undefined,
+    targetHandle: targetHandle || undefined
+  };
+}
+
+function sanitizeWorkflowProvenance(value: unknown): AgentWorkflowDefinition["provenance"] | undefined {
+  const source = recordFrom(value);
+  if (!source || (source.kind !== "langflow" && source.kind !== "starter-template")) return undefined;
+  return {
+    kind: source.kind,
+    sourceId: cleanText(source.sourceId, 180) || undefined,
+    sourceName: cleanText(source.sourceName, 240) || undefined,
+    importedAt: cleanIsoDate(source.importedAt),
+    license: source.license === "MIT" ? "MIT" : undefined,
+    unsupportedComponents: cleanUniqueStringList(source.unsupportedComponents, 80, 180)
   };
 }
 
@@ -444,6 +489,7 @@ export function sanitizeWorkspaceWorkflow(value: unknown): AgentWorkflowDefiniti
     description: cleanText(source?.description, 1000) || undefined,
     steps: steps as AgentWorkflowStep[],
     graph: graph || undefined,
+    provenance: sanitizeWorkflowProvenance(source.provenance),
     createdAt,
     updatedAt: cleanIsoDate(source?.updatedAt, createdAt)
   };

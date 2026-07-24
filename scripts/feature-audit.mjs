@@ -71,10 +71,10 @@ const generationModuleIdType = types.match(/export type GenerationModuleId =([\s
 const providerKindType = types.match(/export type ProviderKind =([\s\S]*?);/)?.[1] || "";
 assert(moduleIdType.includes('| "translate"'), "ModuleId must include translate");
 assert(generationModuleIdType.includes('| "translate"'), "GenerationModuleId must include translate");
-for (const vendor of ["openai", "anthropic", "gemini", "kimi", "deepseek", "qwen", "openai-compatible"]) {
+for (const vendor of ["openai", "anthropic", "gemini", "kimi", "deepseek", "qwen", "botcf", "openai-compatible"]) {
   assert(providerKindType.includes(`| "${vendor}"`), `ProviderKind must include ${vendor}`);
 }
-for (const adapterKind of ["kimi", "deepseek", "qwen"]) {
+for (const adapterKind of ["kimi", "deepseek", "qwen", "botcf"]) {
   assert(providerRegistry.includes(`kind === "${adapterKind}"`), `Provider registry must route ${adapterKind}`);
 }
 
@@ -135,12 +135,12 @@ assert(automationModule.includes("renderWorkflowTemplate"), "Workflow must execu
 assert(automationModule.includes("retrieveWorkflowKnowledge"), "Workflow must execute local knowledge retrieval nodes");
 assert(!automationModule.includes("function SkillsWorkspace"), "Legacy public Skill workspace must stay removed");
 assert(workflowCanvas.includes("@xyflow/react"), "Workflow canvas must use React Flow");
-assert(workflowCanvas.includes("sourceHandle !== \"output\"") && workflowCanvas.includes("targetHandle !== \"input\""), "Workflow connections must require valid ports");
+assert(workflowCanvas.includes("canConnectWorkflowNodes") && workflowCanvas.includes("connection.sourceHandle") && workflowCanvas.includes("connection.targetHandle"), "Workflow connections must require valid registered ports");
 assert(workflowGraph.includes("wouldCreateWorkflowCycle"), "Workflow graph must reject cycles before a run");
 assert(workflowGraph.includes("agentIds?: readonly string[]"), "Workflow validation must resolve local agent references before provider calls");
 assert(workflowGraph.includes("knowledgeDocumentIds?: readonly string[]"), "Workflow validation must resolve local knowledge references");
 assert(workflowRuntime.includes("{{task}}") && workflowRuntime.includes("{{input}}"), "Workflow templates must use the documented placeholders only");
-assert(types.includes('"template" | "knowledge"'), "Workflow node types must include safe template and knowledge nodes");
+assert(types.includes('"template"') && types.includes('"knowledge"') && types.includes("AgentWorkflowNodeKind"), "Workflow node types must include safe template and knowledge nodes");
 assert(
   chatModule.includes('const modelVendorTabs: ModelVendorTab[] = ["OpenAI", "Claude", "Gemini", "Kimi", "DeepSeek", "\u901a\u4e49\u5343\u95ee"]'),
   "Chat model picker must expose the six named vendor labels"
@@ -166,6 +166,8 @@ for (const imageContract of [
   "count: Number(count)",
   "imageSize: resolution",
   'inputImage: mode === "edit"',
+  'inputImages: mode === "edit"',
+  'referenceImageUrls: mode === "edit" && usesBotcf',
   'maskImage: mode === "edit" && supportsMask',
   "outputFormat: usesOpenAIImageOptions ? outputFormat : undefined",
   "Number(outputCompression)",
@@ -210,13 +212,15 @@ assert(adminValidation.includes("moduleRequirements"), "Admin validation must de
 assert(!adminValidation.includes("knowledge:"), "Admin validation must not require removed knowledge menu coverage");
 assert(!adminValidation.includes("video:"), "Admin validation must not require removed video menu coverage");
 
-["OpenAI adapter contracts", "Claude adapter contracts", "Gemini adapter contracts", "Kimi adapter contracts", "Qwen adapter contracts", "OpenAI-compatible adapter contracts"].forEach((label) => {
+["OpenAI adapter contracts", "Claude adapter contracts", "Gemini adapter contracts", "Kimi adapter contracts", "Qwen adapter contracts", "OpenAI-compatible adapter contracts", "BotCF adapter contracts"].forEach((label) => {
   assert(providerContracts.includes(label), `${label} test is missing`);
 });
 assert(providerContracts.includes("OpenAI embeddings parse"), "Provider contracts must cover embeddings for future retrieval/tool use");
 assert(providerContracts.includes("OpenAI image zero compression value"), "Provider contracts must preserve zero image compression");
 assert(providerContracts.includes("OpenAI image editing should use FormData"), "Provider contracts must cover multipart OpenAI image editing");
 assert(providerContracts.includes("Gemini exact image count uses bounded request fan-out"), "Provider contracts must cover Gemini image count fan-out");
+assert(providerContracts.includes("BotCF URL edit keeps multiple references"), "Provider contracts must cover BotCF URL reference editing");
+assert(providerContracts.includes("BotCF Gemini image endpoint"), "Provider contracts must cover BotCF Gemini Chat-compatible image routing");
 assert(providerContracts.includes("Kimi fixed sampling must omit top-p"), "Provider contracts must prune Kimi fixed sampling values");
 assert(providerContracts.includes("Qwen maximum output uses max_completion_tokens"), "Provider contracts must cover Qwen max_completion_tokens");
 assert(packageJson.scripts["feature-audit"] === "node scripts/feature-audit.mjs", "package.json must expose feature-audit");

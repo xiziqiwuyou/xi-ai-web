@@ -68,6 +68,86 @@ const baseModelCatalogPresets: ModelPreset[] = [
     defaultFor: []
   },
   {
+    id: "botcf-gpt-image-2",
+    label: "BotCF Image2",
+    vendor: "botcf",
+    model: "gpt-image-2",
+    capabilities: ["image", "imageEdit"],
+    defaultFor: ["image"]
+  },
+  {
+    id: "botcf-gpt-image-2-2k",
+    label: "BotCF Image2 2K",
+    vendor: "botcf",
+    model: "gpt-image-2-2k",
+    capabilities: ["image", "imageEdit"],
+    defaultFor: []
+  },
+  {
+    id: "botcf-gpt-image-2-4k",
+    label: "BotCF Image2 4K",
+    vendor: "botcf",
+    model: "gpt-image-2-4k",
+    capabilities: ["image", "imageEdit"],
+    defaultFor: []
+  },
+  {
+    id: "botcf-grok-imagine-image",
+    label: "BotCF Grok Imagine",
+    vendor: "botcf",
+    model: "grok-imagine-image",
+    capabilities: ["image", "imageEdit"],
+    defaultFor: []
+  },
+  {
+    id: "botcf-grok-imagine-image-quality",
+    label: "BotCF Grok Imagine Quality",
+    vendor: "botcf",
+    model: "grok-imagine-image-quality",
+    capabilities: ["image", "imageEdit"],
+    defaultFor: []
+  },
+  {
+    id: "botcf-gemini-3-1-flash-image",
+    label: "BotCF Gemini 3.1 Flash Image",
+    vendor: "botcf",
+    model: "gemini-3.1-flash-image",
+    capabilities: ["image", "imageEdit"],
+    defaultFor: []
+  },
+  {
+    id: "botcf-gemini-3-pro-image",
+    label: "BotCF Gemini 3 Pro Image",
+    vendor: "botcf",
+    model: "gemini-3-pro-image",
+    capabilities: ["image", "imageEdit"],
+    defaultFor: []
+  },
+  {
+    id: "botcf-nana-banana-2-sync",
+    label: "BotCF Nana Banana 2",
+    vendor: "botcf",
+    model: "nana-banana-2_sync",
+    capabilities: ["image", "imageEdit"],
+    defaultFor: []
+  },
+  {
+    id: "botcf-nana-banana-pro-sync",
+    label: "BotCF Nana Banana Pro",
+    vendor: "botcf",
+    model: "nana-banana-pro_sync",
+    capabilities: ["image", "imageEdit"],
+    defaultFor: []
+  },
+  {
+    id: "botcf-nana-banana-2-4k-sync",
+    label: "BotCF Nana Banana 2 4K",
+    vendor: "botcf",
+    model: "nana-banana-2-4k_sync",
+    capabilities: ["image", "imageEdit"],
+    defaultFor: []
+  },
+  {
     id: "openai-gpt-4o-mini-tts",
     label: "GPT-4o Mini TTS",
     vendor: "openai",

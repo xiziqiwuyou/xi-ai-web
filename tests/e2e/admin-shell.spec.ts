@@ -57,6 +57,7 @@ test("authenticated admin console keeps responsive navigation and one scroll own
       "site",
       "menus",
       "models",
+      "workflows",
       "assistants",
       "apps",
       "prompts",

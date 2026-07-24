@@ -1,4 +1,5 @@
 import { createAnthropicAdapter } from "../server/providers/anthropic.mjs";
+import { createBotcfAdapter } from "../server/providers/botcf.mjs";
 import { createDeepSeekAdapter } from "../server/providers/deepseek.mjs";
 import { createGeminiAdapter } from "../server/providers/gemini.mjs";
 import { createKimiAdapter } from "../server/providers/kimi.mjs";
@@ -155,6 +156,29 @@ function sampleMessages() {
   ];
 }
 
+const reasoningEfforts = ["default", "off", "low", "medium", "high", "xhigh"];
+
+async function assertReasoningMappings(label, adapter, { model, expected }) {
+  await withMockFetch(
+    label,
+    reasoningEfforts.map((reasoningEffort) => (request) => {
+      expected(parseJsonBody(request), reasoningEffort);
+      return jsonResponse({});
+    }),
+    async () => {
+      for (const reasoningEffort of reasoningEfforts) {
+        await adapter.completeText({
+          model,
+          messages: sampleMessages(),
+          temperature: 0.2,
+          topP: 0.8,
+          reasoningEffort
+        });
+      }
+    }
+  );
+}
+
 function toolDefinition() {
   return {
     name: "lookup",
@@ -244,6 +268,25 @@ async function testOpenAIAdapter() {
       maxTokens: 2048
     });
     assertEqual(text, "openai text", "OpenAI response text extraction");
+  });
+
+  await assertReasoningMappings("openai reasoning", adapter, {
+    model: "gpt-reasoning-contract",
+    expected: (body, reasoningEffort) => {
+      const mappedEffort = reasoningEffort === "off" ? "none" : reasoningEffort;
+      if (reasoningEffort === "default") {
+        assertAbsent(body, "reasoning", "OpenAI default reasoning must be omitted");
+      } else {
+        assertEqual(body.reasoning?.effort, mappedEffort, `OpenAI ${reasoningEffort} reasoning effort`);
+      }
+      if (["low", "medium", "high", "xhigh"].includes(reasoningEffort)) {
+        assertAbsent(body, "temperature", `OpenAI ${reasoningEffort} reasoning must omit temperature`);
+        assertAbsent(body, "top_p", `OpenAI ${reasoningEffort} reasoning must omit top-p`);
+      } else {
+        assertEqual(body.temperature, 0.2, `OpenAI ${reasoningEffort} keeps temperature`);
+        assertEqual(body.top_p, 0.8, `OpenAI ${reasoningEffort} keeps top-p`);
+      }
+    }
   });
 
   await withMockFetch("openai vision", [
@@ -437,6 +480,33 @@ async function testAnthropicAdapter() {
     assertEqual(text, "claude text", "Claude response extraction");
   });
 
+  await assertReasoningMappings("claude reasoning", adapter, {
+    model: "claude-sonnet-5",
+    expected: (body, reasoningEffort) => {
+      if (reasoningEffort === "default") {
+        assertAbsent(body, "thinking", "Claude default thinking must be omitted");
+        assertAbsent(body, "output_config", "Claude default output effort must be omitted");
+      } else if (reasoningEffort === "off") {
+        assertEqual(body.thinking?.type, "disabled", "Claude off thinking type");
+        assertAbsent(body, "output_config", "Claude off output effort must be omitted");
+      } else {
+        assertEqual(body.thinking?.type, "adaptive", `Claude ${reasoningEffort} thinking type`);
+        assertEqual(
+          body.output_config?.effort,
+          reasoningEffort === "xhigh" ? "max" : reasoningEffort,
+          `Claude ${reasoningEffort} output effort`
+        );
+      }
+      if (["low", "medium", "high", "xhigh"].includes(reasoningEffort)) {
+        assertAbsent(body, "temperature", `Claude ${reasoningEffort} reasoning must omit temperature`);
+        assertAbsent(body, "top_p", `Claude ${reasoningEffort} reasoning must omit top-p`);
+      } else {
+        assertEqual(body.temperature, 0.2, `Claude ${reasoningEffort} keeps temperature`);
+        assertEqual(body.top_p, 0.8, `Claude ${reasoningEffort} keeps top-p`);
+      }
+    }
+  });
+
   await withMockFetch("claude tools", [
     (request) => {
       const body = parseJsonBody(request);
@@ -512,6 +582,54 @@ async function testGeminiAdapter() {
       maxTokens: 4096
     });
     assertEqual(text, "gemini text", "Gemini response extraction");
+  });
+
+  await assertReasoningMappings("gemini 3 reasoning", adapter, {
+    model: "gemini-3.1-pro-preview",
+    expected: (body, reasoningEffort) => {
+      const expectedLevel = {
+        off: "MINIMAL",
+        low: "LOW",
+        medium: "MEDIUM",
+        high: "HIGH",
+        xhigh: "HIGH"
+      }[reasoningEffort];
+      if (reasoningEffort === "default") {
+        assertAbsent(body.generationConfig, "thinkingConfig", "Gemini 3 default thinking must be omitted");
+      } else {
+        assertEqual(
+          body.generationConfig.thinkingConfig?.thinkingLevel,
+          expectedLevel,
+          `Gemini 3 ${reasoningEffort} thinking level`
+        );
+      }
+      if (["low", "medium", "high", "xhigh"].includes(reasoningEffort)) {
+        assertAbsent(body.generationConfig, "temperature", `Gemini 3 ${reasoningEffort} must omit temperature`);
+        assertAbsent(body.generationConfig, "topP", `Gemini 3 ${reasoningEffort} must omit top-p`);
+      }
+    }
+  });
+
+  await assertReasoningMappings("gemini 2.5 reasoning", adapter, {
+    model: "gemini-2.5-flash",
+    expected: (body, reasoningEffort) => {
+      const expectedBudget = {
+        off: 0,
+        low: 1024,
+        medium: 4096,
+        high: 8192,
+        xhigh: 16384
+      }[reasoningEffort];
+      if (reasoningEffort === "default") {
+        assertAbsent(body.generationConfig, "thinkingConfig", "Gemini 2.5 default thinking must be omitted");
+      } else {
+        assertEqual(
+          body.generationConfig.thinkingConfig?.thinkingBudget,
+          expectedBudget,
+          `Gemini 2.5 ${reasoningEffort} thinking budget`
+        );
+      }
+    }
   });
 
   await withMockFetch("gemini tools", [
@@ -655,6 +773,23 @@ async function testOpenAICompatibleAdapter() {
       maxTokens: 1024
     });
     assertEqual(text, "compatible text", "Compatible response text");
+  });
+
+  await assertReasoningMappings("compatible reasoning", adapter, {
+    model: "compatible-reasoning",
+    expected: (body, reasoningEffort) => {
+      if (reasoningEffort === "default") {
+        assertAbsent(body, "reasoning_effort", "Compatible default reasoning must be omitted");
+      } else {
+        assertEqual(
+          body.reasoning_effort,
+          reasoningEffort === "off" ? "none" : reasoningEffort,
+          `Compatible ${reasoningEffort} reasoning effort`
+        );
+      }
+      assertEqual(body.temperature, 0.2, `Compatible ${reasoningEffort} keeps temperature`);
+      assertEqual(body.top_p, 0.8, `Compatible ${reasoningEffort} keeps top-p`);
+    }
   });
 
   await withMockFetch("compatible stream", [
@@ -809,6 +944,124 @@ async function testOpenAICompatibleAdapter() {
   );
 }
 
+async function testBotcfAdapter() {
+  const botcf = provider("botcf", ["image", "imageEdit"], "https://botcf.contract.test/v1");
+  const adapter = createBotcfAdapter(botcf);
+  const secondImageDataUrl = "data:image/png;base64,aW1hZ2Uy";
+
+  await withMockFetch("botcf image endpoints", [
+    (request) => {
+      assertIncludes(request.url, "/images/generations", "BotCF text-to-image endpoint");
+      assertEqual(headerValue(request.init.headers, "Authorization"), `Bearer ${botcf.apiKey}`, "BotCF auth header");
+      const body = parseJsonBody(request);
+      assertEqual(body.model, "gpt-image-2", "BotCF text-to-image model");
+      assertEqual(body.prompt, "botcf image", "BotCF text-to-image prompt");
+      assertEqual(body.n, 2, "BotCF text-to-image count");
+      assertEqual(body.size, "2048x2048", "BotCF text-to-image size");
+      return jsonResponse({ data: [{ url: "https://asset.test/botcf-1.png" }, { url: "https://asset.test/botcf-2.png" }] });
+    },
+    (request) => {
+      assertIncludes(request.url, "/images/edits", "BotCF multipart edit endpoint");
+      assert(request.init.body instanceof FormData, "BotCF local image editing should use FormData");
+      assertEqual(headerValue(request.init.headers, "Content-Type"), "", "BotCF multipart boundary must be generated by fetch");
+      const form = request.init.body;
+      assertEqual(form.get("model"), "gpt-image-2", "BotCF multipart edit model");
+      assertEqual(form.get("prompt"), "botcf edit", "BotCF multipart edit prompt");
+      assertEqual(form.get("n"), "2", "BotCF multipart edit count");
+      assertEqual(form.get("size"), "1536x1024", "BotCF multipart edit size");
+      assertEqual(form.getAll("image").length, 1, "BotCF first local reference uses image field");
+      assertEqual(form.getAll("image[]").length, 1, "BotCF additional local references use image[] field");
+      assert(form.get("image") instanceof Blob, "BotCF first local reference is a Blob");
+      assert(form.get("image[]") instanceof Blob, "BotCF second local reference is a Blob");
+      return jsonResponse({ data: [{ b64_json: "Ym90Y2YtZWRpdA==" }] });
+    },
+    (request) => {
+      assertIncludes(request.url, "/images/edits", "BotCF URL edit endpoint");
+      const body = parseJsonBody(request);
+      assertEqual(body.model, "gpt-image-2", "BotCF URL edit model");
+      assertEqual(body.prompt, "botcf url edit", "BotCF URL edit prompt");
+      assertEqual(body.images.length, 2, "BotCF URL edit keeps multiple references");
+      assertEqual(body.images[0].image_url, "https://example.com/one.png", "BotCF URL edit first reference");
+      assertEqual(body.images[1].image_url, "https://example.com/two.png", "BotCF URL edit second reference");
+      return jsonResponse({ data: [{ url: "https://asset.test/botcf-url.png" }] });
+    },
+    (request) => {
+      assertIncludes(request.url, "/chat/completions", "BotCF Gemini image endpoint");
+      const body = parseJsonBody(request);
+      assertEqual(body.model, "gemini-3.1-flash-image", "BotCF Gemini image model");
+      assertEqual(body.messages[0].role, "user", "BotCF Gemini image role");
+      assertEqual(body.messages[0].content[0].type, "text", "BotCF Gemini image prompt part");
+      assertEqual(body.messages[0].content[0].text, "botcf gemini", "BotCF Gemini image prompt");
+      assertEqual(body.messages[0].content[1].type, "image_url", "BotCF Gemini reference part type");
+      assertEqual(body.messages[0].content[1].image_url.url, "https://example.com/reference.png", "BotCF Gemini reference URL");
+      return jsonResponse({
+        choices: [{
+          message: {
+            content: [{ type: "image_url", image_url: { url: "https://asset.test/botcf-gemini.png" } }]
+          }
+        }]
+      });
+    }
+  ], async () => {
+    const generated = await adapter.generateImage({
+      model: "gpt-image-2",
+      prompt: "botcf image",
+      count: 2,
+      size: "2048x2048"
+    });
+    assertEqual(generated.data.length, 2, "BotCF text-to-image retains returned assets");
+
+    await adapter.generateImage({
+      model: "gpt-image-2",
+      prompt: "botcf edit",
+      mode: "edit",
+      inputImages: [
+        { dataUrl: imageDataUrl, name: "one.png", mimeType: "image/png" },
+        { dataUrl: secondImageDataUrl, name: "two.png", mimeType: "image/png" }
+      ],
+      count: 2,
+      size: "1536x1024"
+    });
+
+    await adapter.generateImage({
+      model: "gpt-image-2",
+      prompt: "botcf url edit",
+      mode: "edit",
+      referenceImageUrls: ["https://example.com/one.png", "https://example.com/two.png"]
+    });
+
+    await adapter.generateImage({
+      model: "gemini-3.1-flash-image",
+      prompt: "botcf gemini",
+      mode: "edit",
+      referenceImageUrls: ["https://example.com/reference.png"]
+    });
+  });
+
+  assertNoPendingFetch("botcf incompatible edit shapes");
+  await assertRejects(
+    () => adapter.generateImage({
+      model: "gpt-image-2",
+      prompt: "mixed botcf edit",
+      mode: "edit",
+      inputImages: [{ dataUrl: imageDataUrl, name: "one.png", mimeType: "image/png" }],
+      referenceImageUrls: ["https://example.com/one.png"]
+    }),
+    /either uploaded references or public HTTPS reference URLs/,
+    "BotCF native image editing must reject mixed local and URL references"
+  );
+  await assertRejects(
+    () => adapter.generateImage({
+      model: "gemini-3.1-flash-image",
+      prompt: "local gemini edit",
+      mode: "edit",
+      inputImages: [{ dataUrl: imageDataUrl, name: "one.png", mimeType: "image/png" }]
+    }),
+    /requires public HTTPS reference URLs/,
+    "BotCF Gemini image editing must reject local uploads"
+  );
+}
+
 async function testKimiAdapter() {
   const kimi = provider("kimi", ["chat"], "https://api.moonshot.ai/v1");
   const adapter = createKimiAdapter(kimi);
@@ -834,6 +1087,35 @@ async function testKimiAdapter() {
       maxTokens: 16384
     });
     assertEqual(text, "kimi text", "Kimi response text");
+  });
+
+  await assertReasoningMappings("kimi k3 reasoning", adapter, {
+    model: "kimi-k3",
+    expected: (body, reasoningEffort) => {
+      assertAbsent(body, "temperature", `Kimi K3 ${reasoningEffort} must omit temperature`);
+      assertAbsent(body, "top_p", `Kimi K3 ${reasoningEffort} must omit top-p`);
+      if (["low", "medium", "high", "xhigh"].includes(reasoningEffort)) {
+        assertEqual(body.reasoning_effort, "max", `Kimi K3 ${reasoningEffort} maps to max effort`);
+      } else {
+        assertAbsent(body, "reasoning_effort", `Kimi K3 ${reasoningEffort} reasoning effort must be omitted`);
+      }
+      assertAbsent(body, "thinking", `Kimi K3 ${reasoningEffort} must not send K2 thinking controls`);
+    }
+  });
+
+  await assertReasoningMappings("kimi k2.6 reasoning", adapter, {
+    model: "kimi-k2.6",
+    expected: (body, reasoningEffort) => {
+      assertAbsent(body, "reasoning_effort", `Kimi K2.6 ${reasoningEffort} must omit K3 reasoning effort`);
+      if (reasoningEffort === "default") {
+        assertAbsent(body, "thinking", "Kimi K2.6 default thinking must be omitted");
+      } else if (reasoningEffort === "off") {
+        assertEqual(body.thinking?.type, "disabled", "Kimi K2.6 off thinking type");
+      } else {
+        assertEqual(body.thinking?.type, "enabled", `Kimi K2.6 ${reasoningEffort} thinking type`);
+        assertEqual(body.thinking?.keep, "all", `Kimi K2.6 ${reasoningEffort} preserves thinking`);
+      }
+    }
   });
 
   assertNoPendingFetch("kimi hosted tool rejection");
@@ -870,19 +1152,44 @@ async function testQwenAdapter() {
     assertEqual(text, "qwen text", "Qwen response text");
   });
 
+  await assertReasoningMappings("qwen reasoning", adapter, {
+    model: "qwen3.7-plus",
+    expected: (body, reasoningEffort) => {
+      assertAbsent(body, "reasoning_effort", `Qwen ${reasoningEffort} must omit generic reasoning effort`);
+      if (reasoningEffort === "default") {
+        assertAbsent(body, "enable_thinking", "Qwen default thinking enablement must be omitted");
+        assertAbsent(body, "thinking_budget", "Qwen default thinking budget must be omitted");
+      } else if (reasoningEffort === "off") {
+        assertEqual(body.enable_thinking, false, "Qwen off disables thinking");
+        assertAbsent(body, "thinking_budget", "Qwen off thinking budget must be omitted");
+      } else {
+        assertEqual(body.enable_thinking, true, `Qwen ${reasoningEffort} enables thinking`);
+        assertEqual(
+          body.thinking_budget,
+          { low: 1024, medium: 4096, high: 8192, xhigh: 16384 }[reasoningEffort],
+          `Qwen ${reasoningEffort} thinking budget`
+        );
+      }
+    }
+  });
+
   await withMockFetch("qwen responses hosted tools", [
     (request) => {
       assertIncludes(request.url, "/responses", "Qwen hosted tools use documented Responses-compatible endpoint");
       const body = parseJsonBody(request);
       assertEqual(body.tools[0].type, "web_search", "Qwen hosted search mapping");
       assertEqual(body.tools[1].type, "code_interpreter", "Qwen hosted code mapping");
+      assertAbsent(body, "reasoning", "Qwen hosted tools must not inherit OpenAI reasoning syntax");
+      assertEqual(body.enable_thinking, true, "Qwen hosted tools preserve Qwen thinking enablement");
+      assertEqual(body.thinking_budget, 8192, "Qwen hosted tools preserve Qwen thinking budget");
       return jsonResponse({ output_text: "qwen hosted final" });
     }
   ], async () => {
     const result = await adapter.completeText({
       model: "qwen3.6-flash",
       messages: sampleMessages(),
-      hostedTools: [{ name: "web_search" }, { name: "code_execution" }]
+      hostedTools: [{ name: "web_search" }, { name: "code_execution" }],
+      reasoningEffort: "high"
     });
     assertEqual(result, "qwen hosted final", "Qwen hosted tool final text");
   });
@@ -912,6 +1219,33 @@ async function testDeepSeekAdapter() {
       maxTokens: 8192
     });
     assertEqual(text, "deepseek text", "DeepSeek response text");
+  });
+
+  await assertReasoningMappings("deepseek reasoning", adapter, {
+    model: "deepseek-v4-flash",
+    expected: (body, reasoningEffort) => {
+      if (reasoningEffort === "default") {
+        assertAbsent(body, "thinking", "DeepSeek default thinking must be omitted");
+        assertAbsent(body, "reasoning_effort", "DeepSeek default reasoning effort must be omitted");
+      } else if (reasoningEffort === "off") {
+        assertEqual(body.thinking?.type, "disabled", "DeepSeek off thinking type");
+        assertAbsent(body, "reasoning_effort", "DeepSeek off reasoning effort must be omitted");
+      } else {
+        assertEqual(body.thinking?.type, "enabled", `DeepSeek ${reasoningEffort} thinking type`);
+        assertEqual(
+          body.reasoning_effort,
+          reasoningEffort === "xhigh" ? "max" : "high",
+          `DeepSeek ${reasoningEffort} reasoning effort`
+        );
+      }
+      if (["low", "medium", "high", "xhigh"].includes(reasoningEffort)) {
+        assertAbsent(body, "temperature", `DeepSeek ${reasoningEffort} reasoning must omit temperature`);
+        assertAbsent(body, "top_p", `DeepSeek ${reasoningEffort} reasoning must omit top-p`);
+      } else {
+        assertEqual(body.temperature, 0.2, `DeepSeek ${reasoningEffort} keeps temperature`);
+        assertEqual(body.top_p, 0.8, `DeepSeek ${reasoningEffort} keeps top-p`);
+      }
+    }
   });
 
   assertNoPendingFetch("deepseek hosted tool rejection");
@@ -953,6 +1287,7 @@ const tests = [
   ["DeepSeek adapter contracts", testDeepSeekAdapter],
   ["Qwen adapter contracts", testQwenAdapter],
   ["OpenAI-compatible adapter contracts", testOpenAICompatibleAdapter],
+  ["BotCF adapter contracts", testBotcfAdapter],
   ["Fetch helper error contracts", testFetchHelpers]
 ];
 

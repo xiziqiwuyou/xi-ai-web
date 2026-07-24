@@ -3,6 +3,8 @@ dist
 data
 reports
 .omx
+.tmp-*
+debug.log
 .env
 .env.local
 npm-debug.log*

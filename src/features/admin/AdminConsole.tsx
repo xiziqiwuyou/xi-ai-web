@@ -25,7 +25,8 @@ import {
   ToggleLeft,
   Trash2,
   Upload,
-  Users
+  Users,
+  Workflow
 } from "lucide-react";
 import { api, type ModelCatalogPayload } from "../../api";
 import { vendorLabels } from "../../components/workbench";
@@ -40,6 +41,7 @@ import type {
   AdminAuditEntry,
   AdminBackupItem,
   AdminBootstrapPayload,
+  AdminLangflowWorkflow,
   AdminOpsPayload,
   AppPreset,
   Assistant,
@@ -90,6 +92,17 @@ type PromptPresetDraft = {
   enabled: boolean;
 };
 
+type LangflowWorkflowDraft = {
+  flowId: string;
+  name: string;
+  description: string;
+  welcomeMessage: string;
+  inputPlaceholder: string;
+  tags: string;
+  order: number;
+  enabled: boolean;
+};
+
 type AdminSectionId =
   | "overview"
   | "tools"
@@ -99,10 +112,11 @@ type AdminSectionId =
   | "assistants"
   | "apps"
   | "prompts"
+  | "workflows"
   | "audit"
   | KnowledgeAdminSectionId;
 
-type AdminNavigationGroupId = "operations" | "configuration" | "models" | "content" | "knowledge" | "audit";
+type AdminNavigationGroupId = "operations" | "configuration" | "models" | "automation" | "content" | "knowledge" | "audit";
 
 type AdminConfirmation = {
   title: string;
@@ -140,6 +154,11 @@ const adminNavigationGroups: Array<{
     id: "models",
     label: "模型管理",
     items: [{ id: "models", label: "模型目录", icon: Layers3 }]
+  },
+  {
+    id: "automation",
+    label: "自动化",
+    items: [{ id: "workflows", label: "工作流发布", icon: Workflow }]
   },
   {
     id: "content",
@@ -210,6 +229,11 @@ const adminSectionDetails: Record<AdminSectionId, { eyebrow: string; title: stri
     title: "提示词预设",
     description: "维护各功能页面可直接使用的提示词预设。"
   },
+  workflows: {
+    eyebrow: "LANGFLOW",
+    title: "工作流发布",
+    description: "维护前台可运行的 Langflow 工作流目录；服务地址和密钥只通过服务器环境变量配置。"
+  },
   audit: {
     eyebrow: "AUDIT",
     title: "审计记录",
@@ -272,6 +296,7 @@ const vendorOptions: Array<{ value: ProviderKind; label: string }> = [
   { value: "kimi", label: "Kimi" },
   { value: "deepseek", label: "DeepSeek" },
   { value: "qwen", label: "通义千问（Qwen）" },
+  { value: "botcf", label: "BotCF" },
   { value: "openai-compatible", label: "OpenAI Compatible" }
 ];
 
@@ -335,6 +360,17 @@ const emptyPromptPresetDraft: PromptPresetDraft = {
   moduleId: "image",
   title: "新预设",
   prompt: "输入一段可直接使用的提示词。",
+  enabled: true
+};
+
+const emptyLangflowWorkflowDraft: LangflowWorkflowDraft = {
+  flowId: "",
+  name: "新工作流",
+  description: "适合通过对话连续完成的任务。",
+  welcomeMessage: "你好，请告诉我这次需要完成什么。",
+  inputPlaceholder: "输入任务或继续追问...",
+  tags: "对话, 工作流",
+  order: 100,
   enabled: true
 };
 
@@ -405,6 +441,33 @@ function promptPresetDraft(entry?: PromptPreset): PromptPresetDraft {
     title: entry.title,
     prompt: entry.prompt,
     enabled: entry.enabled
+  };
+}
+
+function langflowWorkflowDraft(entry?: AdminLangflowWorkflow): LangflowWorkflowDraft {
+  if (!entry) return emptyLangflowWorkflowDraft;
+  return {
+    flowId: entry.flowId,
+    name: entry.name,
+    description: entry.description,
+    welcomeMessage: entry.welcomeMessage,
+    inputPlaceholder: entry.inputPlaceholder,
+    tags: entry.tags.join(", "),
+    order: entry.order,
+    enabled: entry.enabled
+  };
+}
+
+function langflowWorkflowPayload(draft: LangflowWorkflowDraft): Partial<AdminLangflowWorkflow> {
+  return {
+    flowId: draft.flowId.trim(),
+    name: draft.name.trim(),
+    description: draft.description.trim(),
+    welcomeMessage: draft.welcomeMessage.trim(),
+    inputPlaceholder: draft.inputPlaceholder.trim(),
+    tags: [...new Set(draft.tags.split(/[,，\r\n]+/).map((tag) => tag.trim()).filter(Boolean))],
+    order: draft.order,
+    enabled: draft.enabled
   };
 }
 
@@ -491,6 +554,15 @@ export function AdminConsole({
   );
   const selectedPrompt = bootstrap.promptPresets.find((entry) => entry.id === selectedPromptId);
   const [promptForm, setPromptForm] = useState<PromptPresetDraft>(promptPresetDraft(selectedPrompt));
+  const [selectedLangflowWorkflowId, setSelectedLangflowWorkflowId] = useState<string | "new">(
+    bootstrap.langflowWorkflows[0]?.id || "new"
+  );
+  const selectedLangflowWorkflow = bootstrap.langflowWorkflows.find(
+    (entry) => entry.id === selectedLangflowWorkflowId
+  );
+  const [langflowWorkflowForm, setLangflowWorkflowForm] = useState<LangflowWorkflowDraft>(
+    langflowWorkflowDraft(selectedLangflowWorkflow)
+  );
   const [toolDraft, setToolDraft] = useState<ToolSetting[]>(bootstrap.toolSettings || []);
   const [opsSummary, setOpsSummary] = useState<AdminOpsPayload | null>(null);
   const [backups, setBackups] = useState<AdminBackupItem[]>([]);
@@ -522,6 +594,10 @@ export function AdminConsole({
   useEffect(() => {
     setPromptForm(promptPresetDraft(selectedPrompt));
   }, [selectedPrompt]);
+
+  useEffect(() => {
+    setLangflowWorkflowForm(langflowWorkflowDraft(selectedLangflowWorkflow));
+  }, [selectedLangflowWorkflow]);
 
   useEffect(() => {
     void loadOperations();
@@ -566,6 +642,10 @@ export function AdminConsole({
         `${a.moduleId}-${a.title}`.localeCompare(`${b.moduleId}-${b.title}`)
       ),
     [bootstrap.promptPresets]
+  );
+  const sortedLangflowWorkflows = useMemo(
+    () => [...bootstrap.langflowWorkflows].sort((a, b) => a.order - b.order || a.name.localeCompare(b.name, "zh-CN")),
+    [bootstrap.langflowWorkflows]
   );
   const activeSectionDetails = adminSectionDetails[activeSection];
   const modelDisplayNameMissing = !modelForm.label.trim();
@@ -986,6 +1066,56 @@ export function AdminConsole({
       description: "删除后，该提示词预设会立即从对应前台功能移除，且无法在后台直接撤销。",
       confirmLabel: "删除预设",
       action: () => deletePromptPreset(selectedPrompt.id)
+    });
+  };
+
+  const saveLangflowWorkflow = async (event: FormEvent) => {
+    event.preventDefault();
+    onError("");
+    onNotice("");
+    const payload = langflowWorkflowPayload(langflowWorkflowForm);
+    if (!payload.flowId || !payload.name) {
+      onError("请填写 Langflow Flow ID 和前台显示名称");
+      return;
+    }
+    try {
+      const workflow = selectedLangflowWorkflowId === "new"
+        ? await api.createLangflowWorkflow(payload)
+        : await api.updateLangflowWorkflow(selectedLangflowWorkflowId, payload);
+      const langflowWorkflows = selectedLangflowWorkflowId === "new"
+        ? [workflow, ...bootstrap.langflowWorkflows]
+        : bootstrap.langflowWorkflows.map((item) => (item.id === workflow.id ? workflow : item));
+      onBootstrapChange({ ...bootstrap, langflowWorkflows });
+      setSelectedLangflowWorkflowId(workflow.id);
+      await onPublicRefresh();
+      onNotice("Langflow 工作流已保存");
+    } catch (err: unknown) {
+      onError(err instanceof Error ? err.message : "Langflow 工作流保存失败");
+    }
+  };
+
+  const deleteLangflowWorkflow = async (workflowId: string) => {
+    onError("");
+    onNotice("");
+    try {
+      await api.deleteLangflowWorkflow(workflowId);
+      const langflowWorkflows = bootstrap.langflowWorkflows.filter((item) => item.id !== workflowId);
+      onBootstrapChange({ ...bootstrap, langflowWorkflows });
+      setSelectedLangflowWorkflowId(langflowWorkflows[0]?.id || "new");
+      await onPublicRefresh();
+      onNotice("Langflow 工作流已删除");
+    } catch (err: unknown) {
+      onError(err instanceof Error ? err.message : "Langflow 工作流删除失败");
+    }
+  };
+
+  const requestLangflowWorkflowDelete = () => {
+    if (selectedLangflowWorkflowId === "new" || !selectedLangflowWorkflow) return;
+    requestConfirmation({
+      title: `删除工作流“${selectedLangflowWorkflow.name}”？`,
+      description: "只会取消 xi-ai-web 的发布映射，不会删除 Langflow 中的原始 Flow。",
+      confirmLabel: "删除发布映射",
+      action: () => deleteLangflowWorkflow(selectedLangflowWorkflow.id)
     });
   };
 
@@ -1934,6 +2064,131 @@ export function AdminConsole({
               <button type="button" className="secondary-action danger-action" onClick={requestPromptPresetDelete}>
                 <Trash2 size={16} />
                 删除
+              </button>
+            ) : null}
+          </div>
+        </form>
+      </section>
+      ) : null}
+
+      {activeSection === "workflows" ? (
+      <section id="admin-section-workflows" className="admin-section admin-langflow-section">
+        <div className="section-title">
+          <Workflow size={17} />
+          <h2>Langflow 工作流发布</h2>
+        </div>
+        <p className="admin-mini-copy">
+          先在私有 Langflow 编辑器中编排并测试 Flow，再把 Flow ID 映射到这里。前台用户只能运行已启用的映射。
+        </p>
+        <p className={`admin-inline-status${bootstrap.langflow.available ? " ok" : " warn"}`}>
+          {bootstrap.langflow.available
+            ? "Langflow 网关已配置"
+            : bootstrap.langflow.enabled
+              ? "Langflow 已启用，但服务器配置尚未完成"
+              : "Langflow 当前未启用"}
+        </p>
+        <div className="provider-picker">
+          <label htmlFor="admin-langflow-workflow-picker">
+            <span>选择已发布工作流</span>
+            <select
+              id="admin-langflow-workflow-picker"
+              value={selectedLangflowWorkflowId}
+              onChange={(event) => setSelectedLangflowWorkflowId(event.target.value)}
+            >
+              {sortedLangflowWorkflows.map((workflow) => (
+                <option key={workflow.id} value={workflow.id}>
+                  {workflow.name} · {workflow.flowId}
+                </option>
+              ))}
+              <option value="new">新增发布映射</option>
+            </select>
+          </label>
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="新增工作流发布映射"
+            title="新增工作流发布映射"
+            onClick={() => {
+              setSelectedLangflowWorkflowId("new");
+              setLangflowWorkflowForm(emptyLangflowWorkflowDraft);
+            }}
+          >
+            <Plus size={16} />
+          </button>
+        </div>
+        <form className="provider-form" onSubmit={saveLangflowWorkflow}>
+          <label>
+            Langflow Flow ID
+            <input
+              value={langflowWorkflowForm.flowId}
+              onChange={(event) => setLangflowWorkflowForm((current) => ({ ...current, flowId: event.target.value }))}
+              placeholder="Langflow 中的 Flow ID"
+            />
+          </label>
+          <label>
+            前台显示名称
+            <input
+              value={langflowWorkflowForm.name}
+              onChange={(event) => setLangflowWorkflowForm((current) => ({ ...current, name: event.target.value }))}
+            />
+          </label>
+          <label>
+            工作流说明
+            <input
+              value={langflowWorkflowForm.description}
+              onChange={(event) => setLangflowWorkflowForm((current) => ({ ...current, description: event.target.value }))}
+            />
+          </label>
+          <label>
+            欢迎语
+            <textarea
+              rows={3}
+              value={langflowWorkflowForm.welcomeMessage}
+              onChange={(event) => setLangflowWorkflowForm((current) => ({ ...current, welcomeMessage: event.target.value }))}
+            />
+          </label>
+          <label>
+            输入框提示
+            <input
+              value={langflowWorkflowForm.inputPlaceholder}
+              onChange={(event) => setLangflowWorkflowForm((current) => ({ ...current, inputPlaceholder: event.target.value }))}
+            />
+          </label>
+          <label>
+            标签
+            <input
+              value={langflowWorkflowForm.tags}
+              onChange={(event) => setLangflowWorkflowForm((current) => ({ ...current, tags: event.target.value }))}
+              placeholder="例如：研究, 写作"
+            />
+          </label>
+          <label>
+            排序
+            <input
+              type="number"
+              min={0}
+              max={10000}
+              value={langflowWorkflowForm.order}
+              onChange={(event) => setLangflowWorkflowForm((current) => ({ ...current, order: Number(event.target.value) || 0 }))}
+            />
+          </label>
+          <label className="inline-check">
+            <input
+              type="checkbox"
+              checked={langflowWorkflowForm.enabled}
+              onChange={(event) => setLangflowWorkflowForm((current) => ({ ...current, enabled: event.target.checked }))}
+            />
+            前台启用
+          </label>
+          <div className="admin-form-actions">
+            <button type="submit" className="primary-action">
+              <Save size={16} />
+              保存发布映射
+            </button>
+            {selectedLangflowWorkflowId !== "new" ? (
+              <button type="button" className="secondary-action danger-action" onClick={requestLangflowWorkflowDelete}>
+                <Trash2 size={16} />
+                删除映射
               </button>
             ) : null}
           </div>

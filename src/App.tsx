@@ -329,6 +329,8 @@ function App() {
             galleryItems={galleryItems}
             modelCatalog={payload.modelCatalog}
             promptPresets={payload.promptPresets}
+            langflow={payload.langflow}
+            langflowWorkflows={payload.langflowWorkflows}
             toolSettings={payload.toolSettings}
             userProvider={userProvider}
             searchService={searchService}

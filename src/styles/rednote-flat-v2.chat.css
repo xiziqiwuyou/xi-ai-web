@@ -519,15 +519,17 @@
 
 .figma-message-track {
   display: grid;
-  width: min(100%, 896px);
+  width: min(100%, 1024px);
   align-content: start;
   gap: 24px;
   margin: 0 auto;
-  padding: 24px 32px;
+  padding: 24px;
 }
 
 .figma-message {
   display: flex;
+  width: 100%;
+  min-width: 0;
   align-items: flex-start;
   gap: 12px;
 }
@@ -566,14 +568,16 @@
 }
 
 .figma-message-bubble {
+  min-width: 0;
   width: fit-content;
-  max-width: 83%;
+  max-width: min(78%, 720px);
   padding: 12px 16px;
   border-radius: 16px;
   background: var(--xhs-soft-3);
   color: var(--xhs-ink);
   font-size: 14px;
   line-height: 28px;
+  overflow-wrap: anywhere;
 }
 
 .figma-message.user .figma-message-bubble {
@@ -602,7 +606,6 @@
 .figma-message-bubble p,
 .figma-message-bubble ul,
 .figma-message-bubble ol,
-.figma-message-bubble pre,
 .figma-message-bubble blockquote {
   margin: 0 0 12px;
 }
@@ -611,13 +614,103 @@
   font-weight: 800;
 }
 
-.figma-message-bubble pre {
+.figma-code-block {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  margin: 14px 0;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--xhs-line) 74%, #000 26%);
+  border-radius: 12px;
+  background: #111827;
+  color: #e5edf8;
+  line-height: 1.6;
+}
+
+.figma-code-block > header {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 8px 0 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+  color: #9fb1c8;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.figma-code-block > header button {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #c6d3e4;
+  cursor: pointer;
+  font-size: 10px;
+}
+
+.figma-code-block > header button:hover,
+.figma-code-block > header button:focus-visible {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.figma-code-block > pre {
+  max-width: 100%;
+  margin: 0;
   overflow-x: auto;
-  padding: 12px;
-  border-radius: 10px;
-  background: color-mix(in srgb, #000 18%, transparent);
+  padding: 14px 16px;
+  background: transparent;
   font-family: var(--font-mono);
   font-size: 11px;
+  line-height: 1.65;
+  white-space: pre;
+}
+
+.figma-code-block > pre:focus-visible {
+  outline: 2px solid var(--xhs-blue);
+  outline-offset: -2px;
+}
+
+.figma-code-block > pre code {
+  font: inherit;
+  white-space: inherit;
+}
+
+.figma-inline-code {
+  padding: 0.14em 0.38em;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--xhs-muted) 14%, transparent);
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  line-height: 1.4;
+}
+
+.figma-message-bubble .katex-display {
+  max-width: 100%;
+  margin: 14px 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 4px 2px;
+  color: currentColor;
+}
+
+.figma-message-bubble .katex {
+  color: currentColor;
+  font-size: 1.04em;
+}
+
+.figma-message.user .figma-inline-code {
+  background: rgba(255, 255, 255, 0.18);
+  color: inherit;
 }
 
 .figma-typing {
@@ -654,13 +747,15 @@
 
 .figma-session-tools {
   display: flex;
+  min-width: 0;
   align-items: center;
+  flex-wrap: wrap;
   gap: 4px;
   padding: 0 0 8px;
   border-bottom: 1px solid var(--xhs-line);
 }
 
-.figma-session-tools button {
+.figma-session-tools > button {
   display: inline-flex;
   min-height: 27px;
   align-items: center;
@@ -673,20 +768,67 @@
   font-size: 10px;
 }
 
-.figma-session-tools button:hover,
-.figma-session-tools button.active {
+.figma-session-tools > button:hover,
+.figma-session-tools > button.active {
   background: var(--xhs-soft-3);
   color: var(--xhs-red);
 }
 
-.figma-session-tools button.clear {
+.figma-session-tools > button.clear {
   margin-left: auto;
 }
 
-.figma-session-tools button.figma-search-settings-action {
+.figma-session-tools > button.figma-search-settings-action {
   width: 28px;
   justify-content: center;
   padding-inline: 0;
+}
+
+.figma-reasoning-menu {
+  position: relative;
+  display: block;
+  min-width: 0;
+  gap: 0;
+}
+
+.figma-reasoning-menu .figma-menu-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.figma-reasoning-menu .figma-menu-trigger {
+  width: auto;
+  min-height: 27px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--xhs-muted);
+}
+
+.figma-reasoning-menu .figma-menu-trigger:hover:not(:disabled),
+.figma-reasoning-menu .figma-menu-trigger[aria-expanded="true"] {
+  border-color: transparent;
+  background: var(--xhs-soft-3);
+  color: var(--xhs-red);
+}
+
+.figma-reasoning-menu .figma-menu-trigger-value {
+  gap: 6px;
+}
+
+.figma-reasoning-menu .figma-menu-trigger-value strong {
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.figma-reasoning-menu .figma-menu-popover {
+  min-width: 230px;
 }
 
 .figma-composer {
@@ -703,7 +845,7 @@
   transition: border-color 160ms ease, box-shadow 160ms ease;
 }
 
-.figma-composer > .figma-image-attachment,
+.figma-composer > .figma-image-attachments,
 .figma-composer > .figma-session-notice,
 .figma-composer > .figma-chat-command-tags {
   flex: 0 0 100%;
@@ -918,12 +1060,34 @@
   opacity: 0.42;
 }
 
+.figma-image-attachments {
+  min-width: 0;
+  margin-bottom: 8px;
+}
+
+.figma-image-attachments-summary {
+  display: flex;
+  min-height: 18px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  color: var(--xhs-muted);
+  font-size: 10px;
+}
+
+.figma-image-attachments-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(190px, 100%), 1fr));
+  gap: 6px;
+  min-width: 0;
+}
+
 .figma-image-attachment {
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr) 26px;
+  min-width: 0;
+  grid-template-columns: 34px minmax(0, 1fr) 30px;
   align-items: center;
   gap: 8px;
-  margin-bottom: 8px;
   padding: 6px;
   border: 1px solid var(--xhs-line);
   border-radius: 10px;
@@ -947,14 +1111,20 @@
 
 .figma-image-attachment button {
   display: grid;
-  width: 26px;
-  height: 26px;
+  width: 30px;
+  height: 30px;
   place-items: center;
   padding: 0;
   border: 0;
   border-radius: 8px;
   background: var(--xhs-soft-3);
   color: var(--xhs-muted);
+}
+
+.figma-image-attachment button:hover,
+.figma-image-attachment button:focus-visible {
+  background: var(--xhs-soft-3);
+  color: var(--xhs-red);
 }
 
 .figma-session-notice {
@@ -1443,6 +1613,19 @@
 }
 
 @media (max-width: 760px) {
+  .figma-session-tools > button,
+  .figma-reasoning-menu .figma-menu-trigger {
+    min-height: 44px;
+  }
+
+  .figma-session-tools > button.clear {
+    margin-left: 0;
+  }
+
+  .figma-image-attachments-list {
+    grid-template-columns: repeat(auto-fill, minmax(min(160px, 100%), 1fr));
+  }
+
   .figma-model-trigger,
   .figma-session-toggle,
   .figma-model-vendors button,
@@ -1536,6 +1719,32 @@
   color: var(--xhs-ink);
   font-size: 11px;
   font-weight: 700;
+}
+
+.figma-chat-skill-selection-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin: -2px 0 10px;
+}
+
+.figma-chat-skill-selection-toolbar button {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 9px;
+  border: 1px solid var(--xhs-line);
+  border-radius: 9px;
+  background: var(--xhs-surface);
+  color: var(--xhs-muted);
+  cursor: pointer;
+  font-size: 10px;
+}
+
+.figma-chat-skill-selection-toolbar button:hover,
+.figma-chat-skill-selection-toolbar button:focus-visible {
+  border-color: color-mix(in srgb, var(--xhs-red) 45%, var(--xhs-line));
+  color: var(--xhs-red);
 }
 
 .figma-chat-skill-selection-list {
@@ -1842,6 +2051,16 @@
   .figma-chat-command-tags button {
     width: 44px;
     height: 44px;
+  }
+
+  .figma-code-block > header button {
+    min-width: 44px;
+    min-height: 44px;
+    justify-content: center;
+  }
+
+  .figma-chat-skill-selection-toolbar button {
+    min-height: 44px;
   }
 
   .figma-chat-skill-selection-list,

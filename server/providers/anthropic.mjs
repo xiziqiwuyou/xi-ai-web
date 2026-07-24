@@ -105,11 +105,28 @@ function extractToolUses(json) {
     }));
 }
 
-function generationOptions({ temperature, topP, maxTokens }) {
+function reasoningOptions(reasoningEffort) {
+  switch (reasoningEffort) {
+    case "off":
+      return { thinking: { type: "disabled" } };
+    case "low":
+    case "medium":
+    case "high":
+      return { thinking: { type: "adaptive" }, output_config: { effort: reasoningEffort } };
+    case "xhigh":
+      return { thinking: { type: "adaptive" }, output_config: { effort: "max" } };
+    default:
+      return {};
+  }
+}
+
+function generationOptions({ temperature, topP, reasoningEffort, maxTokens }) {
+  const explicitReasoning = ["low", "medium", "high", "xhigh"].includes(reasoningEffort);
   return {
     max_tokens: Number.isFinite(Number(maxTokens)) ? Math.max(1, Math.trunc(Number(maxTokens))) : 4096,
-    temperature: Number.isFinite(Number(temperature)) ? Number(temperature) : undefined,
-    top_p: Number.isFinite(Number(topP)) ? Number(topP) : undefined
+    temperature: explicitReasoning ? undefined : Number.isFinite(Number(temperature)) ? Number(temperature) : undefined,
+    top_p: explicitReasoning ? undefined : Number.isFinite(Number(topP)) ? Number(topP) : undefined,
+    ...reasoningOptions(reasoningEffort)
   };
 }
 
@@ -119,6 +136,7 @@ async function completeWithTools({
   messages,
   temperature,
   topP,
+  reasoningEffort,
   maxTokens,
   tools,
   hostedTools,
@@ -139,7 +157,7 @@ async function completeWithTools({
       headers: authHeaders(provider),
       body: {
         model,
-        ...generationOptions({ temperature, topP, maxTokens }),
+        ...generationOptions({ temperature, topP, reasoningEffort, maxTokens }),
         system: mapped.system || undefined,
         messages: nextMessages,
         tools: mappedTools.length ? mappedTools : undefined
@@ -171,7 +189,7 @@ async function completeWithTools({
 }
 
 async function completeText(params) {
-  const { provider, model, messages, temperature, topP, maxTokens, signal, tools, hostedTools } = params;
+  const { provider, model, messages, temperature, topP, reasoningEffort, maxTokens, signal, tools, hostedTools } = params;
   if (tools?.length || hostedTools?.length) return completeWithTools(params);
   assertCapability(provider, "chat");
   if (hasImageContent(messages)) assertCapability(provider, "vision");
@@ -180,7 +198,7 @@ async function completeText(params) {
     headers: authHeaders(provider),
     body: {
       model,
-      ...generationOptions({ temperature, topP, maxTokens }),
+      ...generationOptions({ temperature, topP, reasoningEffort, maxTokens }),
       system: mapped.system || undefined,
       messages: mapped.messages
     },

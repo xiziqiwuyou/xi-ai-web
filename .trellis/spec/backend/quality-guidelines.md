@@ -606,3 +606,78 @@ requestChatCompletion({ tools: enabledTools, hostedTools: enabledTools });
 const { localTools, searchTools, hostedTools, unavailable } = resolveRequestedTools(input);
 if (unavailable.length) throw httpError(400, formatUnavailable(unavailable));
 ```
+
+## Chat Reasoning And Multi-Image Contract
+
+### 1. Scope / Trigger
+
+- Trigger: any change to `ChatStreamPayload`, `/api/chat/stream`, `streamProviderReply`, `requestChatCompletion`, a provider adapter, or Chat image attachment handling.
+- The browser owns semantic reasoning intent and its session-only image selection limit. The server owns request normalization, the six-attachment hard cap, image validation, and provider-specific protocol fields.
+
+### 2. Signatures
+
+```ts
+type ReasoningEffort = "default" | "off" | "low" | "medium" | "high" | "xhigh";
+
+type ChatStreamPayload = {
+  reasoningEffort?: ReasoningEffort;
+  attachments?: ChatAttachment[];
+};
+```
+
+```text
+POST /api/chat/stream
+```
+
+The browser-only `maxImageAttachments` setting accepts `1 | 2 | 4 | 6`, defaults to `4`, and remains in the dedicated Chat `sessionStorage` record. It is not an API authorization or server configuration field.
+
+### 3. Contracts
+
+- Normalize `reasoningEffort` through the server allowlist. `default` means omit every provider reasoning field so the selected model keeps its native default.
+- Provider adapters map semantic intent locally: OpenAI Responses uses `reasoning.effort`; Claude uses `thinking` plus `output_config.effort`; Gemini uses model-generation thinking config; Kimi, DeepSeek, Qwen, and generic compatible adapters use only their declared compatible fields.
+- Explicit reasoning must remove incompatible sampling fields where an adapter documents fixed or mutually exclusive sampling. Do not return, store, or render hidden provider reasoning text.
+- The Chat UI may accept multiple images and keep a per-session total, but `sanitizeChatAttachments` remains authoritative: it slices at six and preserves the existing MIME, data-URL, and 4 MB-per-image validation.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| Missing, non-string, or unknown reasoning value | Normalize to `default`; adapters omit reasoning fields |
+| Explicit reasoning on a vendor with fewer levels | Map to the nearest documented active mode; never invent an undocumented field |
+| Generic compatible endpoint receives explicit reasoning | Send only `reasoning_effort`; do not inherit OpenAI Responses syntax |
+| More than six attachments | Server accepts at most the first six valid values |
+| Invalid MIME, malformed data URL, or image over 4 MB | Reject under the existing Chat attachment validation boundary |
+| Client lowers its image selection limit | Browser trims pending attachments before send; server cap remains unchanged |
+
+### 5. Good/Base/Bad Cases
+
+- Good: a Chat request with `reasoningEffort: "xhigh"` reaches its adapter as the documented vendor shape while a `default` request sends no provider reasoning field.
+- Base: a user selects four images in the browser, then sends them through the normal Chat request with no server-side storage of the browser preference.
+- Bad: exposing `thinkingBudget` or `enable_thinking` in React state, trusting a client image-limit setting as a security boundary, or persisting hidden chain-of-thought output in a `Message`.
+
+### 6. Tests Required
+
+- `scripts/provider-contracts.mjs`: assert all six semantic values for OpenAI, Claude, Gemini 3/2.5, Kimi, DeepSeek, Qwen, and generic compatible adapters, including default omission and sampling pruning.
+- `scripts/chat-local-contracts.mjs`: assert the shared payload, server allowlist, six-image cap, multi-file input, and confirmation path remain present.
+- `tests/e2e/chat-settings.spec.ts`: assert keyboard menu behavior, request payload value, clear confirmation/cancel, sessionStorage persistence, multi-image append/overflow/removal, and final attachment count.
+- `tests/e2e/mobile-layout.spec.ts`: assert Chat controls remain touch-safe and document width stays bounded.
+
+### 7. Wrong vs Correct
+
+```js
+// Wrong: frontend decides a vendor protocol and makes default behavior explicit.
+streamChat({ reasoning: { effort: "medium" }, thinkingBudget: 4096 });
+
+// Correct: frontend sends semantic intent; the selected adapter owns the protocol.
+streamChat({ reasoningEffort: "medium" });
+adapter.completeText({ reasoningEffort: "medium", model, messages });
+```
+
+```js
+// Wrong: a UI preference becomes the only attachment guard.
+attachments = selectedFiles.slice(0, maxImageAttachments);
+
+// Correct: the browser improves UX and the server remains authoritative.
+attachments = pendingAttachments.slice(0, maxImageAttachments);
+const sanitized = sanitizeChatAttachments(req.body.attachments, modelEntry).slice(0, 6);
+```

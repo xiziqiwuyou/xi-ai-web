@@ -592,6 +592,26 @@
   color: #157b52;
 }
 
+.admin-inline-status {
+  width: fit-content;
+  margin: 0;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: var(--xhs-soft-3);
+  color: var(--xhs-muted);
+  font-size: 11px;
+}
+
+.admin-inline-status.ok {
+  background: #f0faf6;
+  color: #157b52;
+}
+
+.admin-inline-status.warn {
+  background: #fff8e8;
+  color: #9b6816;
+}
+
 .admin-console-inner > .form-error,
 .admin-login .form-error {
   border: 1px solid rgba(207, 63, 79, 0.22);

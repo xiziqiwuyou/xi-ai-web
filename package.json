@@ -26,12 +26,13 @@
     "knowledge:migrate": "node server/knowledge-cloud/migrate.mjs",
     "knowledge:migrate:check": "node server/knowledge-cloud/migrate.mjs --check",
     "knowledge:worker": "node server/knowledge-cloud/worker.mjs",
+    "test:langflow": "node --test tests/langflow/*.test.mjs",
     "test:knowledge": "node --test tests/knowledge-cloud/*.test.mjs",
     "test:knowledge:db": "node --test tests/knowledge-cloud/postgres.integration.mjs",
     "test:e2e": "playwright test",
     "test:e2e:install": "playwright install chromium",
     "privacy": "node scripts/privacy-scan.mjs",
-    "qa": "npm run check && npm run build && npm run privacy && npm run ui-contract && npm run feature-audit && npm run provider-contracts && npm run chat-local-contracts && npm run workspace-storage-contracts && npm run automation-contracts && npm run search-contracts && npm run test:knowledge && npm run test:knowledge:db && npm run ui-runtime"
+    "qa": "npm run check && npm run build && npm run privacy && npm run ui-contract && npm run feature-audit && npm run provider-contracts && npm run chat-local-contracts && npm run workspace-storage-contracts && npm run automation-contracts && npm run search-contracts && npm run test:langflow && npm run test:knowledge && npm run test:knowledge:db && npm run ui-runtime"
   },
   "dependencies": {
     "@xyflow/react": "^12.11.2",
@@ -39,6 +40,7 @@
     "csv-parse": "7.0.1",
     "express": "^5.2.1",
     "file-type": "22.0.1",
+    "katex": "0.16.47",
     "lucide-react": "^1.16.0",
     "parse5": "8.0.1",
     "pdfjs-dist": "6.1.200",
@@ -49,7 +51,9 @@
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "react-markdown": "^10.1.0",
+    "rehype-katex": "^7.0.1",
     "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0",
     "saxes": "6.0.0",
     "yauzl": "3.4.0"
   },

@@ -30,6 +30,30 @@ export type SiteSettings = {
   defaultModule: ModuleId;
 };
 
+export type LangflowStatus = {
+  enabled: boolean;
+  available: boolean;
+  state: "ready" | "unavailable" | "disabled";
+  reasonCode: "LANGFLOW_NOT_CONFIGURED" | "LANGFLOW_DISABLED" | null;
+};
+
+export type LangflowWorkflow = {
+  id: string;
+  name: string;
+  description: string;
+  welcomeMessage: string;
+  inputPlaceholder: string;
+  tags: string[];
+  enabled: boolean;
+  order: number;
+};
+
+export type AdminLangflowWorkflow = LangflowWorkflow & {
+  flowId: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type FeatureSettings = {
   chat: { enabledProviderIds: string[] };
   image: { enabledProviderIds: string[]; defaultModel?: string };
@@ -45,6 +69,7 @@ export type ProviderKind =
   | "kimi"
   | "deepseek"
   | "qwen"
+  | "botcf"
   | "openai-compatible";
 
 export type ModelCapability =
@@ -147,6 +172,8 @@ export type PublicBootstrapPayload = {
   assistants: Assistant[];
   appPresets: AppPreset[];
   promptPresets: PromptPreset[];
+  langflow: LangflowStatus;
+  langflowWorkflows: LangflowWorkflow[];
   conversations: ConversationSummary[];
   toolSettings?: ToolSetting[];
 };
@@ -158,6 +185,8 @@ export type AdminBootstrapPayload = {
   assistants: Assistant[];
   appPresets: AppPreset[];
   promptPresets: PromptPreset[];
+  langflow: LangflowStatus;
+  langflowWorkflows: AdminLangflowWorkflow[];
   toolSettings?: ToolSetting[];
 };
 
@@ -661,6 +690,7 @@ export type AdminOpsPayload = {
     assistants: number;
     apps: number;
     prompts: number;
+    workflows: number;
     tools: number;
     backups: number;
     auditRecords: number;
@@ -706,6 +736,8 @@ export type SearchServiceConfig = {
   contentSize: "medium" | "high";
 };
 
+export type ReasoningEffort = "default" | "off" | "low" | "medium" | "high" | "xhigh";
+
 export type ChatStreamPayload = {
   conversation?: ConversationSummary;
   history?: Message[];
@@ -714,6 +746,7 @@ export type ChatStreamPayload = {
   modelId: string;
   temperature: number;
   topP?: number;
+  reasoningEffort?: ReasoningEffort;
   maxTokens?: number;
   content: string;
   displayContent?: string;
@@ -763,6 +796,8 @@ export type GenerationPayload = {
     aspectRatio?: ImageAspectRatio;
     imageSize?: ImageResolution;
     inputImage?: ImageInputPayload;
+    inputImages?: ImageInputPayload[];
+    referenceImageUrls?: string[];
     maskImage?: ImageInputPayload;
     outputFormat?: ImageOutputFormat;
     outputCompression?: number;
@@ -894,11 +929,32 @@ export type AgentWorkflowStep = {
   usePreviousOutput: boolean;
 };
 
-export type AgentWorkflowNodeKind = "start" | "agent" | "template" | "knowledge" | "reply";
+export type AgentWorkflowNodeKind =
+  | "start"
+  | "agent"
+  | "template"
+  | "knowledge"
+  | "reply"
+  | "model"
+  | "conditional"
+  | "structured"
+  | "webSearch"
+  | "textSplit"
+  | "merge"
+  | "transform"
+  | "approval"
+  | "loop"
+  | "unsupported";
+
+export type AgentWorkflowConfigValue = string | number | boolean | string[];
+
+export type AgentWorkflowNodeConfig = Record<string, AgentWorkflowConfigValue>;
 
 export type AgentWorkflowNode = {
   id: string;
   kind: AgentWorkflowNodeKind;
+  componentId?: string;
+  componentVersion?: number;
   name: string;
   position: {
     x: number;
@@ -911,14 +967,15 @@ export type AgentWorkflowNode = {
   knowledgeDocumentIds?: string[];
   knowledgeBaseIds?: string[];
   maxKnowledgeChunks?: number;
+  config?: AgentWorkflowNodeConfig;
 };
 
 export type AgentWorkflowEdge = {
   id: string;
   source: string;
   target: string;
-  sourceHandle?: "output";
-  targetHandle?: "input";
+  sourceHandle?: string;
+  targetHandle?: string;
 };
 
 export type AgentWorkflowViewport = {
@@ -934,12 +991,22 @@ export type AgentWorkflowGraph = {
   viewport?: AgentWorkflowViewport;
 };
 
+export type AgentWorkflowProvenance = {
+  kind: "langflow" | "starter-template";
+  sourceId?: string;
+  sourceName?: string;
+  importedAt?: string;
+  license?: "MIT";
+  unsupportedComponents?: string[];
+};
+
 export type AgentWorkflowDefinition = {
   id: string;
   name: string;
   description?: string;
   steps: AgentWorkflowStep[];
   graph?: AgentWorkflowGraph;
+  provenance?: AgentWorkflowProvenance;
   createdAt: string;
   updatedAt: string;
 };
@@ -1079,3 +1146,9 @@ export type ChatStreamEvent =
   | { type: "token"; token: string }
   | { type: "error"; error: string }
   | { type: "done"; conversation: ConversationSummary; message: Message };
+
+export type LangflowStreamEvent =
+  | { type: "meta"; sessionId: string; workflow: LangflowWorkflow; requestId: string }
+  | { type: "token"; token: string }
+  | { type: "error"; error: string }
+  | { type: "done"; sessionId: string; text: string; finished: boolean };

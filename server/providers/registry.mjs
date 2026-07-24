@@ -1,4 +1,5 @@
 import { createAnthropicAdapter } from "./anthropic.mjs";
+import { createBotcfAdapter } from "./botcf.mjs";
 import { createDeepSeekAdapter } from "./deepseek.mjs";
 import { createGeminiAdapter } from "./gemini.mjs";
 import { createKimiAdapter } from "./kimi.mjs";
@@ -15,6 +16,7 @@ export function createProviderAdapter(provider) {
   if (kind === "kimi") return createKimiAdapter(provider);
   if (kind === "deepseek") return createDeepSeekAdapter(provider);
   if (kind === "qwen") return createQwenAdapter(provider);
+  if (kind === "botcf") return createBotcfAdapter(provider);
   return createOpenAICompatibleAdapter(provider);
 }
 

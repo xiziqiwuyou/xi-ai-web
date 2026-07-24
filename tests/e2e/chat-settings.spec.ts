@@ -322,3 +322,110 @@ test("saved Chat settings are scoped to sessionStorage and survive reload", asyn
   await expect(reloadedDialog.getByRole("combobox", { name: "\u6700\u5927 Token \u6570", exact: true })).toHaveValue("8192");
   await expect(reloadedDialog.getByRole("button", { name: "\u6d41\u5f0f\u8f93\u51fa", exact: true })).toHaveAttribute("aria-pressed", "false");
 });
+
+test("reasoning menu exposes six levels, keyboard selection, and the shared request value", async ({ page, apiHarness }) => {
+  await page.goto("/chat");
+  await waitForPublicModule(page, publicDestinations[0]);
+
+  const session = page.locator(".figma-chat-session").first();
+  const trigger = session.getByRole("button", { name: "思维链长度", exact: true });
+  await expect(trigger).toContainText("思维链 · 默认");
+
+  await trigger.click();
+  const menu = session.getByRole("listbox", { name: "思维链长度", exact: true });
+  await expect(menu).toBeVisible();
+  await expect(menu.getByRole("option")).toHaveCount(6);
+  await expect(menu.getByRole("option")).toHaveText([
+    /默认/,
+    /关闭/,
+    /浅想/,
+    /斟酌/,
+    /沉思/,
+    /穷究/
+  ]);
+
+  await page.keyboard.press("End");
+  await page.keyboard.press("Enter");
+  await expect(trigger).toContainText("思维链 · 穷究");
+  await expect(trigger).toBeFocused();
+
+  await trigger.press("ArrowDown");
+  await expect(menu).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeHidden();
+  await expect(trigger).toBeFocused();
+
+  await session.getByLabel("消息内容", { exact: true }).fill("验证思维链参数");
+  await session.getByRole("button", { name: "发送", exact: true }).click();
+  await expect.poll(() => apiHarness.chatRequests.length).toBe(1);
+  expect(apiHarness.chatRequests[0]).toMatchObject({ reasoningEffort: "xhigh" });
+});
+
+test("Clear Messages uses confirmation and leaves the conversation unchanged on cancel", async ({ page }) => {
+  await page.goto("/chat");
+  await waitForPublicModule(page, publicDestinations[0]);
+
+  const session = page.locator(".figma-chat-session").first();
+  const clear = session.getByRole("button", { name: "清除消息", exact: true });
+  await expect(session.getByText("这是确定性历史消息。", { exact: true })).toBeVisible();
+  await clear.click();
+
+  const confirmation = page.getByRole("alertdialog", { name: "清除当前对话消息？", exact: true });
+  await expect(confirmation).toBeVisible();
+  await confirmation.getByRole("button", { name: "取消", exact: true }).click();
+  await expect(confirmation).toBeHidden();
+  await expect(clear).toBeFocused();
+  await expect(session.getByText("这是确定性历史消息。", { exact: true })).toBeVisible();
+
+  await clear.click();
+  await page.getByRole("alertdialog", { name: "清除当前对话消息？", exact: true })
+    .getByRole("button", { name: "清除消息", exact: true })
+    .click();
+  await expect(session.getByText("这是确定性历史消息。", { exact: true })).toHaveCount(0);
+  await expect(clear).toBeVisible();
+});
+
+test("image attachment limit persists in sessionStorage and supports multi-image input", async ({ page, apiHarness }) => {
+  await page.goto("/chat");
+  await waitForPublicModule(page, publicDestinations[0]);
+
+  const settingsTrigger = page.getByRole("button", { name: "会话设置", exact: true }).first();
+  await settingsTrigger.click();
+  const settings = page.getByRole("dialog", { name: "会话设置", exact: true });
+  const imageLimit = settings.getByRole("combobox", { name: "单次图片上限", exact: true });
+  await expect(imageLimit).toHaveValue("4");
+  await imageLimit.selectOption("2");
+  await settings.getByRole("button", { name: "保存设置", exact: true }).click();
+
+  const stored = await page.evaluate((key) => JSON.parse(window.sessionStorage.getItem(key) || "{}"), chatSettingsStorageKey);
+  expect(stored.maxImageAttachments).toBe(2);
+
+  await page.reload();
+  await waitForPublicModule(page, publicDestinations[0]);
+  await settingsTrigger.click();
+  await expect(page.getByRole("dialog", { name: "会话设置", exact: true }).getByRole("combobox", { name: "单次图片上限", exact: true })).toHaveValue("2");
+  await page.getByRole("dialog", { name: "会话设置", exact: true }).getByRole("button", { name: "保存设置", exact: true }).click();
+
+  const session = page.locator(".figma-chat-session").first();
+  const input = session.locator('input[type="file"][multiple]');
+  await expect(input).toHaveCount(1);
+  await input.setInputFiles([
+    { name: "one.png", mimeType: "image/png", buffer: Buffer.from("one") },
+    { name: "two.png", mimeType: "image/png", buffer: Buffer.from("two") }
+  ]);
+  await expect(session.locator('[data-testid="chat-image-attachment"]')).toHaveCount(2);
+  await expect(session.getByText("已选择 2 / 2", { exact: true })).toBeVisible();
+
+  await input.setInputFiles([{ name: "three.png", mimeType: "image/png", buffer: Buffer.from("three") }]);
+  await expect(session.locator('[data-testid="chat-image-attachment"]')).toHaveCount(2);
+  await expect(session.getByRole("alert")).toContainText("最多上传 2 张图片");
+
+  await session.getByRole("button", { name: "移除图片 one.png", exact: true }).click();
+  await expect(session.locator('[data-testid="chat-image-attachment"]')).toHaveCount(1);
+  await expect(session.getByText("已选择 1 / 2", { exact: true })).toBeVisible();
+
+  await session.getByLabel("消息内容", { exact: true }).fill("携带多图发送");
+  await session.getByRole("button", { name: "发送", exact: true }).click();
+  await expect.poll(() => apiHarness.chatRequests.length).toBe(1);
+  expect(apiHarness.chatRequests[0].attachments).toHaveLength(1);
+});

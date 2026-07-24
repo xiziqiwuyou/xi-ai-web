@@ -5,6 +5,7 @@ export const providerKinds = new Set([
   "kimi",
   "deepseek",
   "qwen",
+  "botcf",
   "openai-compatible"
 ]);
 
@@ -42,6 +43,7 @@ export const providerCapabilities = {
   kimi: ["chat", "vision", "toolCalling", "streaming"],
   deepseek: ["chat", "toolCalling", "streaming"],
   qwen: ["chat", "vision", "audio", "embedding", "toolCalling", "webSearch", "codeExecution", "streaming"],
+  botcf: ["image", "imageEdit"],
   "openai-compatible": ["chat", "image", "tts", "stt", "embedding", "video", "toolCalling", "streaming"]
 };
 
@@ -100,6 +102,13 @@ export const providerDefaults = {
       chat: "qwen3.7-plus",
       vision: "qwen3.5-omni-plus",
       embedding: "text-embedding-v4"
+    }
+  },
+  botcf: {
+    name: "BotCF",
+    baseUrl: "https://botcf.com/v1",
+    models: {
+      image: "gpt-image-2"
     }
   },
   "openai-compatible": {

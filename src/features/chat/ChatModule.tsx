@@ -10,9 +10,8 @@ import {
   type KeyboardEvent,
   type MouseEvent as ReactMouseEvent
 } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import {
+  BrainCircuit,
   Bot,
   Check,
   ChevronDown,
@@ -30,16 +29,20 @@ import {
 } from "lucide-react";
 import { ApiError, streamChat } from "../../api";
 import {
+  ConfirmationDialog,
   Dialog,
+  FigmaMenu,
   getFloatingHorizontalOffset,
   getFloatingVerticalPlacement
 } from "../../components/ui";
+import { createClientId } from "../../utils/clientId";
 import {
   compactModelLabel,
   modelsForCapability,
   preferredModelFor
 } from "../../components/workbench";
 import { createChatAttachment } from "./attachmentUtils";
+import ChatMessageContent from "./ChatMessageContent";
 import ChatCommandPalette, { type ChatCommandOption } from "./ChatCommandPalette";
 import { activeChatCommand, chatCommandMatches, removeChatCommand } from "./chatCommands";
 import ChatSkillManagerDialog from "../automation/ChatSkillManagerDialog";
@@ -91,6 +94,7 @@ import type {
   KnowledgeBase,
   PromptPreset,
   PublicBootstrapPayload,
+  ReasoningEffort,
   SearchServiceConfig,
   ToolSetting,
   UserProviderConfig
@@ -122,6 +126,7 @@ type SessionUiState = {
   appId: string;
   search: boolean;
   knowledgeBaseIds: string[];
+  reasoningEffort: ReasoningEffort;
   notice: string;
 };
 
@@ -137,6 +142,7 @@ type SessionSettingsSnapshot = {
   maxTokens: string;
   streamOutput: boolean;
   toolMode: string;
+  maxImageAttachments: ChatImageAttachmentLimit;
   skillIds: string[];
 };
 
@@ -154,6 +160,8 @@ const modelVendorTabs: ModelVendorTab[] = ["OpenAI", "Claude", "Gemini", "Kimi",
 const chatSettingsStorageKey = "xi-ai-web-chat-session-settings";
 const chatContextSizeValues = ["4", "16", "32", "128"] as const;
 const chatMaxTokenValues = ["1024", "2048", "4096", "8192"] as const;
+const chatImageAttachmentLimitValues = [1, 2, 4, 6] as const;
+type ChatImageAttachmentLimit = typeof chatImageAttachmentLimitValues[number];
 const chatContextSizeOptions = chatContextSizeValues.map((value) => ({ value, label: `${value}K tokens` }));
 const chatMaxTokenOptions = [
   { value: "1024", label: "1,024" },
@@ -162,6 +170,15 @@ const chatMaxTokenOptions = [
   { value: "8192", label: "8,192" }
 ] as const;
 const chatToolModeOptions = ["\u81ea\u52a8", "\u8be2\u95ee\u540e\u8c03\u7528", "\u7981\u7528"] as const;
+const reasoningEffortValues = ["default", "off", "low", "medium", "high", "xhigh"] as const satisfies readonly ReasoningEffort[];
+const reasoningEffortOptions = [
+  { value: "default", label: "默认", detail: "依赖模型默认行为，不作额外配置" },
+  { value: "off", label: "关闭", detail: "禁用推理" },
+  { value: "low", label: "浅想", detail: "低强度推理" },
+  { value: "medium", label: "斟酌", detail: "中强度推理" },
+  { value: "high", label: "沉思", detail: "高强度推理" },
+  { value: "xhigh", label: "穷究", detail: "超高强度推理" }
+] as const;
 
 function clampSettingNumber(value: unknown, fallback: number, min: number, max: number) {
   const number = typeof value === "number" ? value : Number(value);
@@ -169,7 +186,7 @@ function clampSettingNumber(value: unknown, fallback: number, min: number, max: 
   return Math.min(max, Math.max(min, number));
 }
 
-function cleanSettingChoice<T extends string>(value: unknown, choices: readonly T[], fallback: T) {
+function cleanSettingChoice<T extends string | number>(value: unknown, choices: readonly T[], fallback: T) {
   return choices.includes(value as T) ? value as T : fallback;
 }
 
@@ -195,6 +212,11 @@ function loadPersistedSessionSettings(): PersistedSessionSettings | null {
         parsed.toolMode,
         chatToolModeOptions,
         "\u81ea\u52a8"
+      ),
+      maxImageAttachments: cleanSettingChoice(
+        parsed.maxImageAttachments,
+        chatImageAttachmentLimitValues,
+        4
       )
     };
   } catch {
@@ -255,6 +277,7 @@ function defaultSessionUi(collapsed: boolean, knowledgeBaseIds: string[] = []): 
     appId: "",
     search: false,
     knowledgeBaseIds: normalizeKnowledgeBaseIds(knowledgeBaseIds),
+    reasoningEffort: "default",
     notice: ""
   };
 }
@@ -267,7 +290,7 @@ function sortSessionStack(conversations: Conversation[]) {
 
 function uniqueLocalMessageId(existing: Message[], candidate: string) {
   if (!existing.some((message) => message.id === candidate)) return candidate;
-  return `${candidate}-${crypto.randomUUID()}`;
+  return createClientId(candidate);
 }
 
 function ChatModule({
@@ -296,17 +319,20 @@ function ChatModule({
   const [maxTokens, setMaxTokens] = useState("4096");
   const [streamOutput, setStreamOutput] = useState(true);
   const [toolMode, setToolMode] = useState("自动");
+  const [maxImageAttachments, setMaxImageAttachments] = useState<ChatImageAttachmentLimit>(4);
   const [chatSkills, setChatSkills] = useState<AgentSkillDefinition[]>([]);
   const [settingsSkillIds, setSettingsSkillIds] = useState<string[]>([]);
   const [settingsConversationId, setSettingsConversationId] = useState("");
   const [skillsLoading, setSkillsLoading] = useState(true);
   const [skillManagerOpen, setSkillManagerOpen] = useState(false);
+  const [returnFocusToSkillManager, setReturnFocusToSkillManager] = useState(false);
   const [searchSettingsOpen, setSearchSettingsOpen] = useState(false);
   const [pendingSearchConversationId, setPendingSearchConversationId] = useState("");
   const [assistantAvatarId, setAssistantAvatarId] = useState("akira");
   const [userAvatar, setUserAvatar] = useState<string | null>(null);
   const [defaultAssistantId, setDefaultAssistantId] = useState(assistants[0]?.id || "");
   const [streamingConversationId, setStreamingConversationId] = useState("");
+  const [clearConversationId, setClearConversationId] = useState("");
   const knowledgeCatalog = useKnowledgeCatalog();
   const conversationsRef = useRef(conversationList);
   const initializedRef = useRef(false);
@@ -314,6 +340,7 @@ function ChatModule({
   const abortRef = useRef<AbortController | null>(null);
   const streamingMessageIdRef = useRef("");
   const userAvatarInputRef = useRef<HTMLInputElement | null>(null);
+  const skillManagerTriggerRef = useRef<HTMLButtonElement | null>(null);
   const settingsSnapshotRef = useRef<SessionSettingsSnapshot | null>(null);
 
   const chatModels = useMemo(() => modelsForCapability(modelCatalog, "chat"), [modelCatalog]);
@@ -333,6 +360,7 @@ function ChatModule({
     setMaxTokens(restored.maxTokens);
     setStreamOutput(restored.streamOutput);
     setToolMode(restored.toolMode);
+    setMaxImageAttachments(restored.maxImageAttachments);
   }, []);
 
   const commitConversations = useCallback(
@@ -711,10 +739,11 @@ function ChatModule({
           modelId: selectedModel.id,
           temperature,
           topP,
+          reasoningEffort: ui.reasoningEffort,
           maxTokens: Math.max(1, Number(maxTokens) || 4096),
           content,
           displayContent,
-          attachments: ui.attachments,
+          attachments: ui.attachments.slice(0, maxImageAttachments),
           skillInstructions: selectedSkills.map((skill) => `${skill.name}: ${skill.instructions}`),
           allowedTools,
           searchService: allowedTools.includes("web_search")
@@ -746,29 +775,66 @@ function ChatModule({
     setStreamingConversationId("");
   };
 
-  const clearContext = (conversation: Conversation) => {
+  const clearMessages = (conversationId: string) => {
     commitConversations((current) =>
       current.map((item) =>
-        item.id === conversation.id
+        item.id === conversationId
           ? { ...item, messages: [], title: "新对话", updatedAt: new Date().toISOString() }
           : item
       )
     );
-    patchSessionUi(conversation.id, { notice: "", attachments: [] });
+    patchSessionUi(conversationId, { notice: "", attachments: [] });
+    setClearConversationId("");
   };
 
   const attachImage = async (conversationId: string, event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
+    const files = Array.from(event.target.files || []);
     event.target.value = "";
-    if (!file) return;
-    try {
-      const attachment = await createChatAttachment(file, "image");
-      patchSessionUi(conversationId, { attachments: [attachment], notice: "" });
-    } catch (error) {
+    if (!files.length) return;
+
+    const currentCount = sessionUi[conversationId]?.attachments.length || 0;
+    const availableSlots = Math.max(0, maxImageAttachments - currentCount);
+    if (!availableSlots) {
       patchSessionUi(conversationId, {
-        notice: error instanceof Error ? error.message : "图片读取失败"
+        notice: `一次最多上传 ${maxImageAttachments} 张图片，请先移除已有图片。`
       });
+      return;
     }
+
+    const attachments: ChatAttachment[] = [];
+    const errors: string[] = [];
+    let processedCount = 0;
+    for (const file of files) {
+      if (attachments.length >= availableSlots) break;
+      processedCount += 1;
+      try {
+        attachments.push(await createChatAttachment(file, "image"));
+      } catch (error) {
+        errors.push(error instanceof Error ? error.message : `${file.name} 读取失败`);
+      }
+    }
+
+    setSessionUi((current) => {
+      const ui = current[conversationId] || defaultSessionUi(false);
+      const remainingSlots = Math.max(0, maxImageAttachments - ui.attachments.length);
+      const accepted = attachments.slice(0, remainingSlots);
+      const overflowCount = Math.max(
+        0,
+        files.length - processedCount + attachments.length - accepted.length
+      );
+      const notices = [...errors];
+      if (overflowCount) {
+        notices.push(`一次最多上传 ${maxImageAttachments} 张图片，超出的 ${overflowCount} 张未添加。`);
+      }
+      return {
+        ...current,
+        [conversationId]: {
+          ...ui,
+          attachments: [...ui.attachments, ...accepted],
+          notice: notices.join("；")
+        }
+      };
+    });
   };
 
   const changeModel = (conversationId: string, modelId: string) => {
@@ -796,6 +862,7 @@ function ChatModule({
       maxTokens,
       streamOutput,
       toolMode,
+      maxImageAttachments,
       skillIds: [...targetSkillIds]
     };
     setSettingsOpen(true);
@@ -813,10 +880,12 @@ function ChatModule({
       setMaxTokens(snapshot.maxTokens);
       setStreamOutput(snapshot.streamOutput);
       setToolMode(snapshot.toolMode);
+      setMaxImageAttachments(snapshot.maxImageAttachments);
       setSettingsSkillIds(snapshot.skillIds);
     }
     settingsSnapshotRef.current = null;
     setSettingsConversationId("");
+    setReturnFocusToSkillManager(false);
     setSettingsOpen(false);
   };
 
@@ -824,6 +893,16 @@ function ChatModule({
     if (settingsConversationId) {
       patchSessionUi(settingsConversationId, { skillIds: [...settingsSkillIds] });
     }
+    setSessionUi((current) => Object.fromEntries(
+      Object.entries(current).map(([conversationId, ui]) => {
+        if (ui.attachments.length <= maxImageAttachments) return [conversationId, ui];
+        return [conversationId, {
+          ...ui,
+          attachments: ui.attachments.slice(0, maxImageAttachments),
+          notice: `图片上限已调整为 ${maxImageAttachments} 张，超出的待发送图片已移除。`
+        }];
+      })
+    ));
     savePersistedSessionSettings({
       assistantAvatarId,
       userAvatar,
@@ -833,10 +912,12 @@ function ChatModule({
       contextSize,
       maxTokens,
       streamOutput,
-      toolMode
+      toolMode,
+      maxImageAttachments
     });
     settingsSnapshotRef.current = null;
     setSettingsConversationId("");
+    setReturnFocusToSkillManager(false);
     setSettingsOpen(false);
   };
 
@@ -868,10 +949,6 @@ function ChatModule({
           <button type="button" onClick={createConversation} disabled={!conversationsHydrated} aria-label="新对话" title="新对话">
             <Plus size={15} />
             <span className="figma-heading-action-label">新对话</span>
-          </button>
-          <button type="button" onClick={() => setSkillManagerOpen(true)} disabled={skillsLoading} aria-label="管理对话 Skill" title="管理对话 Skill">
-            <Puzzle size={15} />
-            <span className="figma-heading-action-label">Skill</span>
           </button>
           <button type="button" onClick={() => openSettings()} aria-label="会话设置" title="会话设置">
             <Settings2 size={15} />
@@ -910,9 +987,9 @@ function ChatModule({
               messageStyle={messageStyle}
               assistantAvatarUrl={assistantAvatarUrl}
               userAvatarUrl={userAvatar}
+              maxImageAttachments={maxImageAttachments}
               streaming={streamingConversationId === conversation.id}
               onCreateConversation={createConversation}
-              onOpenSkillManager={() => setSkillManagerOpen(true)}
               onOpenSettings={() => openSettings(conversation.id)}
               onToggle={() => patchSessionUi(conversation.id, { collapsed: !ui.collapsed })}
               onDraftChange={(draft) => patchSessionUi(conversation.id, { draft })}
@@ -946,9 +1023,16 @@ function ChatModule({
                 knowledgeBaseIds,
                 notice: ""
               })}
+              onReasoningEffortChange={(reasoningEffort) => patchSessionUi(conversation.id, {
+                reasoningEffort,
+                notice: ""
+              })}
               onImageInput={(event) => void attachImage(conversation.id, event)}
-              onRemoveImage={() => patchSessionUi(conversation.id, { attachments: [] })}
-              onClear={() => clearContext(conversation)}
+              onRemoveImage={(attachmentId) => patchSessionUi(conversation.id, {
+                attachments: ui.attachments.filter((attachment) => attachment.id !== attachmentId),
+                notice: ""
+              })}
+              onClear={() => setClearConversationId(conversation.id)}
               onSend={() => void sendMessage(conversation)}
               onStop={stopStreaming}
             />
@@ -957,10 +1041,11 @@ function ChatModule({
       </div>
 
       <Dialog
-        open={settingsOpen}
+        open={settingsOpen && !skillManagerOpen}
         labelledBy="figma-session-settings-title"
         describedBy="figma-session-settings-description"
         className="figma-session-settings"
+        initialFocusRef={returnFocusToSkillManager ? skillManagerTriggerRef : undefined}
         onClose={cancelSettings}
       >
         <header>
@@ -1021,6 +1106,20 @@ function ChatModule({
 
         <fieldset className="figma-chat-skill-selection">
           <legend>对话 Skill</legend>
+          <div className="figma-chat-skill-selection-toolbar">
+            <button
+              ref={skillManagerTriggerRef}
+              type="button"
+              onClick={() => {
+                setReturnFocusToSkillManager(true);
+                setSkillManagerOpen(true);
+              }}
+              disabled={skillsLoading}
+            >
+              <Puzzle size={14} />
+              管理本地 Skill
+            </button>
+          </div>
           <div className="figma-chat-skill-selection-list">
             {skillsLoading ? <p>正在读取本地 Skill…</p> : chatSkills.length ? chatSkills.map((skill) => {
               const compatibility = skillCompatibility(skill, toolSettings, settingsModel, { searchReady });
@@ -1109,6 +1208,21 @@ function ChatModule({
               ))}
             </select>
           </label>
+          <label>
+            <span>单次图片上限</span>
+            <select
+              value={maxImageAttachments}
+              onChange={(event) => setMaxImageAttachments(cleanSettingChoice(
+                Number(event.target.value),
+                chatImageAttachmentLimitValues,
+                4
+              ))}
+            >
+              {chatImageAttachmentLimitValues.map((value) => (
+                <option key={value} value={value}>{value} 张</option>
+              ))}
+            </select>
+          </label>
           <div className="figma-setting-toggle">
             <span><strong>流式输出</strong><small>实时显示生成内容</small></span>
             <button type="button" className={streamOutput ? "active" : ""} onClick={() => setStreamOutput((value) => !value)} aria-pressed={streamOutput} aria-label="流式输出"><i /></button>
@@ -1160,6 +1274,15 @@ function ChatModule({
           ])));
         }}
       />
+
+      <ConfirmationDialog
+        open={Boolean(clearConversationId)}
+        title="清除当前对话消息？"
+        description="此操作会清除当前对话中的全部消息和待发送图片，且无法撤销。"
+        confirmLabel="清除消息"
+        onCancel={() => setClearConversationId("")}
+        onConfirm={() => clearConversationId && clearMessages(clearConversationId)}
+      />
     </section>
   );
 }
@@ -1179,9 +1302,9 @@ type ChatSessionBlockProps = {
   messageStyle: "bubble" | "list";
   assistantAvatarUrl: string;
   userAvatarUrl: string | null;
+  maxImageAttachments: ChatImageAttachmentLimit;
   streaming: boolean;
   onCreateConversation: () => Conversation | null;
-  onOpenSkillManager: () => void;
   onOpenSettings: () => void;
   onToggle: () => void;
   onDraftChange: (value: string) => void;
@@ -1193,8 +1316,9 @@ type ChatSessionBlockProps = {
   onSearchToggle: () => void;
   onOpenSearchSettings: () => void;
   onKnowledgeChange: (knowledgeBaseIds: string[]) => void;
+  onReasoningEffortChange: (value: ReasoningEffort) => void;
   onImageInput: (event: ChangeEvent<HTMLInputElement>) => void;
-  onRemoveImage: () => void;
+  onRemoveImage: (attachmentId: string) => void;
   onClear: () => void;
   onSend: () => void;
   onStop: () => void;
@@ -1215,9 +1339,9 @@ function ChatSessionBlock({
   messageStyle,
   assistantAvatarUrl,
   userAvatarUrl,
+  maxImageAttachments,
   streaming,
   onCreateConversation,
-  onOpenSkillManager,
   onOpenSettings,
   onToggle,
   onDraftChange,
@@ -1229,6 +1353,7 @@ function ChatSessionBlock({
   onSearchToggle,
   onOpenSearchSettings,
   onKnowledgeChange,
+  onReasoningEffortChange,
   onImageInput,
   onRemoveImage,
   onClear,
@@ -1648,15 +1773,6 @@ function ChatSessionBlock({
           <button
             type="button"
             className="figma-session-action-mobile"
-            onClick={onOpenSkillManager}
-            aria-label="管理对话 Skill"
-            title="管理对话 Skill"
-          >
-            <Puzzle size={14} />
-          </button>
-          <button
-            type="button"
-            className="figma-session-action-mobile"
             onClick={onOpenSettings}
             aria-label="会话设置"
             title="会话设置"
@@ -1700,7 +1816,7 @@ function ChatSessionBlock({
                   ) : null}
                   <div className="figma-message-bubble">
                     {message.content ? (
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+                      <ChatMessageContent content={message.content} />
                     ) : (
                       <span className="figma-typing"><i /><i /><i /></span>
                     )}
@@ -1749,14 +1865,39 @@ function ChatSessionBlock({
                     disabled={streaming}
                   />
                 ) : null}
-                <button type="button" onClick={() => imageInputRef.current?.click()}>
+                <button
+                  type="button"
+                  onClick={() => imageInputRef.current?.click()}
+                  title={`图片输入，单次最多 ${maxImageAttachments} 张`}
+                >
                   <ImageIcon size={14} />
                   图片输入
                 </button>
-                <input ref={imageInputRef} type="file" hidden accept="image/png,image/jpeg,image/webp,image/gif" onChange={onImageInput} />
+                <input
+                  ref={imageInputRef}
+                  type="file"
+                  hidden
+                  multiple
+                  accept="image/png,image/jpeg,image/webp,image/gif"
+                  onChange={onImageInput}
+                />
+                <FigmaMenu
+                  className="figma-reasoning-menu"
+                  label="思维链长度"
+                  triggerPrefix="思维链"
+                  value={ui.reasoningEffort}
+                  options={reasoningEffortOptions}
+                  onChange={(value) => onReasoningEffortChange(cleanSettingChoice(
+                    value,
+                    reasoningEffortValues,
+                    "default"
+                  ))}
+                  ariaLabel="思维链长度"
+                  triggerIcon={<BrainCircuit size={14} aria-hidden="true" />}
+                />
                 <button type="button" className="clear" onClick={onClear}>
                   <Trash2 size={14} />
-                  清除此对话上下文
+                  清除消息
                 </button>
               </div>
 
@@ -1773,10 +1914,25 @@ function ChatSessionBlock({
                   />
                 ) : null}
                 {ui.attachments.length ? (
-                  <div className="figma-image-attachment">
-                    <img src={ui.attachments[0].dataUrl} alt={ui.attachments[0].name} />
-                    <span>{ui.attachments[0].name}</span>
-                    <button type="button" onClick={onRemoveImage} aria-label="移除图片"><X size={13} /></button>
+                  <div className="figma-image-attachments" aria-label="待发送图片">
+                    <div className="figma-image-attachments-summary">
+                      <span>已选择 {ui.attachments.length} / {maxImageAttachments}</span>
+                    </div>
+                    <div className="figma-image-attachments-list">
+                      {ui.attachments.map((attachment) => (
+                        <div key={attachment.id} className="figma-image-attachment" data-testid="chat-image-attachment">
+                          <img src={attachment.dataUrl} alt={attachment.name} />
+                          <span title={attachment.name}>{attachment.name}</span>
+                          <button
+                            type="button"
+                            onClick={() => onRemoveImage(attachment.id)}
+                            aria-label={`移除图片 ${attachment.name}`}
+                          >
+                            <X size={13} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 ) : null}
                 {(ui.skillIds.length || ui.appId) ? (

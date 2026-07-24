@@ -18,16 +18,20 @@ import {
   type Viewport
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { BookOpenText, Bot, CheckCircle2, CircleAlert, CirclePlay, FileText, Loader2, Maximize2, Send } from "lucide-react";
+import { CheckCircle2, CircleAlert, Loader2, Maximize2 } from "lucide-react";
 import type {
   AgentWorkflowEdge,
   AgentWorkflowGraph,
   AgentWorkflowNode
 } from "../../types";
+import { createClientId } from "../../utils/clientId";
 import { canConnectWorkflowNodes } from "./workflowGraph";
-
-export type WorkflowCanvasNodeState = "pending" | "running" | "completed" | "failed" | "skipped";
-export type WorkflowCanvasEdgeState = "waiting" | "active" | "completed" | "failed" | "skipped";
+import { workflowComponentForNode } from "./workflowComponents";
+import { workflowComponentIcon } from "./WorkflowComponentIcon";
+import type {
+  WorkflowCanvasEdgeState,
+  WorkflowCanvasNodeState
+} from "./workflowState";
 
 type WorkflowCanvasNodeData = {
   node: AgentWorkflowNode;
@@ -49,19 +53,11 @@ type WorkflowCanvasProps = {
 };
 
 function nodeIcon(node: AgentWorkflowNode) {
-  if (node.kind === "start") return CirclePlay;
-  if (node.kind === "reply") return Send;
-  if (node.kind === "template") return FileText;
-  if (node.kind === "knowledge") return BookOpenText;
-  return Bot;
+  return workflowComponentIcon(node.kind);
 }
 
 function nodeKindLabel(node: AgentWorkflowNode) {
-  if (node.kind === "start") return "INPUT";
-  if (node.kind === "reply") return "REPLY";
-  if (node.kind === "template") return "TEMPLATE";
-  if (node.kind === "knowledge") return "KNOWLEDGE";
-  return "AGENT";
+  return workflowComponentForNode(node).label;
 }
 
 function statusLabel(status?: WorkflowCanvasNodeState) {
@@ -75,22 +71,43 @@ function statusLabel(status?: WorkflowCanvasNodeState) {
 function WorkflowCanvasNodeCard({ data, selected }: NodeProps<WorkflowCanvasNode>) {
   const Icon = nodeIcon(data.node);
   const status = data.status || "pending";
-  const canReceive = data.node.kind !== "start";
-  const canSend = data.node.kind !== "reply";
+  const component = workflowComponentForNode(data.node);
+  const inputPorts = component.ports.inputs;
+  const outputPorts = component.ports.outputs;
   return (
     <div
       className={`workflow-canvas-node ${data.node.kind} ${status} ${selected ? "selected" : ""}`}
       data-testid={`workflow-node-${data.node.id}`}
       aria-label={`${data.node.name}，${statusLabel(status)}`}
     >
-      {canReceive ? <Handle type="target" position={Position.Left} id="input" aria-label={`连接到 ${data.node.name}`} /> : null}
+      {inputPorts.map((port, index) => (
+        <Handle
+          key={port.id}
+          type="target"
+          position={Position.Left}
+          id={port.id}
+          style={{ top: `${((index + 1) / (inputPorts.length + 1)) * 100}%` }}
+          aria-label={`连接到 ${data.node.name} 的${port.label}端口`}
+          title={port.label}
+        />
+      ))}
       <div className="workflow-canvas-node-icon"><Icon size={16} /></div>
       <div>
-        <small>{nodeKindLabel(data.node)}</small>
+        <small>{nodeKindLabel(data.node)} · V{component.version}</small>
         <strong>{data.node.name}</strong>
         <span>{status === "running" ? <Loader2 className="spin" size={12} /> : status === "completed" ? <CheckCircle2 size={12} /> : status === "failed" ? <CircleAlert size={12} /> : null}{statusLabel(status)}</span>
       </div>
-      {canSend ? <Handle type="source" position={Position.Right} id="output" aria-label={`从 ${data.node.name} 继续连接`} /> : null}
+      {outputPorts.map((port, index) => (
+        <Handle
+          key={port.id}
+          type="source"
+          position={Position.Right}
+          id={port.id}
+          style={{ top: `${((index + 1) / (outputPorts.length + 1)) * 100}%` }}
+          aria-label={`从 ${data.node.name} 的${port.label}端口继续连接`}
+          title={port.label}
+        />
+      ))}
     </div>
   );
 }
@@ -107,6 +124,8 @@ function minimapNodeColor(node: WorkflowCanvasNode) {
   if (node.data.node.kind === "knowledge") return "var(--xhs-warning)";
   if (node.data.node.kind === "template") return "var(--xhs-blue)";
   if (node.data.node.kind === "agent") return "var(--xhs-red)";
+  if (node.data.node.kind === "unsupported") return "var(--xhs-danger)";
+  if (node.data.node.kind === "conditional" || node.data.node.kind === "loop") return "var(--xhs-blue)";
   return "var(--xhs-blue)";
 }
 
@@ -119,8 +138,13 @@ function isConnectionAllowed(
     targetHandle?: string | null;
   }
 ) {
-  if (connection.sourceHandle !== "output" || connection.targetHandle !== "input") return false;
-  return canConnectWorkflowNodes(graph, connection.source, connection.target);
+  return canConnectWorkflowNodes(
+    graph,
+    connection.source,
+    connection.target,
+    connection.sourceHandle,
+    connection.targetHandle
+  );
 }
 
 function WorkflowCanvasInner({
@@ -188,11 +212,11 @@ function WorkflowCanvasInner({
   const connect = useCallback((connection: Connection) => {
     if (!isConnectionAllowed(graph, connection) || !connection.source || !connection.target) return;
     const edge: AgentWorkflowEdge = {
-      id: `edge-${crypto.randomUUID()}`,
+      id: createClientId("edge"),
       source: connection.source,
       target: connection.target,
-      sourceHandle: "output",
-      targetHandle: "input"
+      sourceHandle: connection.sourceHandle || "output",
+      targetHandle: connection.targetHandle || "input"
     };
     onChange({ ...graph, edges: [...graph.edges, edge] });
     onSelectEdge(edge.id);

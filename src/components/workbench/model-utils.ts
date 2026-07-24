@@ -7,6 +7,7 @@ export const vendorLabels: Record<string, string> = {
   kimi: "Kimi",
   deepseek: "DeepSeek",
   qwen: "通义千问",
+  botcf: "BotCF",
   "openai-compatible": "Compatible"
 };
 

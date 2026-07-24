@@ -23,7 +23,6 @@ test("Chat renders the exact Figma stacked-session structure and copy", async ({
   } else {
     await expect(heading.locator(".figma-heading-actions button")).toHaveText([
       "\u65b0\u5bf9\u8bdd",
-      "Skill",
       "\u4f1a\u8bdd\u8bbe\u7f6e"
     ]);
   }
@@ -41,9 +40,11 @@ test("Chat renders the exact Figma stacked-session structure and copy", async ({
   expect(toolLabels.map((label) => label.replace(/\s+/g, " ").trim())).toEqual([
     "\u7f51\u7edc\u641c\u7d22",
     "\u56fe\u7247\u8f93\u5165",
-    "\u6e05\u9664\u6b64\u5bf9\u8bdd\u4e0a\u4e0b\u6587"
+    "\u601d\u7ef4\u94fe \u00b7 \u9ed8\u8ba4",
+    "\u6e05\u9664\u6d88\u606f"
   ]);
   await expect(activeSession.getByRole("button", { name: "配置联网搜索服务", exact: true })).toBeVisible();
+  await expect(activeSession.getByRole("button", { name: "思维链长度", exact: true })).toContainText("思维链 · 默认");
 
   const composer = activeSession.locator(".figma-composer");
   await expect(composer).toBeVisible();
@@ -55,9 +56,8 @@ test("Chat renders the exact Figma stacked-session structure and copy", async ({
   if (isMobileProject(testInfo.project.name)) {
     const mobileActions = activeSession.locator(".figma-session-mobile-actions");
     await expect(mobileActions).toBeVisible();
-    await expect(mobileActions.locator(".figma-session-action-mobile")).toHaveCount(3);
+    await expect(mobileActions.locator(".figma-session-action-mobile")).toHaveCount(2);
     await expect(mobileActions.getByRole("button", { name: "新对话", exact: true })).toBeVisible();
-    await expect(mobileActions.getByRole("button", { name: "管理对话 Skill", exact: true })).toBeVisible();
     await expect(mobileActions.getByRole("button", { name: "会话设置", exact: true })).toBeVisible();
   } else {
     await expect(activeSession.locator(".figma-session-mobile-actions")).toBeHidden();
@@ -67,10 +67,13 @@ test("Chat renders the exact Figma stacked-session structure and copy", async ({
   );
 });
 
-test("Chat keeps the authored 896px message and composer tracks", async ({ page }, testInfo) => {
+test("Chat widens messages while keeping the authored 896px composer track", async ({ page }, testInfo) => {
   test.skip(isMobileProject(testInfo.project.name), "Desktop Figma track contract");
 
   const session = page.locator(".figma-chat-session").first();
+  await session.getByLabel("消息内容", { exact: true }).fill("验证消息轨道左右布局");
+  await session.getByRole("button", { name: "发送", exact: true }).click();
+  await expect(session.getByText("Deterministic assistant response.", { exact: true })).toBeVisible();
   const metrics = await session.evaluate((element) => {
     const rect = (selector: string) => {
       const target = element.querySelector<HTMLElement>(selector);
@@ -78,13 +81,23 @@ test("Chat keeps the authored 896px message and composer tracks", async ({ page 
       const box = target.getBoundingClientRect();
       return { x: box.x, y: box.y, width: box.width, height: box.height };
     };
+    const messageTrack = element.querySelector<HTMLElement>(".figma-message-track");
     return {
       viewportHeight: window.innerHeight,
       history: rect(".figma-message-history"),
       messageTrack: rect(".figma-message-track"),
       controlsTrack: rect(".figma-session-controls-track"),
       composer: rect(".figma-composer"),
-      send: rect(".figma-send-button")
+      send: rect(".figma-send-button"),
+      assistantAvatar: rect(".figma-message.assistant .figma-message-avatar"),
+      assistantBubble: rect(".figma-message.assistant .figma-message-bubble"),
+      userAvatar: rect(".figma-message.user .figma-user-avatar"),
+      userBubble: rect(".figma-message.user .figma-message-bubble"),
+      messageTrackClientWidth: messageTrack?.clientWidth || 0,
+      messageTrackScrollWidth: messageTrack?.scrollWidth || 0,
+      messageTrackPaddingLeft: messageTrack ? Number.parseFloat(getComputedStyle(messageTrack).paddingLeft) : 0,
+      documentScrollWidth: document.documentElement.scrollWidth,
+      viewportWidth: window.innerWidth
     };
   });
 
@@ -93,10 +106,24 @@ test("Chat keeps the authored 896px message and composer tracks", async ({ page 
   expect(metrics.controlsTrack).not.toBeNull();
   expect(metrics.composer).not.toBeNull();
   expect(metrics.send).not.toBeNull();
+  expect(metrics.assistantAvatar).not.toBeNull();
+  expect(metrics.assistantBubble).not.toBeNull();
+  expect(metrics.userAvatar).not.toBeNull();
+  expect(metrics.userBubble).not.toBeNull();
   expect(Math.abs(metrics.history!.height - (metrics.viewportHeight - 340))).toBeLessThanOrEqual(1);
-  expect(Math.abs(metrics.messageTrack!.width - 896)).toBeLessThanOrEqual(1);
+  expect(Math.abs(metrics.messageTrack!.width - Math.min(metrics.history!.width, 1024))).toBeLessThanOrEqual(1);
   expect(Math.abs(metrics.controlsTrack!.width - 896)).toBeLessThanOrEqual(1);
-  expect(Math.abs(metrics.messageTrack!.x - metrics.controlsTrack!.x)).toBeLessThanOrEqual(1);
+  expect(metrics.messageTrack!.width).toBeGreaterThan(metrics.controlsTrack!.width);
+  expect(Math.abs((metrics.messageTrack!.x + metrics.messageTrack!.width / 2) - (metrics.history!.x + metrics.history!.width / 2))).toBeLessThanOrEqual(1);
+  expect(Math.abs(metrics.composer!.x - metrics.controlsTrack!.x)).toBeLessThanOrEqual(1);
+  expect(Math.abs(metrics.composer!.width - metrics.controlsTrack!.width)).toBeLessThanOrEqual(1);
+  expect(Math.abs(metrics.messageTrackPaddingLeft - 24)).toBeLessThanOrEqual(1);
+  expect(metrics.messageTrackScrollWidth).toBeLessThanOrEqual(metrics.messageTrackClientWidth + 1);
+  expect(Math.abs(metrics.assistantAvatar!.x - metrics.messageTrack!.x - 24)).toBeLessThanOrEqual(1);
+  expect(Math.abs(metrics.assistantBubble!.x - metrics.assistantAvatar!.x - metrics.assistantAvatar!.width - 12)).toBeLessThanOrEqual(1);
+  expect(Math.abs(metrics.userAvatar!.x - metrics.userBubble!.x - metrics.userBubble!.width - 12)).toBeLessThanOrEqual(1);
+  expect(Math.abs(metrics.messageTrack!.x + metrics.messageTrack!.width - metrics.userAvatar!.x - metrics.userAvatar!.width - 24)).toBeLessThanOrEqual(1);
+  expect(metrics.documentScrollWidth).toBeLessThanOrEqual(metrics.viewportWidth);
   expect(metrics.composer!.height).toBeGreaterThanOrEqual(88);
   expect(metrics.composer!.height).toBeLessThanOrEqual(91);
   expect(Math.abs(metrics.send!.width - 32)).toBeLessThanOrEqual(1);

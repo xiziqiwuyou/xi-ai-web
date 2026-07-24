@@ -317,6 +317,113 @@
   opacity: 0.46;
 }
 
+.figma-image-reference-control {
+  grid-template-columns: minmax(0, 1fr) !important;
+  align-items: start !important;
+}
+
+.figma-image-reference-control:has(.figma-image-reference-list) {
+  grid-template-columns: minmax(0, 1fr) auto !important;
+}
+
+.figma-image-reference-list {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.figma-image-reference-list figure {
+  position: relative;
+  width: 52px;
+  height: 52px;
+  margin: 0;
+  overflow: hidden;
+  border-radius: 9px;
+}
+
+.figma-image-reference-list img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+}
+
+.figma-image-reference-list button.icon {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 22px;
+  min-width: 22px;
+  min-height: 22px;
+  padding: 0;
+  border-color: color-mix(in srgb, var(--xhs-line) 68%, #fff);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--xhs-surface) 88%, transparent);
+  color: var(--xhs-ink);
+}
+
+.figma-image-url-control {
+  grid-template-columns: minmax(0, 1fr) 32px !important;
+  min-height: 42px !important;
+  padding: 4px 5px 4px 10px !important;
+}
+
+.figma-image-url-control input {
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--xhs-ink);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  outline: 0;
+}
+
+.figma-image-url-control input::placeholder {
+  color: var(--xhs-muted);
+}
+
+.figma-image-url-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.figma-image-url-list > span {
+  display: inline-flex;
+  min-height: 26px;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px 2px 8px;
+  border: 1px solid var(--xhs-line);
+  border-radius: 9px;
+  background: var(--xhs-soft-3);
+  color: var(--xhs-muted);
+}
+
+.figma-image-url-list em {
+  overflow: hidden;
+  max-width: 118px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.figma-image-url-list button.icon {
+  width: 20px;
+  min-width: 20px;
+  min-height: 20px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
 .figma-image-composer-footer {
   display: flex;
   align-items: center;
@@ -2869,6 +2976,55 @@
   gap: 8px;
 }
 
+.workflow-catalog-tabs {
+  flex-wrap: wrap;
+}
+
+.workflow-catalog-tabs > button {
+  min-height: 36px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--xhs-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.workflow-catalog-tabs > button[aria-selected="true"] {
+  background: color-mix(in srgb, var(--xhs-red) 10%, var(--xhs-surface));
+  color: var(--xhs-red);
+}
+
+.workflow-catalog-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.workflow-import-input {
+  display: none;
+}
+
+.workflow-secondary-action {
+  display: inline-flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 12px;
+  border: 1px solid var(--xhs-line);
+  border-radius: 11px;
+  background: var(--xhs-surface);
+  color: var(--xhs-ink);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.workflow-secondary-action:hover {
+  border-color: color-mix(in srgb, var(--xhs-red) 32%, var(--xhs-line));
+  color: var(--xhs-red);
+}
+
 .workflow-catalog-toolbar strong {
   color: var(--xhs-ink);
   font-size: 13px;
@@ -3069,13 +3225,18 @@
   min-width: 0;
   padding: 13px;
   background: var(--xhs-surface);
+  scrollbar-gutter: stable;
 }
 
 .workflow-node-library {
+  max-height: 510px;
+  overflow-y: auto;
   border-right: 1px solid var(--xhs-line);
 }
 
 .workflow-node-inspector {
+  max-height: 510px;
+  overflow-y: auto;
   border-left: 1px solid var(--xhs-line);
 }
 
@@ -3136,8 +3297,13 @@
 
 .workflow-node-library small {
   grid-column: 2;
+  display: -webkit-box;
+  overflow: hidden;
   color: var(--xhs-muted);
   font-size: 10px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .workflow-canvas-frame {
@@ -3257,6 +3423,37 @@
   color: var(--xhs-warning);
 }
 
+.workflow-canvas-node.model .workflow-canvas-node-icon,
+.workflow-canvas-node.webSearch .workflow-canvas-node-icon {
+  background: color-mix(in srgb, var(--xhs-red) 10%, var(--xhs-surface));
+  color: var(--xhs-red);
+}
+
+.workflow-canvas-node.conditional .workflow-canvas-node-icon,
+.workflow-canvas-node.loop .workflow-canvas-node-icon,
+.workflow-canvas-node.approval .workflow-canvas-node-icon {
+  background: color-mix(in srgb, var(--xhs-blue) 11%, var(--xhs-surface));
+  color: var(--xhs-blue);
+}
+
+.workflow-canvas-node.structured .workflow-canvas-node-icon,
+.workflow-canvas-node.textSplit .workflow-canvas-node-icon,
+.workflow-canvas-node.merge .workflow-canvas-node-icon,
+.workflow-canvas-node.transform .workflow-canvas-node-icon {
+  background: color-mix(in srgb, var(--xhs-green) 11%, var(--xhs-surface));
+  color: var(--xhs-green);
+}
+
+.workflow-canvas-node.unsupported {
+  border-color: color-mix(in srgb, var(--xhs-danger) 58%, var(--xhs-line));
+  background: color-mix(in srgb, var(--xhs-danger) 4%, var(--xhs-surface));
+}
+
+.workflow-canvas-node.unsupported .workflow-canvas-node-icon {
+  background: color-mix(in srgb, var(--xhs-danger) 11%, var(--xhs-surface));
+  color: var(--xhs-danger);
+}
+
 .workflow-canvas-node > div:last-of-type {
   min-width: 0;
 }
@@ -3336,6 +3533,33 @@
   gap: 4px;
   padding-bottom: 10px;
   border-bottom: 1px solid var(--xhs-line);
+}
+
+.workflow-config-toggle {
+  display: flex !important;
+  min-height: 40px;
+  align-items: center;
+  gap: 9px;
+}
+
+.workflow-config-toggle > input {
+  width: 16px;
+  height: 16px;
+  min-height: 0;
+  margin: 0;
+}
+
+.workflow-unsupported-note {
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--xhs-danger) 34%, var(--xhs-line));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--xhs-danger) 6%, var(--xhs-surface));
+  color: var(--xhs-danger) !important;
+  line-height: 1.55;
+}
+
+.ui-confirmation-dialog .ui-dialog-header p {
+  white-space: pre-line;
 }
 
 .workflow-node-inspector > header span {
@@ -3830,6 +4054,17 @@
     justify-content: center;
   }
 
+  .workflow-catalog-tabs,
+  .workflow-catalog-actions {
+    width: 100%;
+  }
+
+  .workflow-catalog-tabs > button,
+  .workflow-catalog-actions > button {
+    min-height: 44px;
+    flex: 1 1 140px;
+  }
+
   .workflow-catalog-grid {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -3846,6 +4081,8 @@
 
   .workflow-node-library {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    max-height: none;
+    overflow: visible;
     border-right: 0;
     border-bottom: 1px solid var(--xhs-line);
   }
@@ -3855,6 +4092,8 @@
   }
 
   .workflow-node-inspector {
+    max-height: none;
+    overflow: visible;
     border-top: 1px solid var(--xhs-line);
     border-left: 0;
   }

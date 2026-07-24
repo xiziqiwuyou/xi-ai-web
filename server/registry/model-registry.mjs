@@ -7,6 +7,7 @@ export const vendorKinds = [
   "kimi",
   "deepseek",
   "qwen",
+  "botcf",
   "openai-compatible"
 ];
 
@@ -37,6 +38,7 @@ const vendorLabels = {
   kimi: "Kimi",
   deepseek: "DeepSeek",
   qwen: "Qwen",
+  botcf: "BotCF",
   "openai-compatible": "OpenAI Compatible"
 };
 
@@ -118,6 +120,96 @@ const defaultCatalog = [
     vendor: "openai",
     model: "gpt-image-1-mini",
     label: "GPT Image 1 Mini",
+    capabilities: ["image", "imageEdit"],
+    defaultFor: [],
+    enabled: true
+  },
+  {
+    id: "botcf-gpt-image-2",
+    vendor: "botcf",
+    model: "gpt-image-2",
+    label: "BotCF Image2",
+    capabilities: ["image", "imageEdit"],
+    defaultFor: ["image"],
+    enabled: true
+  },
+  {
+    id: "botcf-gpt-image-2-2k",
+    vendor: "botcf",
+    model: "gpt-image-2-2k",
+    label: "BotCF Image2 2K",
+    capabilities: ["image", "imageEdit"],
+    defaultFor: [],
+    enabled: true
+  },
+  {
+    id: "botcf-gpt-image-2-4k",
+    vendor: "botcf",
+    model: "gpt-image-2-4k",
+    label: "BotCF Image2 4K",
+    capabilities: ["image", "imageEdit"],
+    defaultFor: [],
+    enabled: true
+  },
+  {
+    id: "botcf-grok-imagine-image",
+    vendor: "botcf",
+    model: "grok-imagine-image",
+    label: "BotCF Grok Imagine",
+    capabilities: ["image", "imageEdit"],
+    defaultFor: [],
+    enabled: true
+  },
+  {
+    id: "botcf-grok-imagine-image-quality",
+    vendor: "botcf",
+    model: "grok-imagine-image-quality",
+    label: "BotCF Grok Imagine Quality",
+    capabilities: ["image", "imageEdit"],
+    defaultFor: [],
+    enabled: true
+  },
+  {
+    id: "botcf-gemini-3-1-flash-image",
+    vendor: "botcf",
+    model: "gemini-3.1-flash-image",
+    label: "BotCF Gemini 3.1 Flash Image",
+    capabilities: ["image", "imageEdit"],
+    defaultFor: [],
+    enabled: true
+  },
+  {
+    id: "botcf-gemini-3-pro-image",
+    vendor: "botcf",
+    model: "gemini-3-pro-image",
+    label: "BotCF Gemini 3 Pro Image",
+    capabilities: ["image", "imageEdit"],
+    defaultFor: [],
+    enabled: true
+  },
+  {
+    id: "botcf-nana-banana-2-sync",
+    vendor: "botcf",
+    model: "nana-banana-2_sync",
+    label: "BotCF Nana Banana 2",
+    capabilities: ["image", "imageEdit"],
+    defaultFor: [],
+    enabled: true
+  },
+  {
+    id: "botcf-nana-banana-pro-sync",
+    vendor: "botcf",
+    model: "nana-banana-pro_sync",
+    label: "BotCF Nana Banana Pro",
+    capabilities: ["image", "imageEdit"],
+    defaultFor: [],
+    enabled: true
+  },
+  {
+    id: "botcf-nana-banana-2-4k-sync",
+    vendor: "botcf",
+    model: "nana-banana-2-4k_sync",
+    label: "BotCF Nana Banana 2 4K",
     capabilities: ["image", "imageEdit"],
     defaultFor: [],
     enabled: true
@@ -610,7 +702,7 @@ function addLegacyEntry(entriesByKey, provider, capability, model, defaultFor = 
   const capabilities =
     capability === "chat"
       ? chatCapabilities(vendor, provider.capabilities || [])
-      : capability === "image" && ["openai", "gemini"].includes(vendor)
+      : capability === "image" && ["openai", "gemini", "botcf"].includes(vendor)
         ? ["image", "imageEdit"]
       : capability === "tts" || capability === "stt"
         ? [capability, "audio"]

@@ -58,6 +58,7 @@ const vendorCapabilityHints: Record<ModelCatalogEntry["vendor"], ModelCapability
   kimi: ["chat", "vision", "toolCalling", "streaming"],
   deepseek: ["chat", "toolCalling", "streaming"],
   qwen: ["chat", "vision", "audio", "embedding", "toolCalling", "webSearch", "codeExecution", "streaming"],
+  botcf: ["image", "imageEdit"],
   "openai-compatible": [
     "chat",
     "vision",

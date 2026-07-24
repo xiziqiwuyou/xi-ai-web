@@ -8,19 +8,30 @@ const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const archivePath = path.join(rootDir, "src/features/chat/conversationArchive.ts");
 const maskPath = path.join(rootDir, "src/features/chat/maskWorkflow.ts");
 const archiveSource = fs.readFileSync(archivePath, "utf8");
-function importTsSource(source) {
-  const transpiled = ts.transpileModule(source, {
+function moduleUrlFromSource(source, replacements = {}) {
+  let nextSource = source;
+  for (const [specifier, replacement] of Object.entries(replacements)) {
+    nextSource = nextSource.replaceAll(`from "${specifier}"`, `from "${replacement}"`);
+  }
+  const transpiled = ts.transpileModule(nextSource, {
   compilerOptions: {
     module: ts.ModuleKind.ES2022,
     target: ts.ScriptTarget.ES2022
   }
 }).outputText;
-  return import(`data:text/javascript;base64,${Buffer.from(transpiled).toString("base64")}`);
+  return `data:text/javascript;base64,${Buffer.from(transpiled).toString("base64")}`;
+}
+function importTsSource(source, replacements = {}) {
+  return import(moduleUrlFromSource(source, replacements));
 }
 const archive = await importTsSource(archiveSource);
 const masks = await importTsSource(fs.readFileSync(maskPath, "utf8"));
+const workflowComponentsUrl = moduleUrlFromSource(
+  fs.readFileSync(path.join(rootDir, "src/features/automation/workflowComponents.ts"), "utf8")
+);
 const workflowGraph = await importTsSource(
-  fs.readFileSync(path.join(rootDir, "src/features/automation/workflowGraph.ts"), "utf8")
+  fs.readFileSync(path.join(rootDir, "src/features/automation/workflowGraph.ts"), "utf8"),
+  { "./workflowComponents": workflowComponentsUrl }
 );
 const chatCommands = await importTsSource(
   fs.readFileSync(path.join(rootDir, "src/features/chat/chatCommands.ts"), "utf8")
@@ -269,7 +280,7 @@ for (const exactCopy of [
   "AI \u5bf9\u8bdd\u5de5\u4f5c\u53f0",
   "\u7f51\u7edc\u641c\u7d22",
   "\u56fe\u7247\u8f93\u5165",
-  "\u6e05\u9664\u6b64\u5bf9\u8bdd\u4e0a\u4e0b\u6587",
+  "\u6e05\u9664\u6d88\u606f",
   "Shift + Enter"
 ]) {
   assert(chatModule.includes(exactCopy), `Chat must include exact Figma copy: ${exactCopy}`);
@@ -278,11 +289,18 @@ assert(chatModule.includes("commitConversations((current) => [conversation, ...c
 assert(chatModule.includes("collapsed: true"), "new Chat sessions must fold older sessions");
 assert(chatModule.includes("[conversation.id]: defaultSessionUi(false)"), "new Chat sessions must start expanded");
 assert(chatModule.includes("ChatSkillManagerDialog"), "Chat must own the local Skill manager");
+assert(chatModule.includes("管理本地 Skill"), "Chat settings must retain local Skill management");
+assert(!chatModule.includes('figma-heading-action-label">Skill'), "Chat heading must not promote Skill management");
 assert(chatModule.includes("skillInstructions: selectedSkills.map"), "Chat must send resolved Skill instructions with its request");
-assert(chatModule.includes('aria-label="管理对话 Skill"'), "Chat must expose Skill management from the workspace header");
 assert(chatModule.includes("ChatCommandPalette"), "Chat must expose the inline command palette");
 assert(chatModule.includes("activeChatCommand"), "Chat must resolve $ and / command tokens locally");
 assert(chatModule.includes("selectedApp.prompt"), "Chat must compose the selected application prompt only for the outbound request");
+assert(chatModule.includes("reasoningEffort: ui.reasoningEffort"), "Chat must send the shared reasoning effort value");
+assert(chatModule.includes('className="figma-reasoning-menu"'), "Chat must expose the reasoning menu in the composer toolbar");
+assert(chatModule.includes("ConfirmationDialog"), "Chat clear messages must use shared destructive confirmation");
+assert(chatModule.includes("maxImageAttachments"), "Chat settings must own the session image limit");
+assert(chatModule.includes("multiple"), "Chat image input must accept multiple files");
+assert(chatModule.includes("figma-image-attachments"), "Chat must render all pending image attachments");
 assert(chatModule.includes("consumeAssistantLaunch"), "Chat must consume the versioned assistant launch contract");
 assert(chatModule.includes("conversation.assistantId && item.enabled !== false"), "Chat requests must resolve the exact enabled conversation assistant");
 assert(chatModule.includes("figma-session-assistant"), "Chat sessions must expose their bound assistant identity");
@@ -320,6 +338,9 @@ assert(server.includes("conversations: []"), "public bootstrap must keep convers
 assert(server.includes("410"), "legacy public conversation routes must remain unavailable");
 assert(!server.includes("/api/conversations/share"), "must not add public share route");
 assert(server.includes("displayContent"), "chat stream must separate model content from displayed user content");
+assert(server.includes("reasoningEffortAllowlist"), "server must normalize reasoning effort through an allowlist");
+assert(server.includes("reasoningEffort"), "server must forward reasoning effort to provider adapters");
+assert(server.includes("value.slice(0, 6)"), "server must retain the six-image hard limit");
 assert(indexHtml.includes("/manifest.webmanifest"), "PWA manifest must be linked");
 assert(mainTsx.includes("serviceWorker.register"), "PWA service worker must be registered in production");
 assert(fs.existsSync(path.join(rootDir, "public/sw.js")), "service worker file must exist");

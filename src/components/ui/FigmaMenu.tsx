@@ -25,6 +25,7 @@ type FigmaMenuProps = {
   disabled?: boolean;
   className?: string;
   triggerIcon?: ReactNode;
+  triggerPrefix?: string;
 };
 
 function isInteractiveTarget(target: EventTarget | null) {
@@ -41,7 +42,8 @@ function FigmaMenu({
   ariaLabel,
   disabled = false,
   className = "",
-  triggerIcon
+  triggerIcon,
+  triggerPrefix
 }: FigmaMenuProps) {
   const [open, setOpen] = useState(false);
   const [placement, setPlacement] = useState<"down" | "up">("down");
@@ -189,7 +191,7 @@ function FigmaMenu({
       >
         <span className="figma-menu-trigger-value">
           {triggerIcon}
-          <strong>{selectedLabel}</strong>
+          <strong>{triggerPrefix ? `${triggerPrefix} · ${selectedLabel}` : selectedLabel}</strong>
         </span>
         <ChevronRight className="figma-menu-chevron" size={14} aria-hidden="true" />
       </button>

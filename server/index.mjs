@@ -47,6 +47,13 @@ import {
   withCloudKnowledgeCitations,
   withCloudKnowledgeResultRaw
 } from "./knowledge-cloud/retrieval/request-integration.mjs";
+import {
+  normalizeLangflowWorkflow,
+  normalizeLangflowWorkflows,
+  publicLangflowWorkflows
+} from "./langflow/catalog.mjs";
+import { loadLangflowConfig, publicLangflowStatus } from "./langflow/config.mjs";
+import { createLangflowRouter } from "./langflow/routes.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -67,6 +74,7 @@ const adminSessionSecret =
   "dev-only-admin-session-secret";
 const knowledgeRuntime = await initializeKnowledgeRuntime();
 const cloudKnowledgeRequests = createCloudKnowledgeRequestIntegration(knowledgeRuntime);
+const langflowConfig = loadLangflowConfig();
 
 const app = express();
 const httpServer = http.createServer(app);
@@ -87,7 +95,6 @@ app.use(
   "/api/admin/knowledge",
   createKnowledgeAdminRouter(knowledgeRuntime, { authorize: requireKnowledgeAdmin })
 );
-app.use(express.json({ limit: "32mb" }));
 
 const now = () => new Date().toISOString();
 
@@ -348,13 +355,14 @@ function defaultPromptPresets() {
 
 function createDefaultData() {
   return {
-    version: 8,
+    version: 9,
     settings: defaultSettings(),
     menuItems: defaultMenuItems(),
     modelCatalog: defaultModelCatalog(),
     assistants: defaultAssistants(),
     appPresets: defaultAppPresets(),
     promptPresets: defaultPromptPresets(),
+    langflowWorkflows: [],
     toolSettings: normalizeToolSettings(),
     conversations: []
   };
@@ -548,6 +556,7 @@ function normalizeData(raw) {
     assistants,
     appPresets: normalizeAppPresets(data.appPresets, fallback.appPresets),
     promptPresets: normalizePromptPresets(data.promptPresets, fallback.promptPresets),
+    langflowWorkflows: normalizeLangflowWorkflows(data.langflowWorkflows, fallback.langflowWorkflows),
     toolSettings: normalizeToolsData(data.toolSettings || fallback.toolSettings),
     conversations: Array.isArray(data.conversations) ? data.conversations : []
   };
@@ -736,6 +745,16 @@ function buildAdminOpsPayload() {
       label: "可见菜单有模型能力覆盖",
       ok: coverage.every((item) => item.covered),
       detail: coverage.filter((item) => !item.covered).map((item) => item.label).join("、") || "模型能力覆盖正常。"
+    },
+    {
+      id: "langflow-runtime",
+      label: "Langflow 工作流服务",
+      ok: !langflowConfig.enabled || langflowConfig.available,
+      detail: langflowConfig.available
+        ? `已发布 ${db.langflowWorkflows.filter((workflow) => workflow.enabled).length} 个工作流。`
+        : langflowConfig.enabled
+          ? "已启用但缺少 LANGFLOW_BASE_URL 或 LANGFLOW_API_KEY。"
+          : "当前未启用，原工作流菜单不会调用 Langflow。"
     }
   ];
 
@@ -756,6 +775,7 @@ function buildAdminOpsPayload() {
       assistants: db.assistants.length,
       apps: db.appPresets.length,
       prompts: db.promptPresets.length,
+      workflows: db.langflowWorkflows.length,
       tools: normalizeToolSettings(db.toolSettings).filter((tool) => tool.enabled).length,
       backups: backups.length,
       auditRecords: readAuditLog({ limit: 1000 }).length
@@ -790,6 +810,23 @@ function loadData() {
 }
 
 let db = loadData();
+
+app.use(
+  "/api/workflows",
+  createLangflowRouter({
+    config: langflowConfig,
+    getPublishedWorkflows: () => db.langflowWorkflows,
+    resolveRuntime: (body) => {
+      assertModuleAllowed("workflows");
+      const runtime = resolveRuntimeProvider(body, "chat");
+      return {
+        connection: runtime.connection,
+        entry: runtime.entry
+      };
+    }
+  })
+);
+app.use(express.json({ limit: "32mb" }));
 
 function httpError(status, message) {
   const error = new Error(message);
@@ -1239,6 +1276,18 @@ function extractAssets(json, type, fallbackMimeType = "") {
     }
   }
 
+  const choices = Array.isArray(json?.choices) ? json.choices : [];
+  for (const choice of choices) {
+    const content = choice?.message?.content;
+    const parts = Array.isArray(content) ? content : [];
+    for (const part of parts) {
+      const imageUrl = typeof part?.image_url === "string"
+        ? part.image_url
+        : part?.image_url?.url || part?.url;
+      if (typeof imageUrl === "string" && imageUrl) assets.push({ type: "image", url: imageUrl });
+    }
+  }
+
   if (json?.url) assets.push({ type, url: json.url });
   if (json?.dataUrl) assets.push({ type, url: json.dataUrl });
   return assets;
@@ -1315,6 +1364,42 @@ function imageInputFrom(value, label = "图片", maxUploadMb = 8) {
     mimeType: match[1].toLowerCase(),
     name: compact(source.name || `${label}.png`, 160)
   };
+}
+
+function imageInputsFrom(value, label = "图片", maxItems = 1) {
+  if (!Array.isArray(value)) return [];
+  if (value.length > maxItems) {
+    throw httpError(400, `${label}最多支持 ${maxItems} 张`);
+  }
+  return value.map((item, index) => imageInputFrom(item, `${label}${index + 1}`));
+}
+
+function referenceImageUrlsFrom(value, maxItems = 4) {
+  if (!Array.isArray(value)) return [];
+  if (value.length > maxItems) {
+    throw httpError(400, `参考图链接最多支持 ${maxItems} 条`);
+  }
+  const seen = new Set();
+  return value
+    .map((item) => String(item || "").trim())
+    .filter(Boolean)
+    .map((item) => {
+      let parsed;
+      try {
+        parsed = new URL(item);
+      } catch {
+        throw httpError(400, "参考图链接必须是有效的 HTTPS 地址");
+      }
+      if (parsed.protocol !== "https:" || parsed.username || parsed.password) {
+        throw httpError(400, "参考图链接必须是可公开访问的 HTTPS 地址");
+      }
+      return parsed.toString();
+    })
+    .filter((item) => {
+      if (seen.has(item)) return false;
+      seen.add(item);
+      return true;
+    });
 }
 
 function extractConnection(body) {
@@ -1424,6 +1509,13 @@ function requestKnowledgeChunks(value) {
     .filter(Boolean);
 }
 
+const reasoningEffortAllowlist = new Set(["default", "off", "low", "medium", "high", "xhigh"]);
+
+function sanitizeReasoningEffort(value) {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return reasoningEffortAllowlist.has(normalized) ? normalized : "default";
+}
+
 function sanitizeChatAttachments(value, entry) {
   if (!Array.isArray(value)) return [];
   const attachments = value.slice(0, 6).map((attachment, index) => {
@@ -1486,6 +1578,7 @@ async function requestChatCompletion({
   messages,
   temperature,
   topP,
+  reasoningEffort,
   maxTokens,
   skillInstructions,
   signal,
@@ -1501,6 +1594,7 @@ async function requestChatCompletion({
     messages,
     temperature,
     topP,
+    reasoningEffort,
     maxTokens,
     signal,
     tools: enabledTools,
@@ -1553,6 +1647,7 @@ async function streamProviderReply({
   attachments,
   temperature,
   topP,
+  reasoningEffort,
   maxTokens,
   skillInstructions,
   cloudKnowledge,
@@ -1578,6 +1673,7 @@ async function streamProviderReply({
       ),
       temperature,
       topP,
+      reasoningEffort,
       maxTokens,
       signal,
       tools,
@@ -1599,6 +1695,7 @@ async function streamProviderReply({
     ),
     temperature,
     topP,
+    reasoningEffort,
     maxTokens,
     signal,
     onToken
@@ -1680,7 +1777,8 @@ app.get("/api/health", (req, res) => {
     ok: true,
     version: "0.3.0",
     adminConfigured: Boolean(adminPassword),
-    knowledge: publicKnowledgeRuntimeStatus(knowledgeRuntime)
+    knowledge: publicKnowledgeRuntimeStatus(knowledgeRuntime),
+    langflow: publicLangflowStatus(langflowConfig)
   });
 });
 
@@ -1692,6 +1790,8 @@ app.get("/api/public/bootstrap", (req, res) => {
     assistants: db.assistants.filter((assistant) => assistant.enabled !== false),
     appPresets: db.appPresets.filter((preset) => preset.enabled),
     promptPresets: db.promptPresets.filter((preset) => preset.enabled),
+    langflow: publicLangflowStatus(langflowConfig),
+    langflowWorkflows: publicLangflowWorkflows(db.langflowWorkflows),
     conversations: [],
     toolSettings: publicToolSettings()
   });
@@ -1705,6 +1805,8 @@ app.get("/api/bootstrap", (req, res) => {
     assistants: db.assistants.filter((assistant) => assistant.enabled !== false),
     appPresets: db.appPresets.filter((preset) => preset.enabled),
     promptPresets: db.promptPresets.filter((preset) => preset.enabled),
+    langflow: publicLangflowStatus(langflowConfig),
+    langflowWorkflows: publicLangflowWorkflows(db.langflowWorkflows),
     conversations: [],
     toolSettings: publicToolSettings()
   });
@@ -1762,6 +1864,8 @@ adminRouter.get("/bootstrap", (req, res) => {
     assistants: db.assistants,
     appPresets: db.appPresets,
     promptPresets: db.promptPresets,
+    langflow: publicLangflowStatus(langflowConfig),
+    langflowWorkflows: db.langflowWorkflows,
     toolSettings: normalizeToolSettings(db.toolSettings)
   });
 });
@@ -1910,6 +2014,55 @@ adminRouter.delete("/prompt-presets/:id", (req, res) => {
   res.status(204).end();
 });
 
+function langflowWorkflowFromBody(body, existing = null) {
+  try {
+    return normalizeLangflowWorkflow(body, existing);
+  } catch (error) {
+    throw httpError(400, error instanceof Error ? error.message : "工作流配置无效");
+  }
+}
+
+adminRouter.get("/langflow-workflows", (req, res) => {
+  res.json({
+    status: publicLangflowStatus(langflowConfig),
+    items: db.langflowWorkflows
+  });
+});
+
+adminRouter.post("/langflow-workflows", (req, res) => {
+  const workflow = langflowWorkflowFromBody(req.body || {});
+  if (db.langflowWorkflows.some((item) => item.flowId === workflow.flowId)) {
+    throw httpError(409, "该 Langflow Flow ID 已经发布");
+  }
+  db.langflowWorkflows = normalizeLangflowWorkflows([...db.langflowWorkflows, workflow]);
+  saveData();
+  appendAudit("langflow-workflow-create", { id: workflow.id, flowId: workflow.flowId });
+  res.status(201).json(workflow);
+});
+
+adminRouter.patch("/langflow-workflows/:id", (req, res) => {
+  const index = db.langflowWorkflows.findIndex((workflow) => workflow.id === req.params.id);
+  if (index === -1) throw httpError(404, "工作流不存在");
+  const workflow = langflowWorkflowFromBody(req.body || {}, db.langflowWorkflows[index]);
+  if (db.langflowWorkflows.some((item, itemIndex) => itemIndex !== index && item.flowId === workflow.flowId)) {
+    throw httpError(409, "该 Langflow Flow ID 已经发布");
+  }
+  db.langflowWorkflows[index] = workflow;
+  db.langflowWorkflows = normalizeLangflowWorkflows(db.langflowWorkflows);
+  saveData();
+  appendAudit("langflow-workflow-update", { id: workflow.id, flowId: workflow.flowId, enabled: workflow.enabled });
+  res.json(workflow);
+});
+
+adminRouter.delete("/langflow-workflows/:id", (req, res) => {
+  const index = db.langflowWorkflows.findIndex((workflow) => workflow.id === req.params.id);
+  if (index === -1) throw httpError(404, "工作流不存在");
+  const [removed] = db.langflowWorkflows.splice(index, 1);
+  saveData();
+  appendAudit("langflow-workflow-delete", { id: removed.id, flowId: removed.flowId });
+  res.status(204).end();
+});
+
 adminRouter.patch("/tool-settings", (req, res) => {
   const incoming = Array.isArray(req.body?.toolSettings) ? req.body.toolSettings : req.body;
   db.toolSettings = normalizeToolsData(incoming);
@@ -1928,6 +2081,7 @@ function adminMetadataPayload() {
     assistants: db.assistants,
     appPresets: db.appPresets,
     promptPresets: db.promptPresets,
+    langflowWorkflows: db.langflowWorkflows,
     toolSettings: normalizeToolSettings(db.toolSettings)
   };
 }
@@ -1939,6 +2093,7 @@ const allowedMetadataKeys = new Set([
   "assistants",
   "appPresets",
   "promptPresets",
+  "langflowWorkflows",
   "toolSettings"
 ]);
 
@@ -1968,6 +2123,9 @@ function buildMetadataImport(body) {
     assistants: Array.isArray(source.assistants) ? normalizeAssistants(source.assistants, db.assistants) : db.assistants,
     appPresets: Array.isArray(source.appPresets) ? normalizeAppPresets(source.appPresets, db.appPresets) : db.appPresets,
     promptPresets: Array.isArray(source.promptPresets) ? normalizePromptPresets(source.promptPresets, db.promptPresets) : db.promptPresets,
+    langflowWorkflows: Array.isArray(source.langflowWorkflows)
+      ? normalizeLangflowWorkflows(source.langflowWorkflows, db.langflowWorkflows)
+      : db.langflowWorkflows,
     toolSettings: Array.isArray(source.toolSettings) ? normalizeToolsData(source.toolSettings) : normalizeToolsData(db.toolSettings)
   };
 }
@@ -1980,6 +2138,7 @@ function metadataImportReport(nextData) {
     assistants: nextData.assistants.length,
     appPresets: nextData.appPresets.length,
     promptPresets: nextData.promptPresets.length,
+    langflowWorkflows: nextData.langflowWorkflows.length,
     toolSettings: nextData.toolSettings.length
   };
   const changed = Object.entries(counts)
@@ -2011,6 +2170,7 @@ adminRouter.patch("/metadata-import", (req, res) => {
   db.assistants = nextData.assistants;
   db.appPresets = nextData.appPresets;
   db.promptPresets = nextData.promptPresets;
+  db.langflowWorkflows = nextData.langflowWorkflows;
   db.toolSettings = nextData.toolSettings;
   saveData();
   appendAudit("metadata-import", {
@@ -2144,6 +2304,7 @@ app.post(
     }
     const temperature = Number.isFinite(Number(req.body?.temperature)) ? Number(req.body.temperature) : 0.7;
     const topP = Number.isFinite(Number(req.body?.topP)) ? Number(req.body.topP) : undefined;
+    const reasoningEffort = sanitizeReasoningEffort(req.body?.reasoningEffort);
     const maxTokens = Number.isFinite(Number(req.body?.maxTokens))
       ? Math.max(1, Math.trunc(Number(req.body.maxTokens)))
       : undefined;
@@ -2203,6 +2364,7 @@ app.post(
         attachments,
         temperature,
         topP,
+        reasoningEffort,
         maxTokens,
         skillInstructions,
         cloudKnowledge,
@@ -2498,7 +2660,25 @@ app.post(
         if (mode === "edit" && !entry.capabilities.includes("imageEdit")) {
           throw httpError(400, "所选模型未启用图片编辑能力");
         }
-        const inputImage = mode === "edit" ? imageInputFrom(options.inputImage, "原图") : undefined;
+        const maxReferenceImages = entry.vendor === "botcf" ? 4 : 1;
+        const requestedInputImages = Array.isArray(options.inputImages)
+          ? options.inputImages
+          : options.inputImage
+            ? [options.inputImage]
+            : [];
+        const inputImages = mode === "edit"
+          ? imageInputsFrom(requestedInputImages, "参考图", maxReferenceImages)
+          : [];
+        const inputImage = inputImages[0];
+        const referenceImageUrls = mode === "edit" && entry.vendor === "botcf"
+          ? referenceImageUrlsFrom(options.referenceImageUrls, 4)
+          : [];
+        if (mode === "edit" && entry.vendor !== "botcf" && Array.isArray(options.referenceImageUrls) && options.referenceImageUrls.length) {
+          throw httpError(400, "当前模型不支持参考图链接，请上传本地图片");
+        }
+        if (inputImages.length && referenceImageUrls.length) {
+          throw httpError(400, "请使用上传参考图或 HTTPS 参考图链接中的一种方式");
+        }
         const maskImage = mode === "edit" && options.maskImage
           ? imageInputFrom(options.maskImage, "蒙版", 4)
           : undefined;
@@ -2534,6 +2714,8 @@ app.post(
           prompt: styledPrompt,
           mode,
           inputImage,
+          inputImages,
+          referenceImageUrls,
           maskImage,
           size: options.size || "1024x1024",
           aspectRatio,

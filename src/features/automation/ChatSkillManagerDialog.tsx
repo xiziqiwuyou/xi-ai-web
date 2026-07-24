@@ -1,6 +1,7 @@
 import { useEffect, useId, useState, type FormEvent } from "react";
 import { Plus, Puzzle, Save, Trash2, X } from "lucide-react";
 import { ConfirmationDialog, Dialog } from "../../components/ui";
+import { createClientId } from "../../utils/clientId";
 import type { AgentSkillDefinition, ToolSetting } from "../../types";
 import { supportedVendorLabels, toolExecutionLabel } from "./toolCompatibility";
 
@@ -15,7 +16,7 @@ type ChatSkillManagerDialogProps = {
 function nextSkill() {
   const now = new Date().toISOString();
   return {
-    id: `skill-${crypto.randomUUID()}`,
+    id: createClientId("skill"),
     name: "新 Skill",
     description: "",
     instructions: "明确这项对话能力的目标、边界和输出格式。",

@@ -21,6 +21,8 @@ import type {
   KnowledgeAdminReconcileResult,
   KnowledgeAdminSettings,
   KnowledgeRetrievalRequest,
+  AdminLangflowWorkflow,
+  LangflowWorkflow,
   PublicBootstrapPayload,
   SearchServiceConfig,
   UserProviderConfig
@@ -379,6 +381,13 @@ export const publicBootstrapFixture: PublicBootstrapPayload = {
     }
   ],
   promptPresets: [],
+  langflow: {
+    enabled: false,
+    available: false,
+    state: "disabled",
+    reasonCode: "LANGFLOW_DISABLED"
+  },
+  langflowWorkflows: [],
   conversations: [],
   toolSettings: [
     {
@@ -434,6 +443,8 @@ const adminBootstrapFixture: AdminBootstrapPayload = {
   assistants: publicBootstrapFixture.assistants,
   appPresets: publicBootstrapFixture.appPresets,
   promptPresets: publicBootstrapFixture.promptPresets,
+  langflow: publicBootstrapFixture.langflow,
+  langflowWorkflows: [],
   toolSettings: publicBootstrapFixture.toolSettings
 };
 
@@ -454,6 +465,7 @@ const adminOpsFixture: AdminOpsPayload = {
     assistants: 7,
     apps: 1,
     prompts: 0,
+    workflows: 0,
     tools: 4,
     backups: 0,
     auditRecords: 0
@@ -701,12 +713,14 @@ type ApiHarness = {
   chatKnowledgeCsrfHeaders: string[];
   agentRequests: AgentRunPayload[];
   agentKnowledgeCsrfHeaders: string[];
+  langflowRequests: Array<{ workflowId: string; payload: Record<string, unknown> }>;
   knowledgeRetrievalRequests: Array<KnowledgeRetrievalRequest & { query: string }>;
   generationRequests: Array<{
     moduleId: "image" | "ppt" | "mindmap" | "translate";
     payload: GenerationPayload;
   }>;
   setBootstrap: (payload: PublicBootstrapPayload) => void;
+  setAdminBootstrap: (payload: AdminBootstrapPayload) => void;
   setAdminStatus: (status: AdminStatus) => void;
   setKnowledgeSession: (authenticated: boolean, bases?: KnowledgeBase[]) => void;
   setKnowledgeRetrievalError: (error: { code: string; message: string; status?: number } | null) => void;
@@ -724,6 +738,7 @@ export const test = base.extend<BrowserFixtures>({
   apiHarness: [
     async ({ page }, use) => {
       let bootstrap = cloneBootstrap(publicBootstrapFixture);
+      let adminBootstrap = structuredClone(adminBootstrapFixture);
       let adminStatus: AdminStatus = {
         authRequired: true,
         authenticated: false,
@@ -735,6 +750,7 @@ export const test = base.extend<BrowserFixtures>({
       const chatKnowledgeCsrfHeaders: string[] = [];
       const agentRequests: AgentRunPayload[] = [];
       const agentKnowledgeCsrfHeaders: string[] = [];
+      const langflowRequests: ApiHarness["langflowRequests"] = [];
       const knowledgeRetrievalRequests: ApiHarness["knowledgeRetrievalRequests"] = [];
       let knowledgeSession: KnowledgeAuthResponse = { authenticated: false };
       let knowledgeBases = structuredClone(readyKnowledgeBases);
@@ -915,7 +931,70 @@ export const test = base.extend<BrowserFixtures>({
         }
 
         if (request.method() === "GET" && pathname === "/api/admin/bootstrap") {
-          await route.fulfill({ json: adminBootstrapFixture });
+          await route.fulfill({ json: adminBootstrap });
+          return;
+        }
+
+        if (request.method() === "POST" && pathname === "/api/admin/langflow-workflows") {
+          const payload = request.postDataJSON() as Partial<AdminLangflowWorkflow>;
+          const created: AdminLangflowWorkflow = {
+            id: "langflow-e2e-published",
+            flowId: String(payload.flowId || "e2e-flow"),
+            name: String(payload.name || "E2E Workflow"),
+            description: String(payload.description || ""),
+            welcomeMessage: String(payload.welcomeMessage || ""),
+            inputPlaceholder: String(payload.inputPlaceholder || ""),
+            tags: Array.isArray(payload.tags) ? payload.tags.map(String) : [],
+            enabled: payload.enabled !== false,
+            order: Number(payload.order) || 100,
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z"
+          };
+          adminBootstrap = {
+            ...adminBootstrap,
+            langflowWorkflows: [created, ...adminBootstrap.langflowWorkflows]
+          };
+          await route.fulfill({ status: 201, json: created });
+          return;
+        }
+
+        const langflowAdminMatch = pathname.match(/^\/api\/admin\/langflow-workflows\/([^/]+)$/);
+        if (request.method() === "PATCH" && langflowAdminMatch) {
+          const payload = request.postDataJSON() as Partial<AdminLangflowWorkflow>;
+          const current = adminBootstrap.langflowWorkflows.find((item) => item.id === langflowAdminMatch[1]);
+          const updated: AdminLangflowWorkflow = {
+            ...(current || {
+              id: langflowAdminMatch[1],
+              flowId: "e2e-flow",
+              name: "E2E Workflow",
+              description: "",
+              welcomeMessage: "",
+              inputPlaceholder: "",
+              tags: [],
+              enabled: true,
+              order: 100,
+              createdAt: "2026-01-01T00:00:00.000Z",
+              updatedAt: "2026-01-01T00:00:00.000Z"
+            }),
+            ...payload,
+            id: langflowAdminMatch[1],
+            tags: Array.isArray(payload.tags) ? payload.tags.map(String) : (current?.tags || []),
+            updatedAt: "2026-01-01T00:00:00.000Z"
+          };
+          adminBootstrap = {
+            ...adminBootstrap,
+            langflowWorkflows: adminBootstrap.langflowWorkflows.map((item) => item.id === updated.id ? updated : item)
+          };
+          await route.fulfill({ json: updated });
+          return;
+        }
+
+        if (request.method() === "DELETE" && langflowAdminMatch) {
+          adminBootstrap = {
+            ...adminBootstrap,
+            langflowWorkflows: adminBootstrap.langflowWorkflows.filter((item) => item.id !== langflowAdminMatch[1])
+          };
+          await route.fulfill({ status: 204, body: "" });
           return;
         }
 
@@ -1155,6 +1234,34 @@ export const test = base.extend<BrowserFixtures>({
           return;
         }
 
+        const langflowMatch = pathname.match(/^\/api\/workflows\/([^/]+)\/stream$/);
+        if (request.method() === "POST" && langflowMatch) {
+          const payload = request.postDataJSON() as Record<string, unknown>;
+          const workflowId = decodeURIComponent(langflowMatch[1]);
+          langflowRequests.push({ workflowId, payload });
+          const selectedWorkflow = bootstrap.langflowWorkflows.find((item) => item.id === workflowId);
+          const responseText = `Workflow result: ${String(payload.input || "")}`;
+          const events = [
+            `event: meta\ndata: ${JSON.stringify({
+              sessionId: String(payload.sessionId || "e2e-session"),
+              workflow: selectedWorkflow,
+              requestId: "e2e-langflow-request"
+            })}`,
+            `event: token\ndata: ${JSON.stringify({ token: responseText })}`,
+            `event: done\ndata: ${JSON.stringify({
+              sessionId: String(payload.sessionId || "e2e-session"),
+              text: responseText,
+              finished: true
+            })}`
+          ];
+          await route.fulfill({
+            status: 200,
+            contentType: "text/event-stream; charset=utf-8",
+            body: `${events.join("\n\n")}\n\n`
+          });
+          return;
+        }
+
         if (request.method() === "POST" && pathname === "/api/agents/run") {
           const payload = request.postDataJSON() as AgentRunPayload;
           agentRequests.push(payload);
@@ -1245,10 +1352,14 @@ export const test = base.extend<BrowserFixtures>({
         chatKnowledgeCsrfHeaders,
         agentRequests,
         agentKnowledgeCsrfHeaders,
+        langflowRequests,
         knowledgeRetrievalRequests,
         generationRequests,
         setBootstrap(nextPayload) {
           bootstrap = cloneBootstrap(nextPayload);
+        },
+        setAdminBootstrap(nextPayload) {
+          adminBootstrap = structuredClone(nextPayload);
         },
         setAdminStatus(nextStatus) {
           adminStatus = { ...nextStatus };
@@ -1325,12 +1436,12 @@ export async function seedKnowledgeEmbeddingConnections(page: Page) {
   );
 }
 
-export async function seedChatConversations(page: Page) {
+export async function seedChatConversations(page: Page, conversations: Conversation[] = conversationFixture) {
   await page.addInitScript(
     ({ key, value }) => {
       window.localStorage.setItem(key, JSON.stringify(value));
     },
-    { key: conversationStorageKey, value: conversationFixture }
+    { key: conversationStorageKey, value: conversations }
   );
 }
 

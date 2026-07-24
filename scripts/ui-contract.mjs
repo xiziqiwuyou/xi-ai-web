@@ -140,7 +140,7 @@ for (const exactCopy of [
   "<h1>AI \u5bf9\u8bdd\u5de5\u4f5c\u53f0</h1>",
   "\u7f51\u7edc\u641c\u7d22",
   "\u56fe\u7247\u8f93\u5165",
-  "\u6e05\u9664\u6b64\u5bf9\u8bdd\u4e0a\u4e0b\u6587",
+  "\u6e05\u9664\u6d88\u606f",
   "\u5728\u6b64\u8f93\u5165\u4f60\u60f3\u63a2\u8ba8\u7684\u60f3\u6cd5\u3001\u5206\u6790\u7684\u5185\u5bb9\uff0c\u6216\u8005\u5411 AI \u63d0\u95ee...",
   "Shift + Enter",
   "AI \u751f\u6210\u5185\u5bb9\u4ec5\u4f9b\u53c2\u8003\uff0c\u8bf7\u6838\u9a8c\u5173\u952e\u7ed3\u8bba\u3002"
@@ -179,9 +179,13 @@ assert(!sharedMenuOptionsBlock.includes("ChevronRight"), "Unselected shared menu
 assert(sharedMenuOptionsBlock.includes("<Check") && sharedMenuOptionsBlock.includes('className="figma-menu-option-mark"'), "Shared menu options must keep selected checks and stable empty marks");
 assert(chatModule.includes("event.shiftKey"), "Chat composer must reserve Shift+Enter for line breaks");
 assert(chatModule.includes("event.nativeEvent.isComposing"), "Chat composer must guard IME composition");
-assert(chatModule.includes('aria-label="管理对话 Skill"'), "Chat must expose local Skill management");
 assert(chatModule.includes('className="figma-chat-skill-selection"'), "Chat settings must expose Skill selection");
+assert(chatModule.includes("管理本地 Skill"), "Chat settings must retain local Skill management");
+assert(!chatModule.includes('figma-heading-action-label">Skill'), "Chat heading must not promote Skill management");
 assert(chatModule.includes("skillInstructions: selectedSkills.map"), "Chat must inject only selected Skill instructions");
+assert(chatModule.includes('className="figma-reasoning-menu"'), "Chat must expose the reasoning menu in its composer toolbar");
+assert(chatModule.includes("maxImageAttachments"), "Chat settings must expose the image attachment limit");
+assert(chatModule.includes("ConfirmationDialog"), "Chat must confirm Clear Messages before removal");
 assert(chatModule.includes("ChatCommandPalette"), "Chat must expose inline Skill and application commands");
 assert(chatModule.includes('className="figma-chat-command-tags"'), "Chat must render removable command selections beside the composer");
 assert(chatCss.includes(".figma-chat-command-palette"), "Chat CSS must style the command palette");
@@ -401,6 +405,12 @@ for (const imageUiContract of [
   "\u6587\u751f\u56fe",
   "\u56fe\u7247\u7f16\u8f91",
   "\u539f\u56fe",
+  "\u53c2\u8003\u56fe",
+  "\u53c2\u8003\u56fe\u94fe\u63a5",
+  "usesBotcfGemini",
+  "maxReferenceImages",
+  'className="figma-image-reference-list"',
+  'className="figma-image-upload-field figma-image-url-field"',
   "\u8499\u7248\uff08PNG\uff09",
   'accept="image/png,image/jpeg,image/webp"',
   'accept="image/png"',
@@ -419,6 +429,8 @@ for (const imageTypeContract of [
   'export type ImageOutputFormat = "png" | "jpeg" | "webp";',
   "count?: number;",
   "inputImage?: ImageInputPayload;",
+  "inputImages?: ImageInputPayload[];",
+  "referenceImageUrls?: string[];",
   "maskImage?: ImageInputPayload;",
   "outputFormat?: ImageOutputFormat;",
   "outputCompression?: number;"
@@ -436,6 +448,8 @@ for (const typedImageOption of [
   "imageSize: resolution",
   "size: imageRequestSize(aspectRatio, resolution)",
   'inputImage: mode === "edit"',
+  'inputImages: mode === "edit"',
+  'referenceImageUrls: mode === "edit" && usesBotcf',
   'maskImage: mode === "edit" && supportsMask',
   "quality: usesOpenAIImageOptions ? quality : undefined",
   "outputFormat: usesOpenAIImageOptions ? outputFormat : undefined",
@@ -449,6 +463,8 @@ assert(studioModule.includes("resultImages.map((asset, index) => ("), "Image res
 assert(studioModule.includes("item.assets") && studioModule.includes(".forEach((asset, index) =>"), "Saved multi-asset image generations must be flattened into the waterfall");
 assert(server.includes("for (const item of data)"), "Server image extraction must iterate every OpenAI data item");
 assert(server.includes("for (const candidate of candidates)") && server.includes("for (const part of parts)"), "Server image extraction must iterate every Gemini candidate part");
+assert(server.includes("const choices = Array.isArray(json?.choices)") && server.includes("part?.image_url?.url"), "Server image extraction must read BotCF Gemini Chat image_url assets");
+assert(server.includes("referenceImageUrlsFrom(options.referenceImageUrls, 4)"), "Server image route must validate BotCF HTTPS reference URLs");
 assert(server.includes('extractAssets(json, "image", fallbackMimeType).slice(0, requestedCount)'), "Image responses must retain all assets up to the requested count");
 
 for (const requiredSelector of [

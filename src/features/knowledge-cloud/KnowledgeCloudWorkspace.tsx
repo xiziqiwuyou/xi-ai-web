@@ -37,6 +37,7 @@ import {
 } from "lucide-react";
 import { ApiError, api } from "../../api";
 import { Dialog } from "../../components/ui";
+import { createClientId } from "../../utils/clientId";
 import type {
   KnowledgeAccount,
   KnowledgeBase,
@@ -444,7 +445,7 @@ function KnowledgeCloudWorkspace({
             if (pauseIndexRef.current) break;
             const result = await api.nextKnowledgeEmbeddingBatch(csrfToken, document.id, {
               embeddingProfileId: profile.id,
-              idempotencyKey: window.crypto.randomUUID(),
+              idempotencyKey: createClientId(),
               connection
             });
             if (result.providerCall) completedBatches += 1;
@@ -636,7 +637,7 @@ function KnowledgeCloudWorkspace({
     event.target.value = "";
     if (!selectedBase || selectedBase.status !== "active" || !files.length) return;
     const queue = files.map((file) => ({
-      id: window.crypto.randomUUID(),
+      id: createClientId("knowledge-upload"),
       name: file.name,
       size: file.size,
       stage: "queued" as const

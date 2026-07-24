@@ -318,9 +318,17 @@ test("Chat manages a local Skill and triggers it only for the selected conversat
   const module = page.getByTestId("chat-module");
   await expect(module.getByLabel("消息内容", { exact: true })).toBeVisible();
 
-  await module.getByRole("button", { name: "管理对话 Skill", exact: true }).click();
+  await module.locator('button[aria-label="会话设置"]:visible').first().click();
+  const settings = page.getByRole("dialog", { name: "会话设置", exact: true });
+  await expect(settings).toBeVisible();
+  const manageSkills = settings.getByRole("button", { name: "管理本地 Skill", exact: true });
+  const manageSkillsBox = await manageSkills.boundingBox();
+  expect(manageSkillsBox?.height).toBeGreaterThanOrEqual(isMobileProject(testInfo.project.name) ? 44 : 34);
+  await manageSkills.click();
   const manager = page.getByRole("dialog", { name: "对话 Skill", exact: true });
   await expect(manager).toBeVisible();
+  await expect(settings).toHaveCount(0);
+  await expect(page.locator('[data-scroll-owner="dialog"]:visible')).toHaveCount(1);
   await manager.getByRole("button", { name: "新建 Skill", exact: true }).click();
   await manager.getByLabel("名称", { exact: true }).fill("发布检查");
   await manager.getByLabel("Skill 指令", { exact: true }).fill("检查版本、回滚、监控和负责人，并输出缺口列表。");
@@ -328,6 +336,9 @@ test("Chat manages a local Skill and triggers it only for the selected conversat
   await manager.getByRole("button", { name: "保存 Skill", exact: true }).click();
   await expect(manager.getByText("Skill 已保存到当前浏览器。", { exact: true })).toBeVisible();
   await manager.getByRole("button", { name: "关闭对话 Skill", exact: true }).click();
+  await expect(settings).toBeVisible();
+  await expect(manageSkills).toBeFocused();
+  await settings.getByRole("button", { name: "取消", exact: true }).click();
 
   const composer = module.getByLabel("消息内容", { exact: true });
   await composer.fill("$");

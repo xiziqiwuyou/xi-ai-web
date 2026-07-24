@@ -54,8 +54,22 @@ function extractEmbeddings(json) {
     .filter((embedding) => Array.isArray(embedding));
 }
 
+function reasoningOptions(reasoningEffort) {
+  switch (reasoningEffort) {
+    case "off":
+      return { reasoning_effort: "none" };
+    case "low":
+    case "medium":
+    case "high":
+    case "xhigh":
+      return { reasoning_effort: reasoningEffort };
+    default:
+      return {};
+  }
+}
+
 function chatRequestBody(
-  { model, messages, temperature, topP, maxTokens, stream, tools },
+  { model, messages, temperature, topP, reasoningEffort, maxTokens, stream, tools },
   normalizeChatBody
 ) {
   const body = {
@@ -65,18 +79,19 @@ function chatRequestBody(
     top_p: Number.isFinite(Number(topP)) ? Number(topP) : undefined,
     max_tokens: Number.isFinite(Number(maxTokens)) ? Math.max(1, Math.trunc(Number(maxTokens))) : undefined,
     stream,
-    tools
+    tools,
+    ...reasoningOptions(reasoningEffort)
   };
-  return normalizeChatBody ? normalizeChatBody(body, { model }) : body;
+  return normalizeChatBody ? normalizeChatBody(body, { model, reasoningEffort }) : body;
 }
 
-async function streamChat({ provider, model, messages, temperature, topP, maxTokens, signal, onToken, normalizeChatBody }) {
+async function streamChat({ provider, model, messages, temperature, topP, reasoningEffort, maxTokens, signal, onToken, normalizeChatBody }) {
   assertCapability(provider, "chat");
   if (hasImageContent(messages)) assertCapability(provider, "vision");
   const response = await fetch(providerUrl(provider, "/chat/completions"), {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders(provider) },
-    body: JSON.stringify(chatRequestBody({ model, messages, temperature, topP, maxTokens, stream: true }, normalizeChatBody)),
+    body: JSON.stringify(chatRequestBody({ model, messages, temperature, topP, reasoningEffort, maxTokens, stream: true }, normalizeChatBody)),
     redirect: "error",
     signal
   });
@@ -125,6 +140,7 @@ async function completeWithTools({
   messages,
   temperature,
   topP,
+  reasoningEffort,
   maxTokens,
   tools,
   runTool,
@@ -146,6 +162,7 @@ async function completeWithTools({
         messages: nextMessages,
         temperature,
         topP,
+        reasoningEffort,
         maxTokens,
         stream: false,
         tools: mappedTools.length ? mappedTools : undefined
@@ -184,13 +201,13 @@ async function completeWithTools({
 }
 
 async function completeText(params) {
-  const { provider, model, messages, temperature, topP, maxTokens, signal, tools, runTool, normalizeChatBody } = params;
+  const { provider, model, messages, temperature, topP, reasoningEffort, maxTokens, signal, tools, runTool, normalizeChatBody } = params;
   if (tools?.length && runTool) return completeWithTools(params);
   assertCapability(provider, "chat");
   if (hasImageContent(messages)) assertCapability(provider, "vision");
   const json = await fetchJson(providerUrl(provider, "/chat/completions"), {
     headers: authHeaders(provider),
-    body: chatRequestBody({ model, messages, temperature, topP, maxTokens, stream: false }, normalizeChatBody),
+    body: chatRequestBody({ model, messages, temperature, topP, reasoningEffort, maxTokens, stream: false }, normalizeChatBody),
     signal
   });
   return extractOpenAICompatibleText(json);

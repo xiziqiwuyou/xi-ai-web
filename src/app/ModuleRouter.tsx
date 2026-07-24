@@ -16,6 +16,7 @@ import type {
 const ChatModule = lazy(() => import("../features/chat/ChatModule"));
 const StudioModule = lazy(() => import("../features/studio/StudioModule"));
 const AutomationModule = lazy(() => import("../features/automation/AutomationModule"));
+const LangflowWorkflowModule = lazy(() => import("../features/automation/LangflowWorkflowModule"));
 
 type ModuleRouterProps = {
   activeModule: ModuleId;
@@ -27,6 +28,8 @@ type ModuleRouterProps = {
   galleryItems: GalleryItem[];
   modelCatalog: ModelCatalogEntry[];
   promptPresets: PromptPreset[];
+  langflow: PublicBootstrapPayload["langflow"];
+  langflowWorkflows: PublicBootstrapPayload["langflowWorkflows"];
   toolSettings?: PublicBootstrapPayload["toolSettings"];
   userProvider: UserProviderConfig;
   searchService: SearchServiceConfig;
@@ -53,6 +56,8 @@ function ModuleRouter({
   galleryItems,
   modelCatalog,
   promptPresets,
+  langflow,
+  langflowWorkflows,
   toolSettings,
   userProvider,
   searchService,
@@ -89,6 +94,18 @@ function ModuleRouter({
   }
 
   if (activeModule === "agents" || activeModule === "workflows") {
+    if (activeModule === "workflows" && langflow.available) {
+      return (
+        <LangflowWorkflowModule
+          status={langflow}
+          workflows={langflowWorkflows}
+          modelCatalog={modelCatalog}
+          userProvider={userProvider}
+          onUserProviderChange={onUserProviderChange}
+          onRequestApiConfig={onRequestApiConfig}
+        />
+      );
+    }
     return (
       <AutomationModule
         moduleId={activeModule}

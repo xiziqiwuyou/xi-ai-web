@@ -97,13 +97,38 @@ function aspectRatioForSize(size) {
   return "1:1";
 }
 
-function generationConfig({ temperature, topP, maxTokens }) {
+function thinkingConfig(model, reasoningEffort) {
+  const usesThinkingLevel = /^gemini-3(?:[.-]|$)/i.test(String(model || ""));
+  if (usesThinkingLevel) {
+    const thinkingLevel = {
+      off: "MINIMAL",
+      low: "LOW",
+      medium: "MEDIUM",
+      high: "HIGH",
+      xhigh: "HIGH"
+    }[reasoningEffort];
+    return thinkingLevel ? { thinkingLevel } : undefined;
+  }
+
+  const thinkingBudget = {
+    off: 0,
+    low: 1024,
+    medium: 4096,
+    high: 8192,
+    xhigh: 16384
+  }[reasoningEffort];
+  return thinkingBudget === undefined ? undefined : { thinkingBudget };
+}
+
+function generationConfig({ model, temperature, topP, reasoningEffort, maxTokens }) {
+  const explicitReasoning = ["low", "medium", "high", "xhigh"].includes(reasoningEffort);
   return {
-    temperature: Number.isFinite(Number(temperature)) ? Number(temperature) : undefined,
-    topP: Number.isFinite(Number(topP)) ? Number(topP) : undefined,
+    temperature: explicitReasoning ? undefined : Number.isFinite(Number(temperature)) ? Number(temperature) : undefined,
+    topP: explicitReasoning ? undefined : Number.isFinite(Number(topP)) ? Number(topP) : undefined,
     maxOutputTokens: Number.isFinite(Number(maxTokens))
       ? Math.max(1, Math.trunc(Number(maxTokens)))
-      : undefined
+      : undefined,
+    thinkingConfig: thinkingConfig(model, reasoningEffort)
   };
 }
 
@@ -113,6 +138,7 @@ async function completeWithTools({
   messages,
   temperature,
   topP,
+  reasoningEffort,
   maxTokens,
   tools,
   hostedTools,
@@ -137,7 +163,7 @@ async function completeWithTools({
       body: {
         contents,
         systemInstruction: mapped.system ? { parts: [{ text: mapped.system }] } : undefined,
-        generationConfig: generationConfig({ temperature, topP, maxTokens }),
+        generationConfig: generationConfig({ model, temperature, topP, reasoningEffort, maxTokens }),
         tools: mappedTools
       },
       signal
@@ -169,7 +195,7 @@ async function completeWithTools({
 }
 
 async function completeText(params) {
-  const { provider, model, messages, temperature, topP, maxTokens, signal, tools, hostedTools } = params;
+  const { provider, model, messages, temperature, topP, reasoningEffort, maxTokens, signal, tools, hostedTools } = params;
   if (tools?.length || hostedTools?.length) return completeWithTools(params);
   assertCapability(provider, "chat");
   if (hasImageContent(messages)) assertCapability(provider, "vision");
@@ -179,7 +205,7 @@ async function completeText(params) {
     body: {
       contents: mapped.contents,
       systemInstruction: mapped.system ? { parts: [{ text: mapped.system }] } : undefined,
-      generationConfig: generationConfig({ temperature, topP, maxTokens })
+      generationConfig: generationConfig({ model, temperature, topP, reasoningEffort, maxTokens })
     },
     signal
   });

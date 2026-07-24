@@ -1,6 +1,7 @@
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
   type FormEvent
 } from "react";
@@ -13,17 +14,20 @@ import {
   CircleAlert,
   FileText,
   Globe2,
+  LayoutTemplate,
   Loader2,
   Play,
   Plus,
   Save,
   Search,
   Trash2,
+  Upload,
   Workflow,
   Wrench
 } from "lucide-react";
 import { api } from "../../api";
 import { ConfirmationDialog, FigmaMenu, type FigmaMenuOption } from "../../components/ui";
+import { createClientId } from "../../utils/clientId";
 import {
   compactModelLabel,
   modelsForCapability,
@@ -32,6 +36,7 @@ import {
 } from "../../components/workbench";
 import type {
   AgentSkillDefinition,
+  AgentWorkflowConfigValue,
   AgentWorkflowGraph,
   AgentWorkflowDefinition,
   AgentWorkflowNode,
@@ -68,10 +73,14 @@ import {
   saveUserAgents,
   type AutomationWorkspace
 } from "./automationRepository";
-import WorkflowCanvas, {
-  type WorkflowCanvasEdgeState,
-  type WorkflowCanvasNodeState
-} from "./WorkflowCanvas";
+import {
+  createWorkflowComponentNode,
+  workflowComponentForNode,
+  workflowPaletteComponents,
+  type WorkflowComponentConfigField
+} from "./workflowComponents";
+import WorkflowComponentIcon from "./WorkflowComponentIcon";
+import WorkflowCanvas from "./WorkflowCanvas";
 import {
   addWorkflowNodeToGraph,
   emptyWorkflowGraph,
@@ -80,6 +89,20 @@ import {
   validateWorkflowGraph,
   workflowGraphToSteps
 } from "./workflowGraph";
+import { executeWorkflowGraph } from "./workflowExecution";
+import type {
+  WorkflowCanvasEdgeState,
+  WorkflowCanvasNodeState
+} from "./workflowState";
+import {
+  importLangflowWorkflow,
+  LangflowImportError
+} from "./workflowLangflowImport";
+import {
+  createWorkflowFromTemplate,
+  workflowStarterTemplates,
+  type WorkflowStarterTemplate
+} from "./workflowTemplates";
 import {
   agentTraceFromResult,
   knowledgeCitationsFromResult,
@@ -89,7 +112,16 @@ import {
   withKnowledgeCitations,
   type AutomationKnowledgeCatalog
 } from "./automationKnowledge";
-import { renderWorkflowTemplate, retrieveWorkflowKnowledge } from "./workflowRuntime";
+import {
+  evaluateWorkflowCondition,
+  mergeWorkflowOutputs,
+  parseWorkflowStructuredOutput,
+  renderWorkflowTemplate,
+  retrieveWorkflowKnowledge,
+  runBoundedWorkflowLoop,
+  splitWorkflowText,
+  transformWorkflowText
+} from "./workflowRuntime";
 import {
   capabilitySetCompatibility,
   skillCompatibility,
@@ -121,10 +153,16 @@ type WorkflowRunStep = {
   error?: string;
 };
 
+type PendingWorkflowApproval = {
+  nodeId: string;
+  title: string;
+  description: string;
+};
+
 const emptyWorkspace: AutomationWorkspace = { agents: [], skills: [], workflows: [] };
 
 function nextId(prefix: string) {
-  return `${prefix}-${crypto.randomUUID()}`;
+  return createClientId(prefix);
 }
 
 function unique(values: string[]) {
@@ -713,6 +751,7 @@ function WorkflowsWorkspace({
   onSave
 }: SharedWorkspaceProps & { onSave: (workflows: AgentWorkflowDefinition[]) => Promise<void> }) {
   const [view, setView] = useState<"catalog" | "editor">("catalog");
+  const [catalogMode, setCatalogMode] = useState<"mine" | "templates">("mine");
   const [selectedId, setSelectedId] = useState(workflows[0]?.id || "");
   const selected = workflows.find((workflow) => workflow.id === selectedId) || workflows[0];
   const [draft, setDraft] = useState<AgentWorkflowDefinition | null>(selected ? structuredClone(selected) : null);
@@ -726,6 +765,9 @@ function WorkflowsWorkspace({
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [result, setResult] = useState<GenerationResult | null>(null);
+  const [pendingApproval, setPendingApproval] = useState<PendingWorkflowApproval | null>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
+  const approvalResolverRef = useRef<((approved: boolean) => void) | null>(null);
   const models = useMemo(() => modelsForCapability(modelCatalog, "chat"), [modelCatalog]);
   const selectedRunModel = models.find((model) => model.id === runModelId) || preferredModelFor(models, "chat", userProvider.lastModelId);
   const graph = draft ? normalizedWorkflowGraph(draft) : null;
@@ -740,10 +782,14 @@ function WorkflowsWorkspace({
     : null;
   const selectedNode = graph?.nodes.find((node) => node.id === selectedNodeId);
   const selectedEdge = graph?.edges.find((edge) => edge.id === selectedEdgeId);
+  const selectedComponent = selectedNode ? workflowComponentForNode(selectedNode) : undefined;
   const selectedNodeAgent = selectedNode?.kind === "agent"
     ? agents.find((agent) => agent.id === selectedNode.agentId)
     : undefined;
-  const selectedNodeModel = models.find((model) => model.id === selectedNodeAgent?.modelId) || selectedRunModel;
+  const selectedNodeConfiguredModelId = selectedNode?.kind === "model" && typeof selectedNode.config?.modelId === "string"
+    ? selectedNode.config.modelId
+    : undefined;
+  const selectedNodeModel = models.find((model) => model.id === (selectedNodeAgent?.modelId || selectedNodeConfiguredModelId)) || selectedRunModel;
   const selectedNodeHasContext = Boolean(selectedNodeAgent && agentKnowledgeContext(selectedNodeAgent, knowledgeDocuments).length);
   const selectedNodeHasKnowledgeContext = Boolean(
     selectedNodeHasContext || stableKnowledgeBaseIds(selectedNodeAgent?.knowledgeBaseIds).length
@@ -752,6 +798,11 @@ function WorkflowsWorkspace({
     ? knowledgeCatalog.bases.filter(isKnowledgeBaseReady)
     : [];
   const canAddKnowledgeNode = Boolean(knowledgeDocuments.length || readyCloudKnowledgeBases.length);
+
+  useEffect(() => () => {
+    approvalResolverRef.current?.(false);
+    approvalResolverRef.current = null;
+  }, []);
 
   const resolveAgentNodeRuntime = (node: AgentWorkflowNode) => {
     const agent = node.agentId ? agents.find((item) => item.id === node.agentId) : undefined;
@@ -786,6 +837,22 @@ function WorkflowsWorkspace({
     const toolsCompatibility = toolSetCompatibility(allowedTools, toolSettings, model, compatibilityOptions);
     if (!toolsCompatibility.compatible) throw new Error(`节点“${node.name}”：${toolsCompatibility.reason}`);
     return { agent, linkedSkills, model, contextChunks, allowedTools, cloudKnowledgeIds };
+  };
+
+  const resolveModelNodeRuntime = (node: AgentWorkflowNode) => {
+    const configuredModelId = typeof node.config?.modelId === "string" ? node.config.modelId : "";
+    const model = models.find((item) => item.id === configuredModelId) || selectedRunModel;
+    if (!model) throw new Error(`节点“${node.name}”没有可用模型。`);
+    const compatibility = capabilitySetCompatibility(["chat"], model);
+    if (!compatibility.compatible) throw new Error(`节点“${node.name}”：${compatibility.reason}`);
+    return model;
+  };
+
+  const preflightSearchNode = (node: AgentWorkflowNode) => {
+    const model = resolveModelNodeRuntime(node);
+    const compatibility = toolSetCompatibility(["web_search"], toolSettings, model, { searchReady });
+    if (!compatibility.compatible) throw new Error(`节点“${node.name}”：${compatibility.reason}`);
+    return model;
   };
 
   useEffect(() => {
@@ -884,6 +951,48 @@ function WorkflowsWorkspace({
     setView("editor");
   };
 
+  const openStarterTemplate = (template: WorkflowStarterTemplate) => {
+    const workflow = createWorkflowFromTemplate(template);
+    openWorkflow(workflow);
+    setNotice("模板已创建为独立草稿，配置节点后保存到当前浏览器。");
+  };
+
+  const importLangflowFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    try {
+      const result = importLangflowWorkflow(await file.text());
+      openWorkflow(result.workflow);
+      const unsupported = result.unsupportedComponents.length;
+      setNotice(
+        `已导入 ${result.importedCount} 个兼容组件${unsupported ? `，并保留 ${unsupported} 个不支持组件` : ""}` +
+        `${result.warnings.length ? `；共 ${result.warnings.length} 条迁移提示` : ""}。`
+      );
+    } catch (error) {
+      setNotice(error instanceof LangflowImportError ? error.message : "Langflow 工作流导入失败。");
+    }
+  };
+
+  const requestWorkflowApproval = (node: AgentWorkflowNode, input: string) => new Promise<boolean>((resolve) => {
+    approvalResolverRef.current?.(false);
+    approvalResolverRef.current = resolve;
+    const configuredPrompt = typeof node.config?.prompt === "string" ? node.config.prompt.trim() : "";
+    const preview = input.trim().slice(0, 600);
+    setPendingApproval({
+      nodeId: node.id,
+      title: node.name,
+      description: [configuredPrompt || "确认继续执行这个工作流吗？", preview ? `待确认内容：${preview}` : ""].filter(Boolean).join("\n\n")
+    });
+  });
+
+  const resolveWorkflowApproval = (approved: boolean) => {
+    const resolve = approvalResolverRef.current;
+    approvalResolverRef.current = null;
+    setPendingApproval(null);
+    resolve?.(approved);
+  };
+
   const updateGraph = (nextGraph: AgentWorkflowGraph) => {
     if (!draft) return;
     setDraft({ ...draft, graph: nextGraph });
@@ -897,27 +1006,27 @@ function WorkflowsWorkspace({
     });
   };
 
-  const addWorkflowNode = (kind: "agent" | "template" | "knowledge") => {
+  const updateSelectedNodeConfig = (key: string, value: string | number | boolean | string[]) => {
+    if (!selectedNode) return;
+    updateSelectedNode({ config: { ...(selectedNode.config || {}), [key]: value } });
+  };
+
+  const addWorkflowNode = (componentId: string) => {
     if (!graph || busy) return;
     const maxX = Math.max(...graph.nodes.map((node) => node.position.x));
-    const sequence = graph.nodes.filter((node) => node.kind === kind).length + 1;
-    const node: AgentWorkflowNode = {
+    const component = workflowPaletteComponents.find((item) => item.id === componentId);
+    if (!component) return;
+    const sequence = graph.nodes.filter((node) => workflowComponentForNode(node).id === component.id).length + 1;
+    const node = createWorkflowComponentNode(componentId, {
       id: nextId("node"),
-      kind,
-      name: kind === "agent" ? `智能体 ${sequence}` : kind === "template" ? `文本模板 ${sequence}` : `知识检索 ${sequence}`,
-      instruction: kind === "agent" ? "说明这个节点需要完成的任务和输出要求。" : undefined,
-      agentId: kind === "agent" ? agents[0]?.id : undefined,
-      skillIds: kind === "agent" ? [] : undefined,
-      template: kind === "template" ? "任务：{{task}}\n\n上游内容：\n{{input}}" : undefined,
-      knowledgeDocumentIds: kind === "knowledge" && knowledgeDocuments.length
-        ? knowledgeDocuments.slice(0, 1).map((document) => document.id)
-        : undefined,
-      knowledgeBaseIds: kind === "knowledge" && !knowledgeDocuments.length && knowledgeCatalog.status === "authenticated"
+      sequence,
+      defaultAgentId: agents[0]?.id,
+      knowledgeDocumentIds: knowledgeDocuments.slice(0, 1).map((document) => document.id),
+      knowledgeBaseIds: !knowledgeDocuments.length && knowledgeCatalog.status === "authenticated"
         ? normalizeKnowledgeBaseIds(readyCloudKnowledgeBases.slice(0, 1).map((base) => base.id))
-        : undefined,
-      maxKnowledgeChunks: kind === "knowledge" ? 4 : undefined,
+        : [],
       position: { x: maxX + 286, y: 148 }
-    };
+    });
     const nextGraph = addWorkflowNodeToGraph(graph, node);
     updateGraph(nextGraph);
     setSelectedNodeId(node.id);
@@ -966,13 +1075,16 @@ function WorkflowsWorkspace({
         ...graph,
         nodes: graph.nodes.map((node) => ({
           ...node,
+          componentId: workflowComponentForNode(node).id,
+          componentVersion: workflowComponentForNode(node).version,
           name: node.name.trim(),
           instruction: node.instruction?.trim() || undefined,
           skillIds: [...(node.skillIds || [])],
           template: node.template?.trim() || undefined,
           knowledgeDocumentIds: [...(node.knowledgeDocumentIds || [])],
           knowledgeBaseIds: normalizeKnowledgeBaseIds(node.knowledgeBaseIds),
-          maxKnowledgeChunks: node.kind === "knowledge" ? Math.max(1, Math.min(12, Math.round(node.maxKnowledgeChunks || 4))) : undefined
+          maxKnowledgeChunks: node.kind === "knowledge" ? Math.max(1, Math.min(12, Math.round(node.maxKnowledgeChunks || 4))) : undefined,
+          config: node.config ? Object.fromEntries(Object.entries(node.config).map(([key, value]) => [key, Array.isArray(value) ? [...value] : value])) : undefined
         }))
       },
       steps: workflowGraphToSteps(graph),
@@ -1054,9 +1166,11 @@ function WorkflowsWorkspace({
     }
     let workflowCitations: KnowledgeCitation[] = [];
     try {
-      validation.orderedNodes
-        .filter((node) => node.kind === "agent")
-        .forEach((node) => resolveAgentNodeRuntime(node));
+      validation.orderedNodes.forEach((node) => {
+        if (node.kind === "agent") resolveAgentNodeRuntime(node);
+        if (node.kind === "model") resolveModelNodeRuntime(node);
+        if (node.kind === "webSearch") preflightSearchNode(node);
+      });
 
       const workflowCloudKnowledge = prepareCloudKnowledgeRequestContext(
         collectWorkflowCloudKnowledgeBaseIds(validation.orderedNodes, agents),
@@ -1080,30 +1194,27 @@ function WorkflowsWorkspace({
     setRunSteps(runtimeGraph.nodes.filter((node) => node.kind !== "start").map((node) => ({ id: node.id, name: node.name, status: "pending" })));
     setNodeStates(Object.fromEntries(runtimeGraph.nodes.map((node) => [node.id, node.kind === "start" ? "completed" : "pending"])) as Record<string, WorkflowCanvasNodeState>);
     setEdgeStates(Object.fromEntries(runtimeGraph.edges.map((edge) => [edge.id, "waiting"])) as Record<string, WorkflowCanvasEdgeState>);
-    const outputs = new Map<string, string>();
-    const startNode = runtimeGraph.nodes.find((node) => node.kind === "start");
-    if (startNode) outputs.set(startNode.id, task.trim());
     let finalResult: GenerationResult | null = null;
     let finalModelId = selectedRunModel.id;
     try {
-      for (const [nodeIndex, node] of validation.orderedNodes.entries()) {
-        if (node.kind === "start") continue;
-        const inboundEdges = runtimeGraph.edges.filter((edge) => edge.target === node.id);
-        setNodeStates((current) => ({ ...current, [node.id]: "running" }));
-        setEdgeStates((current) => ({ ...current, ...Object.fromEntries(inboundEdges.map((edge) => [edge.id, "active"])) }));
-        setRunSteps((current) => current.map((item) => item.id === node.id ? { ...item, status: "running" } : item));
-        try {
-          const upstreamOutput = inboundEdges
-            .map((edge) => ({ source: runtimeGraph.nodes.find((item) => item.id === edge.source), text: outputs.get(edge.source) || "" }))
-            .filter((item) => item.text)
-            .map((item) => `${item.source?.name || "上游节点"}：\n${item.text}`)
-            .join("\n\n");
-
+      await executeWorkflowGraph(runtimeGraph, validation.orderedNodes, task.trim(), {
+        onNodeState: (node, state, output, error) => {
+          setNodeStates((current) => ({ ...current, [node.id]: state }));
+          if (node.kind === "start") return;
+          setRunSteps((current) => current.map((item) => item.id === node.id
+            ? { ...item, status: state, result: state === "completed" ? output : undefined, error: state === "failed" ? error : undefined }
+            : item));
+        },
+        onEdgeState: (edges, state) => {
+          if (!edges.length) return;
+          setEdgeStates((current) => ({ ...current, ...Object.fromEntries(edges.map((edge) => [edge.id, state])) }));
+        },
+        executeNode: async ({ node, inputs }) => {
+          const upstreamOutput = mergeWorkflowOutputs(inputs, { separator: "\n\n", includeLabels: inputs.length > 1 });
           if (node.kind === "reply") {
-            outputs.set(node.id, upstreamOutput);
             finalResult = {
               ...(finalResult || {
-                id: `workflow-${crypto.randomUUID()}`,
+                id: createClientId("workflow"),
                 module: "agents" as const,
                 title: workflow.name,
                 status: "completed" as const,
@@ -1112,28 +1223,30 @@ function WorkflowsWorkspace({
               title: `${workflow.name} · 结果`,
               text: upstreamOutput
             };
-            setNodeStates((current) => ({ ...current, [node.id]: "completed" }));
-            setEdgeStates((current) => ({ ...current, ...Object.fromEntries(inboundEdges.map((edge) => [edge.id, "completed"])) }));
-            setRunSteps((current) => current.map((item) => item.id === node.id ? { ...item, status: "completed", result: upstreamOutput } : item));
-            continue;
+            return { output: upstreamOutput };
           }
           if (node.kind === "template") {
-            const templateOutput = renderWorkflowTemplate(node.template || "", task.trim(), upstreamOutput);
-            outputs.set(node.id, templateOutput);
-            setNodeStates((current) => ({ ...current, [node.id]: "completed" }));
-            setEdgeStates((current) => ({ ...current, ...Object.fromEntries(inboundEdges.map((edge) => [edge.id, "completed"])) }));
-            setRunSteps((current) => current.map((item) => item.id === node.id ? { ...item, status: "completed", result: templateOutput } : item));
-            continue;
+            return { output: renderWorkflowTemplate(node.template || "", task.trim(), upstreamOutput) };
+          }
+          if (node.kind === "conditional") {
+            const conditionInput = inputs.map((input) => input.text).join("\n\n");
+            const matched = evaluateWorkflowCondition(conditionInput, node.config);
+            return { output: conditionInput, activeSourceHandles: [matched ? "true" : "false"] };
+          }
+          if (node.kind === "structured") return { output: parseWorkflowStructuredOutput(upstreamOutput, node.config) };
+          if (node.kind === "textSplit") return { output: splitWorkflowText(upstreamOutput, node.config) };
+          if (node.kind === "merge") return { output: mergeWorkflowOutputs(inputs, node.config) };
+          if (node.kind === "transform") return { output: transformWorkflowText(upstreamOutput, node.config) };
+          if (node.kind === "loop") return { output: runBoundedWorkflowLoop(upstreamOutput, task.trim(), node.config) };
+          if (node.kind === "approval") {
+            const approved = await requestWorkflowApproval(node, upstreamOutput);
+            if (!approved) throw new Error(`人工确认节点“${node.name}”已拒绝继续执行。`);
+            return { output: upstreamOutput };
           }
           if (node.kind === "knowledge") {
             const query = upstreamOutput || task.trim();
             const localKnowledge = (node.knowledgeDocumentIds || []).length
-              ? retrieveWorkflowKnowledge(
-                  knowledgeDocuments,
-                  node.knowledgeDocumentIds || [],
-                  query,
-                  node.maxKnowledgeChunks || 4
-                )
+              ? retrieveWorkflowKnowledge(knowledgeDocuments, node.knowledgeDocumentIds || [], query, node.maxKnowledgeChunks || 4)
               : null;
             const cloudKnowledge = prepareCloudKnowledgeRequestContext(node.knowledgeBaseIds, knowledgeCatalog);
             const cloudResult = cloudKnowledge
@@ -1144,28 +1257,73 @@ function WorkflowsWorkspace({
                   topK: node.maxKnowledgeChunks || 4
                 })
               : null;
-            if (cloudResult) {
-              workflowCitations = mergeKnowledgeCitations(workflowCitations, cloudResult.citations);
-            }
-            const knowledgeOutput = [
-              localKnowledge?.text ? `本地知识：\n${localKnowledge.text}` : "",
-              cloudResult?.context ? `云知识库：\n${cloudResult.context}` : ""
-            ].filter(Boolean).join("\n\n") || "所选知识源中没有可用片段。";
-            outputs.set(node.id, knowledgeOutput);
-            setNodeStates((current) => ({ ...current, [node.id]: "completed" }));
-            setEdgeStates((current) => ({ ...current, ...Object.fromEntries(inboundEdges.map((edge) => [edge.id, "completed"])) }));
-            setRunSteps((current) => current.map((item) => item.id === node.id ? { ...item, status: "completed", result: knowledgeOutput } : item));
-            continue;
+            if (cloudResult) workflowCitations = mergeKnowledgeCitations(workflowCitations, cloudResult.citations);
+            return {
+              output: [
+                localKnowledge?.text ? `本地知识：\n${localKnowledge.text}` : "",
+                cloudResult?.context ? `云知识库：\n${cloudResult.context}` : ""
+              ].filter(Boolean).join("\n\n") || "所选知识源中没有可用片段。"
+            };
           }
-          const { agent, linkedSkills, model, contextChunks, allowedTools, cloudKnowledgeIds } = resolveAgentNodeRuntime(node);
-          const agentCloudKnowledge = prepareCloudKnowledgeRequestContext(cloudKnowledgeIds, knowledgeCatalog);
-          const prompt = [
-            `初始任务：\n${task.trim()}`,
-            `当前步骤：${node.name}\n${node.instruction || "说明这个节点需要完成的任务和输出要求。"}`,
-            upstreamOutput ? `前一步输出：\n${upstreamOutput}` : ""
-          ].filter(Boolean).join("\n\n");
-          const stepResult = await api.runAgent(
-            {
+          if (node.kind === "model") {
+            const model = resolveModelNodeRuntime(node);
+            const temperature = typeof node.config?.temperature === "number"
+              ? Math.max(0, Math.min(2, node.config.temperature))
+              : 0.3;
+            const stepResult = await api.runAgent({
+              moduleId: "workflows",
+              connection: userConnectionPayload(userProvider),
+              modelId: model.id,
+              agent: {
+                name: node.name,
+                systemPrompt: typeof node.config?.systemPrompt === "string" ? node.config.systemPrompt : "你是可靠的工作流执行助手。",
+                skillInstructions: []
+              },
+              prompt: upstreamOutput || task.trim(),
+              allowedTools: [],
+              options: { temperature }
+            });
+            workflowCitations = mergeKnowledgeCitations(workflowCitations, knowledgeCitationsFromResult(stepResult));
+            finalResult = stepResult;
+            finalModelId = model.id;
+            return { output: stepResult.text || "" };
+          }
+          if (node.kind === "webSearch") {
+            const model = preflightSearchNode(node);
+            const configuredSearchService = searchServicePayload(searchService);
+            if (!configuredSearchService) throw new Error(`节点“${node.name}”需要先配置联网搜索。`);
+            const maxResults = typeof node.config?.maxResults === "number"
+              ? Math.max(1, Math.min(10, Math.round(node.config.maxResults)))
+              : 5;
+            const instruction = typeof node.config?.instruction === "string" ? node.config.instruction : "检索相关资料并保留来源。";
+            const stepResult = await api.runAgent({
+              moduleId: "workflows",
+              connection: userConnectionPayload(userProvider),
+              modelId: model.id,
+              agent: {
+                name: node.name,
+                systemPrompt: "使用提供的联网搜索结果回答，区分来源事实与推断。",
+                skillInstructions: []
+              },
+              prompt: `${instruction}\n\n查询：\n${upstreamOutput || task.trim()}`,
+              allowedTools: ["web_search"],
+              searchService: { ...configuredSearchService, count: maxResults },
+              options: { temperature: 0.2 }
+            });
+            workflowCitations = mergeKnowledgeCitations(workflowCitations, knowledgeCitationsFromResult(stepResult));
+            finalResult = stepResult;
+            finalModelId = model.id;
+            return { output: stepResult.text || "" };
+          }
+          if (node.kind === "agent") {
+            const { agent, linkedSkills, model, contextChunks, allowedTools, cloudKnowledgeIds } = resolveAgentNodeRuntime(node);
+            const agentCloudKnowledge = prepareCloudKnowledgeRequestContext(cloudKnowledgeIds, knowledgeCatalog);
+            const prompt = [
+              `初始任务：\n${task.trim()}`,
+              `当前步骤：${node.name}\n${node.instruction || "说明这个节点需要完成的任务和输出要求。"}`,
+              upstreamOutput ? `前一步输出：\n${upstreamOutput}` : ""
+            ].filter(Boolean).join("\n\n");
+            const stepResult = await api.runAgent({
               moduleId: "workflows",
               connection: userConnectionPayload(userProvider),
               modelId: model.id,
@@ -1177,60 +1335,22 @@ function WorkflowsWorkspace({
               },
               prompt,
               allowedTools,
-              searchService: allowedTools.includes("web_search")
-                ? searchServicePayload(searchService)
-                : undefined,
+              searchService: allowedTools.includes("web_search") ? searchServicePayload(searchService) : undefined,
               contextChunks,
               ...(agentCloudKnowledge ? {
                 knowledgeBaseIds: agentCloudKnowledge.knowledgeBaseIds,
                 embeddingConnections: agentCloudKnowledge.embeddingConnections
               } : {}),
               options: { temperature: 0.3 }
-            },
-            agentCloudKnowledge?.csrfToken || ""
-          );
-          workflowCitations = mergeKnowledgeCitations(
-            workflowCitations,
-            knowledgeCitationsFromResult(stepResult)
-          );
-          outputs.set(node.id, stepResult.text || "");
-          finalResult = stepResult;
-          finalModelId = model.id;
-          setNodeStates((current) => ({ ...current, [node.id]: "completed" }));
-          setEdgeStates((current) => ({ ...current, ...Object.fromEntries(inboundEdges.map((edge) => [edge.id, "completed"])) }));
-          setRunSteps((current) => current.map((item) => item.id === node.id ? { ...item, status: "completed", result: stepResult.text } : item));
-        } catch (stepError) {
-          const message = stepError instanceof Error ? stepError.message : "节点执行失败。";
-          const skippedNodeIds = validation.orderedNodes
-            .slice(nodeIndex + 1)
-            .filter((item) => item.kind !== "start")
-            .map((item) => item.id);
-          const skippedNodeIdSet = new Set(skippedNodeIds);
-          setNodeStates((current) => ({
-            ...current,
-            [node.id]: "failed",
-            ...Object.fromEntries(skippedNodeIds.map((id) => [id, "skipped"]))
-          }));
-          setEdgeStates((current) => {
-            const next = { ...current, ...Object.fromEntries(inboundEdges.map((edge) => [edge.id, "failed" as const])) };
-            for (const edge of runtimeGraph.edges) {
-              if (
-                next[edge.id] === "waiting" &&
-                (edge.source === node.id || skippedNodeIdSet.has(edge.source) || skippedNodeIdSet.has(edge.target))
-              ) {
-                next[edge.id] = "skipped";
-              }
-            }
-            return next;
-          });
-          setRunSteps((current) => current.map((item) => item.id === node.id
-            ? { ...item, status: "failed", error: message }
-            : skippedNodeIdSet.has(item.id)
-              ? { ...item, status: "skipped" }
-              : item));
-          throw stepError;
+            }, agentCloudKnowledge?.csrfToken || "");
+            workflowCitations = mergeKnowledgeCitations(workflowCitations, knowledgeCitationsFromResult(stepResult));
+            finalResult = stepResult;
+            finalModelId = model.id;
+            return { output: stepResult.text || "" };
+          }
+          throw new Error(`节点“${node.name}”没有可用执行器。`);
         }
-      }
+      });
       if (finalResult) {
         finalResult = withKnowledgeCitations(finalResult, workflowCitations);
         setResult(finalResult);
@@ -1255,16 +1375,31 @@ function WorkflowsWorkspace({
       {view === "catalog" ? (
         <section className="workflow-catalog" aria-label="工作流目录">
           <header className="workflow-catalog-toolbar">
-            <div><strong>我的工作流</strong><span>{workflows.length}</span></div>
-            <button type="button" className="figma-primary-action" onClick={createWorkflow}><Plus size={15} />新建工作流</button>
+            <div className="workflow-catalog-tabs" role="tablist" aria-label="工作流目录视图">
+              <button type="button" role="tab" aria-selected={catalogMode === "mine"} onClick={() => setCatalogMode("mine")}>我的工作流</button>
+              <button type="button" role="tab" aria-selected={catalogMode === "templates"} onClick={() => setCatalogMode("templates")}>模板库</button>
+              <span>{catalogMode === "mine" ? workflows.length : workflowStarterTemplates.length}</span>
+            </div>
+            <div className="workflow-catalog-actions">
+              <input
+                ref={importInputRef}
+                className="workflow-import-input"
+                type="file"
+                accept="application/json,.json"
+                aria-label="选择 Langflow JSON 文件"
+                onChange={(event) => void importLangflowFile(event)}
+              />
+              <button type="button" className="workflow-secondary-action" onClick={() => importInputRef.current?.click()}><Upload size={15} />导入 Langflow</button>
+              <button type="button" className="figma-primary-action" onClick={createWorkflow}><Plus size={15} />新建工作流</button>
+            </div>
           </header>
           <div className="workflow-catalog-grid">
-            <button type="button" className="workflow-create-card" onClick={createWorkflow} aria-label="新建工作流">
+            {catalogMode === "mine" ? <button type="button" className="workflow-create-card" onClick={createWorkflow} aria-label="新建工作流">
               <span><Plus size={19} /></span>
               <strong>新建工作流</strong>
               <small>从空白画布开始</small>
-            </button>
-            {workflows.map((workflow) => {
+            </button> : null}
+            {catalogMode === "mine" ? workflows.map((workflow) => {
               const workflowGraph = normalizedWorkflowGraph(workflow);
               const componentCount = workflowGraph.nodes.filter((node) => node.kind !== "start" && node.kind !== "reply").length;
               return (
@@ -1277,7 +1412,16 @@ function WorkflowsWorkspace({
                   <span className="workflow-card-meta"><b>{componentCount} 个组件</b><time dateTime={workflow.updatedAt}>{new Date(workflow.updatedAt).toLocaleDateString("zh-CN")}</time></span>
                 </button>
               );
-            })}
+            }) : workflowStarterTemplates.map((template) => (
+              <button key={template.id} type="button" className="workflow-catalog-card workflow-template-card" onClick={() => openStarterTemplate(template)} aria-label={`使用模板 ${template.name}`}>
+                <span className="workflow-card-icon"><LayoutTemplate size={18} /></span>
+                <span className="workflow-card-copy">
+                  <strong>{template.name}</strong>
+                  <small>{template.description}</small>
+                </span>
+                <span className="workflow-card-meta"><b>{template.nodes.length - 2} 个组件</b><span>{template.category}</span></span>
+              </button>
+            ))}
           </div>
           {notice ? <p className="figma-module-notice" role="status">{notice}</p> : null}
         </section>
@@ -1304,9 +1448,31 @@ function WorkflowsWorkspace({
                   <aside className="workflow-node-library" aria-label="工作流组件">
                     <strong>组件</strong>
                     <span><i className="start" /><b>开始</b><small>固定输入</small></span>
-                    <button type="button" onClick={() => addWorkflowNode("agent")} disabled={busy} aria-label="添加智能体节点"><Bot size={15} /><b>智能体</b><small>模型推理</small></button>
-                    <button type="button" onClick={() => addWorkflowNode("template")} disabled={busy} aria-label="添加文本模板节点"><FileText size={15} /><b>文本模板</b><small>组织变量</small></button>
-                    <button type="button" onClick={() => addWorkflowNode("knowledge")} disabled={busy || !canAddKnowledgeNode} aria-label="添加知识检索节点" title={canAddKnowledgeNode ? "添加知识检索节点" : "请先准备本地文档或云知识库"}><BookOpenText size={15} /><b>知识检索</b><small>{canAddKnowledgeNode ? "本地或云端" : "暂无知识源"}</small></button>
+                    {workflowPaletteComponents.map((component) => {
+                      const unavailable = component.kind === "knowledge" && !canAddKnowledgeNode;
+                      const accessibleLabel = component.kind === "agent"
+                        ? "添加智能体节点"
+                        : component.kind === "template"
+                          ? "添加文本模板节点"
+                          : component.kind === "knowledge"
+                            ? "添加知识检索节点"
+                            : `添加${component.label}节点`;
+                      return (
+                        <button
+                          key={component.id}
+                          type="button"
+                          onClick={() => addWorkflowNode(component.id)}
+                          disabled={busy || unavailable}
+                          aria-label={accessibleLabel}
+                          title={unavailable ? "请先准备本地文档或云知识库" : component.description}
+                          data-component={component.kind}
+                        >
+                          <WorkflowComponentIcon kind={component.kind} size={15} />
+                          <b>{component.label}</b>
+                          <small>{unavailable ? "暂无知识源" : component.description}</small>
+                        </button>
+                      );
+                    })}
                     <span><i className="reply" /><b>输出</b><small>固定结果</small></span>
                   </aside>
                   <WorkflowCanvas
@@ -1323,7 +1489,7 @@ function WorkflowsWorkspace({
                   />
                   <aside className="workflow-node-inspector" aria-label="节点配置">
                     {selectedNode ? <>
-                      <header><span>{selectedNode.kind === "start" ? "输入节点" : selectedNode.kind === "reply" ? "输出节点" : selectedNode.kind === "agent" ? "智能体节点" : selectedNode.kind === "template" ? "文本模板" : "知识检索"}</span><strong>{selectedNode.name}</strong></header>
+                      <header><span>{selectedComponent?.label || "工作流节点"}</span><strong>{selectedNode.name}</strong></header>
                       {selectedNode.kind !== "start" && selectedNode.kind !== "reply" ? <label><span>节点名称</span><input aria-label="节点名称" value={selectedNode.name} disabled={busy} onChange={(event) => updateSelectedNode({ name: event.target.value })} /></label> : null}
                       {selectedNode.kind === "agent" ? <>
                         <label><span>智能体</span><select aria-label="节点智能体" value={selectedNode.agentId || ""} disabled={busy} onChange={(event) => updateSelectedNode({ agentId: event.target.value || undefined })}><option value="">未绑定</option>{agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select></label>
@@ -1335,6 +1501,16 @@ function WorkflowsWorkspace({
                         })}</fieldset>
                       </> : null}
                       {selectedNode.kind === "template" ? <label><span>文本模板</span><textarea aria-label="文本模板" rows={7} value={selectedNode.template || ""} disabled={busy} onChange={(event) => updateSelectedNode({ template: event.target.value })} placeholder="任务：{{task}}\n\n上游内容：{{input}}" /></label> : null}
+                      {selectedNode.kind === "model" ? <label><span>节点模型</span><select aria-label="节点模型" value={typeof selectedNode.config?.modelId === "string" ? selectedNode.config.modelId : ""} disabled={busy} onChange={(event) => updateSelectedNodeConfig("modelId", event.target.value)}><option value="">使用运行区默认模型</option>{models.map((model) => <option key={model.id} value={model.id}>{compactModelLabel(model)}</option>)}</select></label> : null}
+                      {selectedComponent?.fields.map((field) => (
+                        <WorkflowConfigField
+                          key={field.key}
+                          field={field}
+                          value={selectedNode.config?.[field.key]}
+                          disabled={busy}
+                          onChange={(value) => updateSelectedNodeConfig(field.key, value)}
+                        />
+                      ))}
                       {selectedNode.kind === "knowledge" ? <>
                         <label><span>返回片段数</span><input aria-label="知识片段数" type="number" min="1" max="12" value={selectedNode.maxKnowledgeChunks || 4} disabled={busy} onChange={(event) => updateSelectedNode({ maxKnowledgeChunks: Math.max(1, Math.min(12, Number(event.target.value) || 4)) })} /></label>
                         <fieldset><legend>本地文档</legend>{knowledgeDocuments.length ? knowledgeDocuments.map((document) => <label key={document.id}><input type="checkbox" checked={(selectedNode.knowledgeDocumentIds || []).includes(document.id)} disabled={busy} onChange={(event) => updateSelectedNode({ knowledgeDocumentIds: event.target.checked ? unique([...(selectedNode.knowledgeDocumentIds || []), document.id]) : (selectedNode.knowledgeDocumentIds || []).filter((id) => id !== document.id) })} /><span>{document.name}</span></label>) : <p>当前浏览器没有本地文档。</p>}</fieldset>
@@ -1350,6 +1526,7 @@ function WorkflowsWorkspace({
                           </fieldset>
                         ) : null}
                       </> : null}
+                      {selectedNode.kind === "unsupported" ? <p className="workflow-unsupported-note">{typeof selectedNode.config?.reason === "string" ? selectedNode.config.reason : "这个 Langflow 组件尚未提供受控执行器。"}</p> : null}
                       {selectedNode.kind !== "start" && selectedNode.kind !== "reply" ? <button type="button" className="automation-danger-action" disabled={busy} onClick={deleteSelectedNode}><Trash2 size={15} />删除节点</button> : <p>{selectedNode.kind === "start" ? "开始节点提供本次运行的初始任务。" : "输出节点汇总上游节点结果。"}</p>}
                     </> : selectedEdge ? <>
                       <header><span>连线</span><strong>节点流向</strong></header>
@@ -1382,7 +1559,87 @@ function WorkflowsWorkspace({
         </div>
         </>
       )}
+      <ConfirmationDialog
+        open={Boolean(pendingApproval)}
+        title={`确认执行“${pendingApproval?.title || "人工确认"}”`}
+        description={pendingApproval?.description || "确认继续执行这个工作流吗？"}
+        confirmLabel="确认继续"
+        onCancel={() => resolveWorkflowApproval(false)}
+        onConfirm={() => resolveWorkflowApproval(true)}
+      />
     </section>
+  );
+}
+
+function WorkflowConfigField({
+  field,
+  value,
+  disabled,
+  onChange
+}: {
+  field: WorkflowComponentConfigField;
+  value: AgentWorkflowConfigValue | undefined;
+  disabled: boolean;
+  onChange: (value: AgentWorkflowConfigValue) => void;
+}) {
+  if (field.control === "toggle") {
+    return (
+      <label className="workflow-config-toggle">
+        <input type="checkbox" checked={value === true} disabled={disabled} onChange={(event) => onChange(event.target.checked)} />
+        <span>{field.label}</span>
+      </label>
+    );
+  }
+  if (field.control === "select") {
+    return (
+      <label>
+        <span>{field.label}</span>
+        <select aria-label={field.label} value={typeof value === "string" ? value : ""} disabled={disabled} onChange={(event) => onChange(event.target.value)}>
+          {(field.options || []).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+        </select>
+      </label>
+    );
+  }
+  if (field.control === "number") {
+    const numericValue = typeof value === "number" ? value : field.minimum || 0;
+    return (
+      <label>
+        <span>{field.label}</span>
+        <input
+          aria-label={field.label}
+          type="number"
+          min={field.minimum}
+          max={field.maximum}
+          step={field.step}
+          value={numericValue}
+          disabled={disabled}
+          onChange={(event) => onChange(Number(event.target.value))}
+        />
+      </label>
+    );
+  }
+  if (field.control === "textarea") {
+    return (
+      <label>
+        <span>{field.label}</span>
+        <textarea aria-label={field.label} rows={5} value={typeof value === "string" ? value : ""} placeholder={field.placeholder} disabled={disabled} onChange={(event) => onChange(event.target.value)} />
+      </label>
+    );
+  }
+  if (field.control === "string-list") {
+    const text = Array.isArray(value) ? value.join(", ") : typeof value === "string" ? value : "";
+    return (
+      <label>
+        <span>{field.label}</span>
+        <input aria-label={field.label} value={text} placeholder={field.placeholder} disabled={disabled} onChange={(event) => onChange(event.target.value.split(",").map((item) => item.trim()).filter(Boolean).slice(0, 24))} />
+      </label>
+    );
+  }
+  return (
+    <label>
+      <span>{field.label}</span>
+      <input aria-label={field.label} value={typeof value === "string" ? value : ""} placeholder={field.placeholder} disabled={disabled} onChange={(event) => onChange(event.target.value)} />
+    </label>
   );
 }
 

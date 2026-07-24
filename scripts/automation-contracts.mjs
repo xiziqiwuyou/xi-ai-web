@@ -187,7 +187,7 @@ try {
   assert.deepEqual(migratedLegacyAssistant.tags, ["问答", "规划", "执行"]);
   assert.equal(migratedLegacyAssistant.enabled, true);
   assert.equal(migratedLegacyAssistant.updatedAt, legacyCreatedAt, "normalization must preserve update timestamps");
-  assert.equal(JSON.parse(fs.readFileSync(path.join(dataDir, "app-data.json"), "utf8")).version, 8);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dataDir, "app-data.json"), "utf8")).version, 9);
   const migratedOpenAi = bootstrap.modelCatalog.find((model) => model.id === "openai-gpt-4-1-mini");
   const migratedKimi = bootstrap.modelCatalog.find((model) => model.id === "kimi-k3");
   const migratedQwenFlash = bootstrap.modelCatalog.find((model) => model.id === "qwen3-6-flash");

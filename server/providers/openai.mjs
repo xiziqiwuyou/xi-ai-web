@@ -98,14 +98,52 @@ function extractEmbeddings(json) {
     .filter((embedding) => Array.isArray(embedding));
 }
 
-function textOptions({ temperature, topP, maxTokens }) {
+function reasoningOptions(reasoningEffort) {
+  switch (reasoningEffort) {
+    case "off":
+      return { reasoning: { effort: "none" } };
+    case "low":
+    case "medium":
+    case "high":
+    case "xhigh":
+      return { reasoning: { effort: reasoningEffort } };
+    default:
+      return {};
+  }
+}
+
+function textOptions({ temperature, topP, maxTokens, reasoningEffort }) {
+  const explicitReasoning = ["low", "medium", "high", "xhigh"].includes(reasoningEffort);
   return {
-    temperature: Number.isFinite(Number(temperature)) ? Number(temperature) : undefined,
-    top_p: Number.isFinite(Number(topP)) ? Number(topP) : undefined,
+    temperature: explicitReasoning ? undefined : Number.isFinite(Number(temperature)) ? Number(temperature) : undefined,
+    top_p: explicitReasoning ? undefined : Number.isFinite(Number(topP)) ? Number(topP) : undefined,
     max_output_tokens: Number.isFinite(Number(maxTokens))
       ? Math.max(1, Math.trunc(Number(maxTokens)))
-      : undefined
+      : undefined,
+    ...reasoningOptions(reasoningEffort)
   };
+}
+
+function responseRequestBody({
+  model,
+  input,
+  previousResponseId,
+  instructions,
+  temperature,
+  topP,
+  reasoningEffort,
+  maxTokens,
+  tools
+}, normalizeResponseBody) {
+  const body = {
+    model,
+    input,
+    previous_response_id: previousResponseId || undefined,
+    instructions: instructions || undefined,
+    ...textOptions({ temperature, topP, reasoningEffort, maxTokens }),
+    tools: tools?.length ? tools : undefined
+  };
+  return normalizeResponseBody ? normalizeResponseBody(body, { model, reasoningEffort }) : body;
 }
 
 async function completeWithTools({
@@ -114,12 +152,14 @@ async function completeWithTools({
   messages,
   temperature,
   topP,
+  reasoningEffort,
   maxTokens,
   tools,
   hostedTools,
   runTool,
   maxToolRounds = 4,
-  signal
+  signal,
+  normalizeResponseBody
 }) {
   assertCapability(provider, "chat");
   if (hasImageContent(messages)) assertCapability(provider, "vision");
@@ -133,14 +173,17 @@ async function completeWithTools({
   for (let round = 0; round <= maxToolRounds; round += 1) {
     const json = await fetchJson(providerUrl(provider, "/responses"), {
       headers: authHeaders(provider),
-      body: {
+      body: responseRequestBody({
         model,
         input,
-        previous_response_id: previousResponseId || undefined,
-        instructions: previousResponseId ? undefined : system || undefined,
-        ...textOptions({ temperature, topP, maxTokens }),
-        tools: mappedTools.length ? mappedTools : undefined
-      },
+        previousResponseId,
+        instructions: previousResponseId ? "" : system,
+        temperature,
+        topP,
+        reasoningEffort,
+        maxTokens,
+        tools: mappedTools
+      }, normalizeResponseBody),
       signal
     });
     const toolCalls = extractToolCalls(json);
@@ -163,19 +206,34 @@ async function completeWithTools({
 }
 
 async function completeText(params) {
-  const { provider, model, messages, temperature, topP, maxTokens, signal, tools, hostedTools } = params;
+  const {
+    provider,
+    model,
+    messages,
+    temperature,
+    topP,
+    reasoningEffort,
+    maxTokens,
+    signal,
+    tools,
+    hostedTools,
+    normalizeResponseBody
+  } = params;
   if (tools?.length || hostedTools?.length) return completeWithTools(params);
   assertCapability(provider, "chat");
   if (hasImageContent(messages)) assertCapability(provider, "vision");
   const { system, input } = splitSystem(messages);
   const json = await fetchJson(providerUrl(provider, "/responses"), {
     headers: authHeaders(provider),
-    body: {
+    body: responseRequestBody({
       model,
       input,
-      instructions: system || undefined,
-      ...textOptions({ temperature, topP, maxTokens })
-    },
+      instructions: system,
+      temperature,
+      topP,
+      reasoningEffort,
+      maxTokens
+    }, normalizeResponseBody),
     signal
   });
   return extractResponseText(json) || JSON.stringify(json);
@@ -298,14 +356,14 @@ async function transcribeAudio({ provider, model, fileBuffer, fileName, mimeType
   });
 }
 
-export function createOpenAIAdapter(provider) {
+export function createOpenAIAdapter(provider, { normalizeResponseBody } = {}) {
   return {
     kind: "openai",
     streamChat: async (params) => {
-      const text = await completeText({ provider, ...params });
+      const text = await completeText({ ...params, provider, normalizeResponseBody });
       if (text) params.onToken(text);
     },
-    completeText: (params) => completeText({ provider, ...params }),
+    completeText: (params) => completeText({ ...params, provider, normalizeResponseBody }),
     generateImage: (params) => generateImage({ provider, ...params }),
     synthesizeSpeech: (params) => synthesizeSpeech({ provider, ...params }),
     transcribeAudio: (params) => transcribeAudio({ provider, ...params }),

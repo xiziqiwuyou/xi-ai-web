@@ -39,6 +39,12 @@ assert(!bootstrapJson.includes("baseUrl"), "Public bootstrap leaked baseUrl");
 assert(!bootstrapJson.includes("adminEntryEnabled"), "Public bootstrap leaked admin entry flag");
 assert(!bootstrapJson.includes("checklist"), "Public bootstrap leaked admin operations checklist");
 assert(!bootstrapJson.includes("backups"), "Public bootstrap leaked admin backups");
+assert(Array.isArray(bootstrap.langflowWorkflows), "Public bootstrap is missing the workflow catalog");
+assert(
+  !bootstrap.langflowWorkflows.some((workflow) => Object.prototype.hasOwnProperty.call(workflow, "flowId")),
+  "Public bootstrap leaked a private Langflow Flow ID"
+);
+assert(!bootstrapJson.includes("LANGFLOW_API_KEY"), "Public bootstrap leaked Langflow configuration");
 assert(!bootstrap.menuItems?.some((item) => item.id === "settings"), "Public bootstrap contains settings menu");
 assert(!bootstrap.conversations?.length, "Public bootstrap contains conversation summaries");
 

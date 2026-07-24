@@ -357,6 +357,7 @@ function supportsImageResolution(model: ModelCatalogEntry | undefined, resolutio
   if (!model) return false;
   if (resolution === "512px") return model.vendor === "gemini" && /^gemini-3\.1-flash-image(?:$|-)/i.test(model.model);
   if (model.vendor === "openai") return /^gpt-image-2(?:$|-)/i.test(model.model);
+  if (model.vendor === "botcf") return true;
   if (model.vendor === "gemini") return /^gemini-3(?:\.|-)/i.test(model.model);
   return false;
 }
@@ -399,7 +400,9 @@ function ImageStudio({
   const [quality, setQuality] = useState("auto");
   const [outputFormat, setOutputFormat] = useState<ImageOutputFormat>("png");
   const [outputCompression, setOutputCompression] = useState("80");
-  const [inputImage, setInputImage] = useState<ImageInputPayload | null>(null);
+  const [inputImages, setInputImages] = useState<ImageInputPayload[]>([]);
+  const [referenceImageUrls, setReferenceImageUrls] = useState<string[]>([]);
+  const [referenceImageUrlDraft, setReferenceImageUrlDraft] = useState("");
   const [maskImage, setMaskImage] = useState<ImageInputPayload | null>(null);
   const [batchOffset, setBatchOffset] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -416,6 +419,12 @@ function ImageStudio({
   const usesOpenAIImageOptions = selectedModel?.vendor === "openai" || selectedModel?.vendor === "openai-compatible";
   const supportsEdit = Boolean(selectedModel?.capabilities.includes("imageEdit"));
   const supportsMask = selectedModel?.vendor === "openai";
+  const usesBotcf = selectedModel?.vendor === "botcf";
+  const usesBotcfGemini = Boolean(
+    usesBotcf && /^gemini-[a-z0-9.-]*image(?:$|[-_])/i.test(selectedModel?.model || "")
+  );
+  const maxReferenceImages = usesBotcf ? 4 : 1;
+  const inputImage = inputImages[0] || null;
   const resolutionOptions = useMemo(
     () => imageResolutionOptions.map((option) => ({
       ...option,
@@ -469,6 +478,14 @@ function ImageStudio({
   }, [mode, supportsEdit]);
 
   useEffect(() => {
+    setInputImages((current) => usesBotcfGemini ? [] : current.slice(0, maxReferenceImages));
+    if (!usesBotcf) {
+      setReferenceImageUrls([]);
+      setReferenceImageUrlDraft("");
+    }
+  }, [maxReferenceImages, usesBotcf, usesBotcfGemini]);
+
+  useEffect(() => {
     if (!supportsImageResolution(selectedModel, resolution)) setResolution("1K");
   }, [resolution, selectedModel]);
 
@@ -489,6 +506,48 @@ function ImageStudio({
     }
   };
 
+  const selectReferenceImages = async (event: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files || []);
+    event.target.value = "";
+    if (!files.length) return;
+    try {
+      const parsed = await Promise.all(files.map((file) => readImageFile(file)));
+      let overflowed = false;
+      setInputImages((current) => {
+        const existing = new Set(current.map((item) => item.dataUrl));
+        const next = [...current, ...parsed.filter((item) => !existing.has(item.dataUrl))];
+        overflowed = next.length > maxReferenceImages;
+        return next.slice(0, maxReferenceImages);
+      });
+      setNotice(overflowed ? `参考图最多支持 ${maxReferenceImages} 张` : "");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "图片读取失败");
+    }
+  };
+
+  const addReferenceImageUrl = () => {
+    const value = referenceImageUrlDraft.trim();
+    if (!value) return;
+    try {
+      const url = new URL(value);
+      if (url.protocol !== "https:" || url.username || url.password) {
+        throw new Error("参考图链接必须是公开 HTTPS 地址");
+      }
+      setReferenceImageUrls((current) => {
+        if (current.includes(url.toString())) return current;
+        if (current.length >= 4) {
+          setNotice("参考图链接最多支持 4 条");
+          return current;
+        }
+        return [...current, url.toString()];
+      });
+      setReferenceImageUrlDraft("");
+      setNotice("");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "参考图链接无效");
+    }
+  };
+
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (!isUserProviderReady(userProvider)) {
@@ -499,8 +558,12 @@ function ImageStudio({
       setNotice("请输入画面描述并选择模型。");
       return;
     }
-    if (mode === "edit" && !inputImage) {
-      setNotice("请先上传需要编辑的原图。");
+    if (mode === "edit" && !inputImages.length && !referenceImageUrls.length) {
+      setNotice(usesBotcfGemini ? "请添加公开 HTTPS 参考图链接。" : "请先上传需要编辑的参考图。");
+      return;
+    }
+    if (mode === "edit" && inputImages.length && referenceImageUrls.length) {
+      setNotice("请使用上传参考图或 HTTPS 参考图链接中的一种方式。");
       return;
     }
     setBusy(true);
@@ -517,6 +580,8 @@ function ImageStudio({
           imageSize: resolution,
           size: imageRequestSize(aspectRatio, resolution),
           inputImage: mode === "edit" ? inputImage || undefined : undefined,
+          inputImages: mode === "edit" ? inputImages : undefined,
+          referenceImageUrls: mode === "edit" && usesBotcf ? referenceImageUrls : undefined,
           maskImage: mode === "edit" && supportsMask ? maskImage || undefined : undefined,
           stylePreset: style,
           quality: usesOpenAIImageOptions ? quality : undefined,
@@ -585,28 +650,96 @@ function ImageStudio({
           />
           {mode === "edit" ? (
             <div className="figma-image-upload-grid">
-              <div className="figma-image-upload-field">
-                <span>原图</span>
-                <div>
-                  {inputImage ? <img src={inputImage.dataUrl} alt="待编辑原图" /> : null}
-                  <button type="button" disabled={busy} onClick={() => inputImageRef.current?.click()}>
-                    <FileUp size={15} />
-                    {inputImage ? "更换原图" : "上传原图"}
-                  </button>
-                  {inputImage ? (
-                    <button type="button" className="icon" disabled={busy} aria-label="移除原图" title="移除原图" onClick={() => setInputImage(null)}>
-                      <X size={14} />
+              {!usesBotcfGemini ? (
+                <div className="figma-image-upload-field figma-image-reference-field">
+                  <span>{usesBotcf ? "参考图" : "原图"}</span>
+                  <div className="figma-image-reference-control">
+                    {inputImages.length ? (
+                      <div className="figma-image-reference-list" aria-label="已上传参考图">
+                        {inputImages.map((image, index) => (
+                          <figure key={image.dataUrl}>
+                            <img src={image.dataUrl} alt={`参考图 ${index + 1}`} />
+                            <button
+                              type="button"
+                              className="icon"
+                              disabled={busy}
+                              aria-label={`移除参考图 ${index + 1}`}
+                              title={`移除参考图 ${index + 1}`}
+                              onClick={() => setInputImages((current) => current.filter((item) => item.dataUrl !== image.dataUrl))}
+                            >
+                              <X size={13} />
+                            </button>
+                          </figure>
+                        ))}
+                      </div>
+                    ) : null}
+                    <button type="button" disabled={busy} onClick={() => inputImageRef.current?.click()}>
+                      <FileUp size={15} />
+                      {usesBotcf
+                        ? inputImages.length ? "添加参考图" : "上传参考图"
+                        : inputImages.length ? "更换原图" : "上传原图"}
                     </button>
+                  </div>
+                  <input
+                    ref={inputImageRef}
+                    type="file"
+                    hidden
+                    multiple={usesBotcf}
+                    accept="image/png,image/jpeg,image/webp"
+                    onChange={(event) => void selectReferenceImages(event)}
+                  />
+                </div>
+              ) : null}
+              {usesBotcf ? (
+                <div className="figma-image-upload-field figma-image-url-field">
+                  <span>参考图链接</span>
+                  <div className="figma-image-url-control">
+                    <input
+                      aria-label="参考图链接"
+                      type="url"
+                      value={referenceImageUrlDraft}
+                      disabled={busy}
+                      placeholder="https://..."
+                      onChange={(event) => setReferenceImageUrlDraft(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          addReferenceImageUrl();
+                        }
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="icon"
+                      disabled={busy || !referenceImageUrlDraft.trim()}
+                      aria-label="添加参考图链接"
+                      title="添加参考图链接"
+                      onClick={addReferenceImageUrl}
+                    >
+                      <Plus size={15} />
+                    </button>
+                  </div>
+                  {referenceImageUrls.length ? (
+                    <div className="figma-image-url-list" aria-label="已添加参考图链接">
+                      {referenceImageUrls.map((url, index) => (
+                        <span key={url}>
+                          <em>{`链接 ${index + 1}`}</em>
+                          <button
+                            type="button"
+                            className="icon"
+                            disabled={busy}
+                            aria-label={`移除参考图链接 ${index + 1}`}
+                            title={`移除参考图链接 ${index + 1}`}
+                            onClick={() => setReferenceImageUrls((current) => current.filter((item) => item !== url))}
+                          >
+                            <X size={13} />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
                   ) : null}
                 </div>
-                <input
-                  ref={inputImageRef}
-                  type="file"
-                  hidden
-                  accept="image/png,image/jpeg,image/webp"
-                  onChange={(event) => void selectImageFile(event, setInputImage)}
-                />
-              </div>
+              ) : null}
               {supportsMask ? (
                 <div className="figma-image-upload-field">
                   <span>蒙版（PNG）</span>

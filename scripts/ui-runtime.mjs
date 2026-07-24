@@ -149,7 +149,7 @@ try {
     "AI \u5bf9\u8bdd\u5de5\u4f5c\u53f0",
     "\u7f51\u7edc\u641c\u7d22",
     "\u56fe\u7247\u8f93\u5165",
-    "\u6e05\u9664\u6b64\u5bf9\u8bdd\u4e0a\u4e0b\u6587",
+    "\u6e05\u9664\u6d88\u606f",
     "Shift + Enter"
   ]) {
     assert(chatModule.includes(exactCopy), `Chat source lacks exact Figma copy: ${exactCopy}`);

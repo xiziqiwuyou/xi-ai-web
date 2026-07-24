@@ -51,9 +51,17 @@ The jobs/storage destination keeps one transient operation-reason field. Failed/
 
 The Chat composer uses `$` for Skill commands and `/` for enabled application commands. Keep keyboard focus in the textarea while the listbox is visible, use Arrow keys/Enter/Escape plus touchable option buttons, and render selected items as removable composer tags rather than visible command syntax.
 
+Chat message Markdown uses `remark-gfm` plus `remark-math` and `rehype-katex`; keep raw HTML disabled. Fenced code is rendered through the Chat-owned code block component with a language label, copy action, horizontal overflow, and a Clipboard API fallback for HTTP deployments. Do not execute or syntax-evaluate message code.
+
+Chat message rows are Grid children that also act as Flex containers. Keep `.figma-message { width: 100%; min-width: 0; }` and bound `.figma-code-block` to `width/max-width: 100%`; long code must increase the nested `pre.scrollWidth`, never the message track width. Mobile browser coverage must assert that the Copy Code control remains inside the viewport while the code body scrolls horizontally.
+
 Tool-bearing Skills are available in Chat when the selected model and server catalog are compatible. Disabled command/settings rows show the specific model, vendor, admin, search-config, or context reason. The network-search control requests `web_search`, checks administrator enablement plus the independent search-session config, and never depends on the selected main model's `webSearch` or `toolCalling` capability. Clicking an unconfigured search control opens the shared GLM/Kimi search dialog; prompt copy must not simulate search. Skill and Agent tool pickers distinguish local execution, independent search, and provider-hosted execution; Admin presents the same ownership boundary.
 
 Controlled React Flow nodes must declare stable card dimensions so edge routing, fit bounds, and MiniMap nodes share the same geometry. Keep the default viewport readable, expose a compact colored MiniMap plus an explicit fit control, and do not automatically shrink a multi-node graph until labels become unreadable. Browser tests must assert both the MiniMap node count and the fit-control result.
+
+Local workflow components use `src/features/automation/workflowComponents.ts` as the single source of truth for IDs, versions, labels, ports, configuration fields, executors, capability requirements, and security levels. Legacy nodes may be projected by `kind`, but new records and imported Langflow nodes must carry the stable component ID and version. `workflowLangflowImport.ts` may translate declarative topology and bounded configuration only; arbitrary Python, JavaScript, shell, SQL, filesystem, credential, and provider-binding fields become visible blocked nodes or warnings and must never become executable browser code. Unsupported nodes remain in the graph so users can inspect and repair the import, and graph validation must fail before any provider request. Execution state types live in an automation contract module rather than importing the React Flow presentation component into the scheduler.
+
+Browser-generated identifiers use `src/utils/clientId.ts`. Do not call `crypto.randomUUID()` directly in frontend modules because HTTP IP deployments are not secure contexts and may expose only `crypto.getRandomValues()`.
 
 ## Props And Composition
 
