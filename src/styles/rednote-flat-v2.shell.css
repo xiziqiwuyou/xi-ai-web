@@ -96,7 +96,25 @@
   padding-right: 2px;
   scrollbar-gutter: stable;
   scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--xhs-muted) 24%, transparent) transparent;
+  scrollbar-color: transparent transparent;
+}
+
+.figma-navigation::-webkit-scrollbar {
+  width: 4px;
+}
+
+.figma-navigation::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background-color: transparent;
+  transition: background-color 180ms ease;
+}
+
+.figma-navigation[data-scroll-active="true"] {
+  scrollbar-color: color-mix(in srgb, var(--xhs-muted) 32%, transparent) transparent;
+}
+
+.figma-navigation[data-scroll-active="true"]::-webkit-scrollbar-thumb {
+  background-color: color-mix(in srgb, var(--xhs-muted) 32%, transparent);
 }
 
 .figma-nav-item {
@@ -390,7 +408,7 @@
   scrollbar-color: transparent transparent;
 }
 
-.figma-workspace:hover {
+.figma-workspace[data-scroll-active="true"] {
   scrollbar-color: color-mix(in srgb, var(--xhs-muted) 42%, transparent) transparent;
 }
 
@@ -400,11 +418,12 @@
 
 .figma-workspace::-webkit-scrollbar-thumb {
   border-radius: 999px;
-  background: transparent;
+  background-color: transparent;
+  transition: background-color 180ms ease;
 }
 
-.figma-workspace:hover::-webkit-scrollbar-thumb {
-  background: color-mix(in srgb, var(--xhs-muted) 42%, transparent);
+.figma-workspace[data-scroll-active="true"]::-webkit-scrollbar-thumb {
+  background-color: color-mix(in srgb, var(--xhs-muted) 42%, transparent);
 }
 
 .figma-workspace:focus {

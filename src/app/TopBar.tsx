@@ -33,6 +33,8 @@ type TopBarProps = {
   onOpenWorkspaceData: () => void;
   onOpenApiConfig: () => void;
   onWorkspaceError: (message: string) => void;
+  navigationScrollActive: boolean;
+  onNavigationScroll: () => void;
 };
 
 const navigationMeta: Partial<Record<ModuleId, { label: string; note: string; icon: typeof MessageSquare }>> = {
@@ -109,7 +111,9 @@ function TopBar({
   onModuleIntent,
   onOpenWorkspaceData,
   onOpenApiConfig,
-  onWorkspaceError
+  onWorkspaceError,
+  navigationScrollActive,
+  onNavigationScroll
 }: TopBarProps) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const mobileMenuButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -188,7 +192,13 @@ function TopBar({
     .sort((a, b) => a.order - b.order);
 
   const navigation = (className: string) => (
-    <nav id="figma-public-navigation" className={className} aria-label="功能菜单">
+    <nav
+      id="figma-public-navigation"
+      className={className}
+      data-scroll-active={navigationScrollActive ? "true" : "false"}
+      aria-label="功能菜单"
+      onScroll={onNavigationScroll}
+    >
       {orderedItems.map((item) => {
         const meta = navigationMeta[item.id];
         if (!meta) return null;

@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { CircleAlert, LoaderCircle, LockKeyhole, RotateCcw } from "lucide-react";
 import TopBar from "./TopBar";
+import { useShellScrollActivity } from "./useShellScrollActivity";
 import type { MenuItem, ModuleId } from "../types";
 
 type AppShellProps = {
@@ -42,6 +43,8 @@ function AppShell({
   onWorkspaceError,
   children
 }: AppShellProps) {
+  const shellScroll = useShellScrollActivity();
+
   return (
     <div
       className="figma-studio-shell"
@@ -63,12 +66,16 @@ function AppShell({
         onOpenWorkspaceData={onOpenWorkspaceData}
         onOpenApiConfig={onOpenApiConfig}
         onWorkspaceError={onWorkspaceError}
+        navigationScrollActive={shellScroll.activeOwner === "navigation"}
+        onNavigationScroll={() => shellScroll.markActive("navigation")}
       />
       <main
         id="workspace-main"
         className="figma-workspace"
         data-scroll-owner="public-workspace"
+        data-scroll-active={shellScroll.activeOwner === "workspace" ? "true" : "false"}
         tabIndex={-1}
+        onScroll={() => shellScroll.markActive("workspace")}
       >
         {moduleTransitionPending && pendingModule ? (
           <div className="figma-module-transition" role="status" aria-live="polite" aria-atomic="true">

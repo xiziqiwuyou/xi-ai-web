@@ -46,6 +46,44 @@ test("selected public navigation stays flat without a drop shadow", async ({ pag
   expect(await activeNavigation.evaluate((element) => getComputedStyle(element).boxShadow)).toBe("none");
 });
 
+test("public shell scrollbars reveal only for the active scroll event", async ({ page }, testInfo) => {
+  test.skip(isMobileProject(testInfo.project.name), "Desktop shell owns both navigation and workspace scrollers");
+  await page.setViewportSize({ width: 1280, height: 600 });
+  await page.goto("/image");
+  await waitForPublicModule(page, publicDestinations[1]);
+
+  const navigation = page.locator(".figma-navigation");
+  const workspace = page.locator(".figma-workspace");
+  const scrollbarVisual = (selector: ".figma-navigation" | ".figma-workspace") => page.locator(selector).evaluate((element) => ({
+    color: getComputedStyle(element).scrollbarColor,
+    thumb: getComputedStyle(element, "::-webkit-scrollbar-thumb").backgroundColor
+  }));
+
+  expect(await navigation.evaluate((element) => element.scrollHeight > element.clientHeight)).toBeTruthy();
+  expect(await workspace.evaluate((element) => element.scrollHeight > element.clientHeight)).toBeTruthy();
+
+  const workspaceIdle = await scrollbarVisual(".figma-workspace");
+  await workspace.hover();
+  expect(await scrollbarVisual(".figma-workspace")).toEqual(workspaceIdle);
+  await expect(workspace).toHaveAttribute("data-scroll-active", "false");
+
+  await navigation.hover();
+  await page.mouse.wheel(0, 180);
+  await expect(navigation).toHaveAttribute("data-scroll-active", "true");
+  await expect(workspace).toHaveAttribute("data-scroll-active", "false");
+  const navigationActive = await scrollbarVisual(".figma-navigation");
+
+  await workspace.hover();
+  await page.mouse.wheel(0, 220);
+  await expect(workspace).toHaveAttribute("data-scroll-active", "true");
+  await expect(navigation).toHaveAttribute("data-scroll-active", "false");
+  expect(await scrollbarVisual(".figma-workspace")).not.toEqual(workspaceIdle);
+  expect(navigationActive).not.toEqual(await scrollbarVisual(".figma-navigation"));
+
+  await expect(workspace).toHaveAttribute("data-scroll-active", "false", { timeout: 1_200 });
+  expect(await scrollbarVisual(".figma-workspace")).toEqual(workspaceIdle);
+});
+
 test("invalid public paths resolve to the configured default", async ({ page }) => {
   await page.goto("/not-a-public-module");
 
