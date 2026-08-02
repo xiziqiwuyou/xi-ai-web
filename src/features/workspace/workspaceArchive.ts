@@ -7,9 +7,12 @@ import type {
   AgentWorkflowNode,
   AgentWorkflowStep,
   AgentWorkflowViewport,
+  ChatAttachment,
   Conversation,
   GalleryItem,
+  ImageGenerationTimingRecord,
   GenerationResult,
+  KnowledgeCitation,
   KnowledgeChunk,
   KnowledgeDocument,
   MediaJob,
@@ -38,8 +41,7 @@ const modelCapabilities: readonly ModelCapability[] = [
   "video",
   "embedding",
   "fileSearch",
-  "toolCalling",
-  "streaming"
+  "toolCalling"
 ];
 
 type WorkspaceRecord = Record<string, unknown>;
@@ -85,18 +87,130 @@ function cleanOptionalObject(value: unknown) {
   return source ? structuredClone(source) : undefined;
 }
 
+function cleanBoundedNumber(value: unknown, fallback = 0, minimum = 0, maximum = Number.MAX_SAFE_INTEGER) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(minimum, Math.min(maximum, number));
+}
+
+function sanitizeMessageAttachment(value: unknown): ChatAttachment | null {
+  const source = recordFrom(value);
+  const id = cleanText(source?.id, 180);
+  const kind = source?.kind;
+  const name = cleanText(source?.name, 140);
+  const mimeType = cleanText(source?.mimeType, 120).toLowerCase();
+  const size = Math.trunc(cleanBoundedNumber(source?.size, 0));
+  if (!id || !name || (kind !== "image" && kind !== "text")) return null;
+
+  if (kind === "image") {
+    const dataUrl = cleanText(source?.dataUrl, 5_600_000, false);
+    if (!/^data:image\/(?:png|jpeg|jpg|webp|gif);base64,[a-z0-9+/=]+$/iu.test(dataUrl)) return null;
+    if (size > 4 * 1024 * 1024) return null;
+    return { id, kind, name, mimeType: mimeType || "image/png", size, dataUrl };
+  }
+
+  const text = cleanText(source?.text, 12_000, false)
+    .replace(/\u0000/gu, "")
+    .replace(/\r\n?/gu, "\n")
+    .trim();
+  if (!text || size > 512 * 1024) return null;
+  return { id, kind, name, mimeType: mimeType || "text/plain", size, text };
+}
+
+function sanitizeMessageAttachments(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  let imageCount = 0;
+  let textCount = 0;
+  return value
+    .slice(0, 10)
+    .map(sanitizeMessageAttachment)
+    .filter((attachment): attachment is ChatAttachment => {
+      if (!attachment) return false;
+      if (attachment.kind === "image") {
+        imageCount += 1;
+        return imageCount <= 6;
+      }
+      textCount += 1;
+      return textCount <= 4;
+    });
+}
+
+function sanitizeCitationLocator(value: unknown): Record<string, unknown> {
+  const source = recordFrom(value);
+  if (!source) return {};
+  const locator: Record<string, string | number | boolean> = {};
+  for (const [key, child] of Object.entries(source).slice(0, 12)) {
+    const cleanKey = cleanText(key, 60);
+    if (!cleanKey) continue;
+    if (typeof child === "string") locator[cleanKey] = cleanText(child, 240);
+    else if (typeof child === "number" && Number.isFinite(child)) locator[cleanKey] = child;
+    else if (typeof child === "boolean") locator[cleanKey] = child;
+  }
+  return locator;
+}
+
+function sanitizeKnowledgeCitation(value: unknown): KnowledgeCitation | null {
+  const source = recordFrom(value);
+  const id = cleanText(source?.id, 80);
+  const knowledgeBaseId = cleanText(source?.knowledgeBaseId, 180);
+  const knowledgeBaseName = cleanText(source?.knowledgeBaseName, 240);
+  const documentId = cleanText(source?.documentId, 180);
+  const documentName = cleanText(source?.documentName, 240);
+  const chunkId = cleanText(source?.chunkId, 180);
+  const sourceLink = recordFrom(source?.source);
+  const openPath = cleanText(sourceLink?.openPath, 1000);
+  const downloadPath = cleanText(sourceLink?.downloadPath, 1000);
+  if (!id || !knowledgeBaseId || !documentId || !documentName || !chunkId || !openPath || !downloadPath) {
+    return null;
+  }
+  return {
+    id,
+    knowledgeBaseId,
+    knowledgeBaseName,
+    documentId,
+    documentName,
+    chunkId,
+    chunkOrdinal: Math.trunc(cleanBoundedNumber(source?.chunkOrdinal, 0)),
+    locator: sanitizeCitationLocator(source?.locator),
+    score: cleanBoundedNumber(source?.score, 0, -1, 1),
+    mode: "vector",
+    source: { method: "GET", openPath, downloadPath }
+  };
+}
+
+function sanitizeMessageUsage(value: unknown): Conversation["messages"][number]["usage"] {
+  const source = recordFrom(value);
+  if (!source) return undefined;
+  const inputTokens = Math.trunc(cleanBoundedNumber(source.inputTokens, 0));
+  const outputTokens = Math.trunc(cleanBoundedNumber(source.outputTokens, 0));
+  const totalTokens = Math.trunc(cleanBoundedNumber(source.totalTokens, inputTokens + outputTokens));
+  if (!inputTokens && !outputTokens && !totalTokens) return undefined;
+  return { inputTokens, outputTokens, totalTokens };
+}
+
 export function sanitizeWorkspaceMessage(value: unknown): Conversation["messages"][number] | null {
   const source = recordFrom(value);
   const id = cleanText(source?.id, 120);
   const role = source?.role;
   if (!id || (role !== "user" && role !== "assistant")) return null;
   const status = source?.status;
+  const attachments = sanitizeMessageAttachments(source?.attachments);
+  const knowledgeCitations = Array.isArray(source?.knowledgeCitations)
+    ? source.knowledgeCitations
+        .slice(0, 32)
+        .map(sanitizeKnowledgeCitation)
+        .filter((citation): citation is KnowledgeCitation => Boolean(citation))
+    : [];
+  const usage = sanitizeMessageUsage(source?.usage);
   return {
     id,
     role,
     content: cleanText(source?.content, 24000),
+    attachments: attachments.length ? attachments : undefined,
     model: cleanText(source?.model, 180) || undefined,
     providerId: cleanText(source?.providerId, 180) || undefined,
+    knowledgeCitations: knowledgeCitations.length ? knowledgeCitations : undefined,
+    usage,
     status:
       status === "streaming" || status === "done" || status === "error" || status === "stopped"
         ? status
@@ -124,6 +238,7 @@ export function sanitizeWorkspaceConversation(value: unknown): Conversation | nu
     messageCount: messages.length,
     preview: lastMessage?.content.replace(/\s+/g, " ").slice(0, 120) || "",
     messages,
+    titleSummaryAt: cleanText(source?.titleSummaryAt, 80) ? cleanIsoDate(source?.titleSummaryAt, updatedAt) : undefined,
     createdAt,
     updatedAt
   };
@@ -176,6 +291,41 @@ export function sanitizeWorkspaceGalleryItem(value: unknown): GalleryItem | null
     modelId: cleanText(source?.modelId, 160),
     favorite: Boolean(source?.favorite),
     tags: cleanStringList(source?.tags, 24, 60)
+  };
+}
+
+export function sanitizeImageGenerationTimingRecord(value: unknown): ImageGenerationTimingRecord | null {
+  const source = recordFrom(value);
+  if (!source) return null;
+  const id = cleanText(source?.id, 160);
+  const modelId = cleanText(source?.modelId, 180);
+  const mode = source?.mode === "edit" ? "edit" : source?.mode === "generate" ? "generate" : null;
+  const resolution = ["512px", "1K", "2K", "4K"].includes(String(source?.resolution))
+    ? source.resolution as ImageGenerationTimingRecord["resolution"]
+    : null;
+  const aspectRatio = ["1:1", "3:2", "2:3", "16:9", "9:16"].includes(String(source?.aspectRatio))
+    ? source.aspectRatio as ImageGenerationTimingRecord["aspectRatio"]
+    : null;
+  const count = Number(source?.count);
+  const durationMs = Number(source?.durationMs);
+  if (!id || !modelId || !mode || !resolution || !aspectRatio || !Number.isFinite(count) || !Number.isFinite(durationMs)) {
+    return null;
+  }
+  const startedAt = cleanIsoDate(source?.startedAt);
+  const completedAt = cleanIsoDate(source?.completedAt, startedAt);
+  const status = source?.status === "failed" || source?.status === "cancelled" ? source.status : "completed";
+  return {
+    id,
+    modelId,
+    mode,
+    resolution,
+    aspectRatio,
+    count: Math.max(1, Math.min(10, Math.trunc(count))),
+    status,
+    startedAt,
+    completedAt,
+    updatedAt: completedAt,
+    durationMs: Math.max(0, Math.min(86_400_000, Math.trunc(durationMs)))
   };
 }
 
@@ -529,6 +679,7 @@ type SnapshotSanitizerMap = {
 const snapshotSanitizers: SnapshotSanitizerMap = {
   conversations: sanitizeWorkspaceConversation,
   galleryItems: sanitizeWorkspaceGalleryItem,
+  imageGenerationHistory: sanitizeImageGenerationTimingRecord,
   knowledgeDocuments: sanitizeWorkspaceKnowledgeDocument,
   mediaJobs: sanitizeWorkspaceMediaJob,
   userAgents: sanitizeWorkspaceUserAgent,
@@ -543,6 +694,7 @@ export function emptyWorkspaceSnapshot(): WorkspaceSnapshot {
   return {
     conversations: [],
     galleryItems: [],
+    imageGenerationHistory: [],
     knowledgeDocuments: [],
     mediaJobs: [],
     userAgents: [],
@@ -559,7 +711,9 @@ function sanitizeCollection<Key extends keyof WorkspaceSnapshot>(
   value: unknown,
   strict: boolean
 ): WorkspaceSnapshot[Key] {
-  if (value === undefined && key === "workflows") return [] as WorkspaceSnapshot[Key];
+  if (value === undefined && (key === "workflows" || key === "imageGenerationHistory")) {
+    return [] as WorkspaceSnapshot[Key];
+  }
   if (!Array.isArray(value)) throw new Error(`工作区数据 ${String(key)} 必须是数组。`);
   const sanitizer = snapshotSanitizers[key];
   const sanitized = value.map((item) => sanitizer(item)).filter(Boolean) as WorkspaceSnapshot[Key];
@@ -581,6 +735,7 @@ export function sanitizeWorkspaceSnapshot(value: unknown, strict = false): Works
   return {
     conversations: sanitizeCollection("conversations", source.conversations, strict),
     galleryItems: sanitizeCollection("galleryItems", source.galleryItems, strict),
+    imageGenerationHistory: sanitizeCollection("imageGenerationHistory", source.imageGenerationHistory, strict),
     knowledgeDocuments: sanitizeCollection("knowledgeDocuments", source.knowledgeDocuments, strict),
     mediaJobs: sanitizeCollection("mediaJobs", source.mediaJobs, strict),
     userAgents: sanitizeCollection("userAgents", source.userAgents, strict),
@@ -596,6 +751,7 @@ export function workspaceDataCounts(snapshot: WorkspaceSnapshot): WorkspaceDataC
   return {
     conversations: snapshot.conversations.length,
     galleryItems: snapshot.galleryItems.length,
+    imageGenerationHistory: snapshot.imageGenerationHistory.length,
     knowledgeDocuments: snapshot.knowledgeDocuments.length,
     mediaJobs: snapshot.mediaJobs.length,
     userAgents: snapshot.userAgents.length,
@@ -719,6 +875,7 @@ export function mergeWorkspaceSnapshots(local: WorkspaceSnapshot, incoming: Work
   return {
     conversations: mergeRecords(local.conversations, incoming.conversations),
     galleryItems: mergeRecords(local.galleryItems, incoming.galleryItems),
+    imageGenerationHistory: mergeRecords(local.imageGenerationHistory, incoming.imageGenerationHistory),
     knowledgeDocuments: mergeRecords(local.knowledgeDocuments, incoming.knowledgeDocuments),
     mediaJobs: mergeRecords(local.mediaJobs, incoming.mediaJobs),
     userAgents: mergeRecords(local.userAgents, incoming.userAgents),

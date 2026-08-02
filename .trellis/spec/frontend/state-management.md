@@ -8,8 +8,8 @@
 | --- | --- | --- |
 | Public bootstrap and menu/catalog metadata | `App` | Server response only |
 | Active public destination | `App` + History API | URL path |
-| API URL/key and last model | `App` provider state | `sessionStorage` only |
-| Saved Chat UI/session settings | `ChatModule` | Dedicated `sessionStorage` record only |
+| API Key and last model | `App` provider state | `sessionStorage` only |
+| Saved Chat UI/session settings | `chatSessionSettings.ts` + `ChatModule` | One sanitized `xi-ai-web-chat-session-settings` record in `sessionStorage` only; dialog edits stay in React draft state until Save |
 | Independent GLM/Kimi search URL/key/options | `App` search-service state | Dedicated `sessionStorage` record only |
 | One-shot Assistant launch intent | Assistant library + Chat | Versioned `sessionStorage` envelope, consumed once |
 | Private workspace data | Feature owners + workspace repository | `xi-ai-web-workspace` IndexedDB |
@@ -21,6 +21,8 @@
 | One-time COS upload grant | Active upload operation | React/request memory only; expires automatically and is never exported |
 
 Do not introduce a global store for these boundaries. Promote state only when two routed modules must share the same live value and `App` is already the established owner.
+
+The server owns global model order through `ModelCatalogEntry.order`. Admin reorder writes the complete ID sequence atomically; public modules filter that ordered catalog without creating feature-local sorts. A valid browser `lastModelId` is an explicit user override, while missing or stale selection falls back to the first enabled compatible model by order. Legacy `defaultFor` metadata is round-trip compatibility data and must not participate in frontend selection.
 
 ## Public URL State
 
@@ -81,14 +83,14 @@ const publicRoutes: ReadonlyArray<{ id: ModuleId; path: `/${string}` }>;
 | Unknown path | Replace with the configured available default, then `/chat` |
 | Hidden destination | Do not render or select it |
 | Disabled destination | Render disabled when visible; do not navigate to it |
-| Missing URL or Key | Open the required BYOK dialog; do not expose a persistent shell action |
+| Missing URL or Key | Open the required non-dismissible BYOK dialog; the shell may render only the masked replacement row and must not provide a second credential editor |
 | `/admin` requested | Render Admin directly without public bootstrap or navigation |
 
 ### 5. Good/Base/Bad Cases
 
 - Good: server reorders or disables one of the eight known IDs and the shell reflects that state with fixed product copy.
 - Base: all eight defaults render in the canonical order and Back/Forward restores the active destination.
-- Bad: a legacy `apps` or `gallery` item becomes publicly routable or an API/Admin button appears in the shell.
+- Bad: a legacy `apps` or `gallery` item becomes publicly routable, an Admin link appears in the shell, or the masked Key replacement row grows into a second public API-settings surface.
 
 ### 6. Tests Required
 
@@ -112,7 +114,6 @@ The storage key is `cherry-web-user-provider` with the existing payload shape:
 
 ```ts
 type UserProviderConfig = {
-  baseUrl: string;
   apiKey: string;
   lastModelId: string;
 };
@@ -121,11 +122,20 @@ type UserProviderConfig = {
 - Read and write through the existing provider storage helpers.
 - Persist only in `window.sessionStorage`.
 - Never copy these values to `localStorage`, backend metadata, URL state, logs, or public bootstrap.
-- The backend receives connection data only in the user-initiated request payload required to call a provider.
+- Public provider requests contain the session API Key only. The backend always selects the administrator-managed upstream and ignores legacy caller `baseUrl` fields.
+- Derive the shell label with `maskUserProviderKey(apiKey)`: empty becomes `未配置`, values shorter than four characters become `••••`, and all other values expose only the last four characters after `••••`.
+- Pass only the derived mask and the existing dialog-open callback through `AppShell` and `TopBar`. Replacing the Key updates `App` state and the same `cherry-web-user-provider` session record without a reload.
 
-Saved Chat UI/session settings use `xi-ai-web-chat-session-settings`. This record may contain only avatar/style/sampling/context/stream/tool-mode UI values, never API URL/key, search credentials, document contents, or server-owned catalog data. Sanitizers for persisted select values must reuse the same option constants that render the controls so unsupported stale values fall back before React mounts a mismatched `<select>`.
+### Shell Type-3 JWT Handoff
 
-Independent network search uses `xi-ai-web-search-service` with `SearchServiceConfig`. It is optional, is not part of the required first-use API dialog, and is sent only when the exact request includes `web_search`. Its URL, key, model, engine, and result options must never enter IndexedDB, workspace archives, backend metadata, logs, URL state, or public bootstrap data.
+- Recognize only `#/jwt_auth?x_s_token=...` on the public application and remove the complete Hash with `history.replaceState` before normal UI renders.
+- `x_s_token` is a short-lived Shell login JWT, never a model API Key. Keep it only in one-shot React request memory while `POST /api/public/shell-token/exchange` is pending.
+- A successful exchange updates only `UserProviderConfig.apiKey` and preserves the current `lastModelId`. The resulting Key follows the normal sessionStorage-only BYOK boundary.
+- Invalid or failed handoffs clear any stale Key, open the existing required Key dialog, and display a bounded public error. JWTs must never enter Web Storage, IndexedDB, workspace archives, URLs after consumption, page text, analytics, or logs.
+
+Saved Chat UI/session settings use `xi-ai-web-chat-session-settings`. This record may contain only avatar/style/sampling/context/stream/tool-mode UI values, never API Keys, handoff JWTs, search credentials, document contents, or server-owned catalog data. Sanitizers for persisted select values must reuse the same option constants that render the controls so unsupported stale values fall back before React mounts a mismatched `<select>`.
+
+Automation's independent network search may still use `xi-ai-web-search-service` with `SearchServiceConfig`. Chat does not read that record: it keeps only an in-memory per-conversation GLM/Kimi selection and projects `SearchServiceConfig` from the active BYOK Key plus the administrator-managed upstream when the exact request includes `web_search`. Neither credential path may enter IndexedDB, workspace archives, backend metadata, logs, URL state, or public bootstrap data.
 
 Assistant launch uses `xi-ai-web-assistant-launch` with `{ version, assistantId, starterPrompt?, requestedAt }`. Chat consumes it only after conversation hydration, removes it before creating state, validates an exact enabled public assistant, creates one independent conversation, and leaves all existing conversation bindings unchanged. The legacy `aistudio-selected-assistant` key is read once for compatibility and removed. Invalid, stale, disabled, or missing IDs are reported and never rebound to the first assistant.
 
@@ -145,7 +155,9 @@ type PersistedSessionSettings = Omit<SessionSettingsSnapshot, "skillIds">;
 ### 3. Contracts
 
 - Persist only in `window.sessionStorage`; never use `localStorage`, IndexedDB, server settings, URLs, or bootstrap payloads.
-- Persist only UI/session fields: assistant avatar, user avatar data URL, message style, temperature, Top-P, context size, max tokens, stream output, and tool mode.
+- Persist only UI/session fields: assistant avatar, user avatar data URL, message style, temperature, Top-P, context-window size, referenced-history message count, optional maximum-output state/value, stream output, and tool mode.
+- Context selection applies both saved limits: cap to the latest configured message count, then remove older messages until the estimated history fits the selected 4K through 1M Token window after output/system reserves.
+- A null referenced-history count means unlimited messages before Token-window trimming. A disabled maximum-output setting omits `maxTokens` from the request; the saved manual value remains available if the user enables it later.
 - Do not persist per-conversation Skill selections in this record. Skill IDs stay on each conversation's `SessionUiState`.
 - Persisted select values must be sanitized against the same constants that render their `<option>` elements.
 - Save writes the record. Cancel restores the in-memory snapshot and does not update the record.
@@ -158,18 +170,18 @@ type PersistedSessionSettings = Omit<SessionSettingsSnapshot, "skillIds">;
 | Unknown avatar/style/context/max-token/tool-mode value | Fall back to the current supported default |
 | User avatar is not a `data:image/` URL | Ignore it |
 | `sessionStorage` write fails | Keep the live React state usable and continue without persistence |
-| Missing API URL/key | Do not infer or copy credentials from this settings record |
+| Missing API Key | Do not infer or copy credentials from this settings record |
 
 ### 5. Good/Base/Bad Cases
 
-- Good: saving `contextSize="128"` and `maxTokens="8192"` survives reload and the next request carries the matching context slice and max token value.
+- Good: saving `contextSize="1024"`, `contextMessageCount=null`, `maxTokensEnabled=true`, and `maxTokens=262144` survives reload; unlimited history is still Token-trimmed and the explicit output limit reaches the next request.
 - Base: a fresh session opens with defaults and no settings record.
 - Bad: accepting a stale `contextSize="64"` while the `<select>` no longer renders that option, or storing BYOK credentials beside UI settings.
 
 ### 6. Tests Required
 
 - E2E asserts the record is in `sessionStorage`, absent from `localStorage`, survives reload, and restores visible controls.
-- Chat request tests assert saved `temperature`, `topP`, `maxTokens`, context slicing, and tool-mode behavior reach the outbound request path.
+- Chat request tests assert saved `temperature`, `topP`, `maxTokens`, message-count capping, Token-budget trimming, and tool-mode behavior reach the outbound request path.
 - Static contracts assert the storage key, `sessionStorage` usage, select-option sanitizers, and no Markdown fallback for unrelated generated artifacts.
 
 ### 7. Wrong vs Correct
@@ -278,7 +290,7 @@ toolSetCompatibility(names: string[], tools: ToolSetting[], model?: ModelCatalog
 - Template nodes replace only `{{task}}` and `{{input}}`. Knowledge nodes persist selected document IDs and `topK` only, then perform bounded deterministic local retrieval at run time. API URL, Key, document bodies, and run outputs do not enter graph definitions.
 - `ToolSetting.execution`, `requiredCapability`, `supportedVendors`, and `requiresContext` are server-owned catalog metadata. Admin may toggle and relabel tools but must not rewrite those execution boundaries.
 - `allowedTools` is a request-level allowlist. Missing means no tools, a non-array is rejected, and provider-returned calls are checked against the same allowlist before execution. Chat sends the exact deduplicated union of selected Skill tools and explicit search-tool state.
-- Tool availability is the intersection required by its execution owner. Local/provider tools check administrator enablement, selected-model capabilities, vendor allowlists, and request context; independent search checks administrator enablement and search-session readiness only. Chat, Agents, and Workflows use `toolCompatibility` / `toolSetCompatibility`; do not recreate partial model checks inside each feature.
+- Tool availability is the intersection required by its execution owner. Local/provider tools check administrator enablement, selected-model capabilities, vendor allowlists, and request context; independent search checks administrator enablement plus the owning surface's credential readiness. Chat uses active BYOK readiness, while existing Agent/Workflow surfaces may use their search-session readiness. Chat, Agents, and Workflows use `toolCompatibility` / `toolSetCompatibility`; do not recreate partial model checks inside each feature.
 - Application tools (`datetime_now`, `calculator_eval`, request-bounded `knowledge_search`) enter function declarations and the local dispatcher. `web_search` enters the resolver's `searchTools` lane, runs before the main provider, and injects bounded untrusted external context. Other provider-hosted tools (`url_context`, `code_execution`) enter only adapter-specific hosted-tool mappings.
 - Workflow execution preflights every Agent node before the first provider request. Agent-bound local knowledge is resolved to bounded `contextChunks` and adds request-scoped `knowledge_search` in both direct Agent and Workflow runs.
 - Mandatory server instructions precede user agent and Skill text so bounded prompts cannot truncate the execution contract.
@@ -293,8 +305,8 @@ toolSetCompatibility(names: string[], tools: ToolSetting[], model?: ModelCatalog
 | Tool missing, disabled, vendor-incompatible, or unsupported by the selected model | Disable it in selection UI and reject before provider access if it remains in a saved definition |
 | `knowledge_search` without bounded `contextChunks` | Reject before provider access |
 | Provider-hosted tool reaches the local dispatcher | Contract failure; hosted tools must leave the resolver in `hostedTools` only |
-| `web_search` has no ready independent config | Reject before search and main-model provider access |
-| `web_search` is selected with a model lacking `webSearch`/`toolCalling` | Allow it when the independent config and Admin switch are ready |
+| Chat `web_search` has no ready BYOK connection | Open the API connection flow and make no provider request |
+| `web_search` is selected with a model lacking `webSearch`/`toolCalling` | Allow it when the surface credential source and Admin switch are ready |
 | Generic OpenAI-compatible, Kimi, or DeepSeek request contains hosted tools | Reject in the resolver and again at the compatible adapter boundary |
 | Workflow `agentId` is absent or unknown | Mark that node failed, skip downstream nodes, and make no provider request |
 | A new Chat conversation is created after another conversation selected Skills | Start with an empty `skillIds` list and send an empty `skillInstructions` array |

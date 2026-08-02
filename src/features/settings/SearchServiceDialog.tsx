@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useState, type FormEvent } from "react";
-import { Check, Eye, EyeOff, Globe2, KeyRound, Search, X } from "lucide-react";
-import { Dialog } from "../../components/ui";
+import { Check, Eye, EyeOff, KeyRound, Search, X } from "lucide-react";
+import { Dialog, FigmaMenu, type FigmaMenuOption } from "../../components/ui";
 import type {
   SearchEngine,
   SearchProviderKind,
@@ -19,12 +19,12 @@ type SearchServiceDialogProps = {
   onClose: () => void;
 };
 
-const searchEngineOptions: Array<{ value: SearchEngine; label: string }> = [
+const searchEngineOptions = [
   { value: "search_std", label: "标准搜索" },
   { value: "search_pro", label: "高级搜索" },
   { value: "search_pro_sogou", label: "高级搜索 · 搜狗" },
   { value: "search_pro_quark", label: "高级搜索 · 夸克" }
-];
+] as const satisfies readonly FigmaMenuOption[];
 
 function SearchServiceDialog({ open, config, onSave, onClose }: SearchServiceDialogProps) {
   const titleId = useId();
@@ -96,22 +96,6 @@ function SearchServiceDialog({ open, config, onSave, onClose }: SearchServiceDia
         </fieldset>
 
         <label className="search-service-field">
-          <span>API URL</span>
-          <div className="search-service-input-wrap">
-            <Globe2 size={16} />
-            <input
-              type="url"
-              inputMode="url"
-              autoComplete="url"
-              aria-label="联网搜索 API URL"
-              value={draft.baseUrl}
-              onChange={(event) => setDraft({ ...draft, baseUrl: event.target.value })}
-              placeholder={searchServicePresets[draft.provider].baseUrl}
-            />
-          </div>
-        </label>
-
-        <label className="search-service-field">
           <span>API Key</span>
           <div className="search-service-input-wrap">
             <KeyRound size={16} />
@@ -137,18 +121,14 @@ function SearchServiceDialog({ open, config, onSave, onClose }: SearchServiceDia
 
         {draft.provider === "glm" ? (
           <div className="search-service-options">
-            <label className="search-service-field">
-              <span>搜索引擎</span>
-              <select
-                aria-label="GLM 搜索引擎"
-                value={draft.searchEngine}
-                onChange={(event) => setDraft({ ...draft, searchEngine: event.target.value as SearchEngine })}
-              >
-                {searchEngineOptions.map((option) => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </select>
-            </label>
+            <FigmaMenu
+              className="search-service-field search-service-menu"
+              label="搜索引擎"
+              ariaLabel="GLM 搜索引擎"
+              value={draft.searchEngine}
+              options={searchEngineOptions}
+              onChange={(searchEngine) => setDraft({ ...draft, searchEngine: searchEngine as SearchEngine })}
+            />
             <label className="search-service-field">
               <span>结果数量</span>
               <input

@@ -15,7 +15,7 @@ async function openWorkflowPublishing(page, mobile: boolean) {
     return;
   }
   const navigation = page.getByRole("navigation", { name: /后台管理分区/ });
-  const group = navigation.locator(".admin-nav-group-toggle", { hasText: "自动化" });
+  const group = navigation.locator(".admin-nav-group-toggle", { hasText: "AI 能力" });
   await group.click();
   await navigation.getByRole("button", { name: "工作流发布", exact: true }).click();
 }

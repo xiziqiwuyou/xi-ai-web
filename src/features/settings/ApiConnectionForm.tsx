@@ -1,5 +1,5 @@
 import { FormEvent, useState } from "react";
-import { Check, Eye, EyeOff, Globe2, KeyRound } from "lucide-react";
+import { Check, Eye, EyeOff, KeyRound } from "lucide-react";
 import type { UserProviderConfig } from "../../types";
 import { isUserProviderReady } from "./userProviderConfig";
 
@@ -32,24 +32,6 @@ function ApiConnectionForm({
   return (
     <form className={className} onSubmit={submit}>
       <label className="settings-field">
-        <span>API URL</span>
-        <div className="settings-input-wrap">
-          <Globe2 size={16} />
-          <input
-            aria-label="API URL"
-            autoComplete="url"
-            inputMode="url"
-            name="apiUrl"
-            type="url"
-            value={userProvider.baseUrl}
-            onChange={(event) => onUserProviderChange({ baseUrl: event.target.value })}
-            placeholder="例如：https://api.openai.com/v1"
-            autoFocus={autoFocus}
-          />
-        </div>
-      </label>
-
-      <label className="settings-field">
         <span>API Key</span>
         <div className="settings-input-wrap">
           <KeyRound size={16} />
@@ -61,6 +43,7 @@ function ApiConnectionForm({
             value={userProvider.apiKey}
             onChange={(event) => onUserProviderChange({ apiKey: event.target.value })}
             placeholder="例如：sk-..."
+            autoFocus={autoFocus}
           />
           <button
             type="button"

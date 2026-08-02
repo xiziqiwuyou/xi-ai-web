@@ -58,7 +58,7 @@ async function testNormalizationAndReadiness() {
     }),
     {
       provider: "glm",
-      baseUrl: "https://search.example.test/api",
+      baseUrl: "https://api.xi-ai.cn",
       apiKey: "glm-key",
       model: "",
       searchEngine: "search_std",
@@ -115,6 +115,7 @@ async function testGlmRequestAndNormalization() {
     }
   ], async () => {
     const result = await runIndependentWebSearch({
+      upstreamBaseUrl: "https://glm.example.test/api",
       service: {
         provider: "glm",
         baseUrl: "https://glm.example.test/api/",
@@ -224,6 +225,7 @@ async function testKimiToolLoop() {
     }
   ], async () => {
     const result = await runIndependentWebSearch({
+      upstreamBaseUrl: "https://kimi.example.test/v1",
       service: {
         provider: "kimi",
         baseUrl: "https://kimi.example.test/v1/",
@@ -269,6 +271,7 @@ async function testBoundsAndMalformedResponses() {
   ], async () => {
     await assert.rejects(
       runIndependentWebSearch({
+        upstreamBaseUrl: "https://kimi.example.test/v1",
         service: {
           provider: "kimi",
           baseUrl: "https://kimi.example.test/v1",
@@ -286,6 +289,7 @@ async function testBoundsAndMalformedResponses() {
   ], async () => {
     await assert.rejects(
       runIndependentWebSearch({
+        upstreamBaseUrl: "https://glm.example.test/api",
         service: {
           provider: "glm",
           baseUrl: "https://glm.example.test/api",
@@ -302,6 +306,7 @@ async function testBoundsAndMalformedResponses() {
   ], async () => {
     await assert.rejects(
       runIndependentWebSearch({
+        upstreamBaseUrl: "https://kimi.example.test/v1",
         service: {
           provider: "kimi",
           baseUrl: "https://kimi.example.test/v1",
@@ -319,6 +324,7 @@ async function testBoundsAndMalformedResponses() {
   ], async () => {
     await assert.rejects(
       runIndependentWebSearch({
+        upstreamBaseUrl: "https://kimi.example.test/v1",
         service: {
           provider: "kimi",
           baseUrl: "https://kimi.example.test/v1",
@@ -342,6 +348,7 @@ async function testCredentialRedaction() {
     let caught;
     try {
       await runIndependentWebSearch({
+        upstreamBaseUrl: "https://glm.example.test/api",
         service: {
           provider: "glm",
           baseUrl: "https://glm.example.test/api",
@@ -363,6 +370,7 @@ async function testCredentialRedaction() {
   ], async () => {
     await assert.rejects(
       runIndependentWebSearch({
+        upstreamBaseUrl: "https://glm.example.test/api",
         service: {
           provider: "glm",
           baseUrl: "https://glm.example.test/api",
@@ -372,6 +380,39 @@ async function testCredentialRedaction() {
       }),
       (error) => error.message.includes("status 401") && !error.message.includes(apiKey)
     );
+  });
+}
+
+async function testManagedUpstreamOverridesClientUrl() {
+  await withMockFetch([
+    (call) => {
+      assert.equal(call.url, "https://api.xi-ai.cn/paas/v4/web_search");
+      return jsonResponse({ search_result: [] });
+    },
+    (call) => {
+      assert.equal(call.url, "https://api.xi-ai.cn/v1/chat/completions");
+      return jsonResponse({ choices: [{ message: { content: "Managed Kimi answer." } }] });
+    }
+  ], async () => {
+    await runIndependentWebSearch({
+      upstreamBaseUrl: "https://api.xi-ai.cn",
+      service: {
+        provider: "glm",
+        baseUrl: "http://169.254.169.254/latest/meta-data",
+        apiKey: "managed-upstream-key"
+      },
+      query: "managed upstream"
+    });
+    await runIndependentWebSearch({
+      upstreamBaseUrl: "https://api.xi-ai.cn",
+      service: {
+        provider: "kimi",
+        baseUrl: "http://127.0.0.1/private",
+        apiKey: "managed-upstream-key",
+        model: "kimi-managed"
+      },
+      query: "managed upstream"
+    });
   });
 }
 
@@ -417,6 +458,7 @@ try {
   await testKimiToolLoop();
   await testBoundsAndMalformedResponses();
   await testCredentialRedaction();
+  await testManagedUpstreamOverridesClientUrl();
   await testFormattedContext();
   console.log("search contracts passed");
 } finally {

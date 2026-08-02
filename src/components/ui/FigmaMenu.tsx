@@ -7,7 +7,11 @@ import {
   type ReactNode
 } from "react";
 import { Check, ChevronRight } from "lucide-react";
-import { getFloatingHorizontalOffset, getFloatingVerticalPlacement } from "./floatingPlacement";
+import {
+  getFloatingHorizontalOffset,
+  getFloatingVerticalPlacement,
+  type FloatingVerticalPlacement
+} from "./floatingPlacement";
 
 export type FigmaMenuOption = {
   value: string;
@@ -16,16 +20,21 @@ export type FigmaMenuOption = {
   disabled?: boolean;
 };
 
+export type FigmaMenuPlacement = FloatingVerticalPlacement | "auto";
+
 type FigmaMenuProps = {
   label: string;
   value: string;
   options: readonly FigmaMenuOption[];
   onChange: (value: string) => void;
   ariaLabel: string;
+  ariaDescribedBy?: string;
   disabled?: boolean;
   className?: string;
   triggerIcon?: ReactNode;
   triggerPrefix?: string;
+  triggerText?: string;
+  placement?: FigmaMenuPlacement;
 };
 
 function isInteractiveTarget(target: EventTarget | null) {
@@ -40,13 +49,16 @@ function FigmaMenu({
   options,
   onChange,
   ariaLabel,
+  ariaDescribedBy,
   disabled = false,
   className = "",
   triggerIcon,
-  triggerPrefix
+  triggerPrefix,
+  triggerText,
+  placement: requestedPlacement = "auto"
 }: FigmaMenuProps) {
   const [open, setOpen] = useState(false);
-  const [placement, setPlacement] = useState<"down" | "up">("down");
+  const [automaticPlacement, setAutomaticPlacement] = useState<FloatingVerticalPlacement>("down");
   const [horizontalOffset, setHorizontalOffset] = useState(0);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
@@ -57,6 +69,7 @@ function FigmaMenu({
   const selected = options.find((option) => option.value === value);
   const selectedIndex = options.findIndex((option) => option.value === value);
   const selectedLabel = selected?.label || value || "暂无选项";
+  const resolvedPlacement = requestedPlacement === "auto" ? automaticPlacement : requestedPlacement;
 
   useEffect(() => {
     if (!open) return;
@@ -66,7 +79,9 @@ function FigmaMenu({
       const popover = listboxRef.current;
       if (!trigger || !popover) return;
 
-      setPlacement(getFloatingVerticalPlacement(rootRef.current || trigger, popover));
+      if (requestedPlacement === "auto") {
+        setAutomaticPlacement(getFloatingVerticalPlacement(rootRef.current || trigger, popover));
+      }
       setHorizontalOffset(getFloatingHorizontalOffset(rootRef.current || trigger, popover));
     };
 
@@ -78,7 +93,7 @@ function FigmaMenu({
       window.removeEventListener("resize", updatePlacement);
       window.removeEventListener("scroll", updatePlacement, true);
     };
-  }, [open, options.length]);
+  }, [open, options.length, requestedPlacement]);
 
   useEffect(() => {
     if (!open) setHorizontalOffset(0);
@@ -181,7 +196,7 @@ function FigmaMenu({
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={menuId}
-        aria-describedby={valueDescriptionId}
+        aria-describedby={[valueDescriptionId, ariaDescribedBy].filter(Boolean).join(" ")}
         disabled={disabled || options.length === 0}
         onClick={() => {
           focusOnOpenRef.current = "selected";
@@ -191,7 +206,7 @@ function FigmaMenu({
       >
         <span className="figma-menu-trigger-value">
           {triggerIcon}
-          <strong>{triggerPrefix ? `${triggerPrefix} · ${selectedLabel}` : selectedLabel}</strong>
+          <strong>{triggerText || (triggerPrefix ? `${triggerPrefix} · ${selectedLabel}` : selectedLabel)}</strong>
         </span>
         <ChevronRight className="figma-menu-chevron" size={14} aria-hidden="true" />
       </button>
@@ -200,7 +215,7 @@ function FigmaMenu({
           ref={listboxRef}
           id={menuId}
           className="figma-menu-popover"
-          data-placement={placement}
+          data-placement={resolvedPlacement}
           style={horizontalOffset ? { transform: `translateX(${horizontalOffset}px)` } : undefined}
           role="listbox"
           aria-label={ariaLabel}

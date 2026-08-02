@@ -7,10 +7,12 @@ import {
   fetchJson,
   hasImageContent,
   normalizeTools,
-  parseToolArguments,
+  parseStrictToolArguments,
   providerUrl,
   stringifyToolOutput
 } from "./types.mjs";
+
+const IMAGE_RESPONSE_LIMIT_BYTES = 64 * 1024 * 1024;
 
 function authHeaders(provider) {
   return provider.apiKey ? { Authorization: `Bearer ${provider.apiKey}` } : {};
@@ -54,7 +56,8 @@ function mapTools(tools = [], hostedTools = []) {
     type: "function",
     name: tool.name,
     description: tool.description,
-    parameters: tool.parameters
+    parameters: tool.parameters,
+    strict: true
   }));
   return [...functionTools, ...mapHostedTools(hostedTools)];
 }
@@ -84,7 +87,7 @@ function extractToolCalls(json) {
     .map((item) => ({
       id: item.call_id || item.id,
       name: item.name,
-      arguments: parseToolArguments(item.arguments),
+       arguments: parseStrictToolArguments(item.arguments),
       raw: item
     }))
     .filter((call) => call.id && call.name);
@@ -96,6 +99,16 @@ function extractEmbeddings(json) {
     .sort((left, right) => Number(left.index || 0) - Number(right.index || 0))
     .map((item) => item.embedding)
     .filter((embedding) => Array.isArray(embedding));
+}
+
+function normalizedUsage(json) {
+  const usage = json?.usage;
+  if (!usage || typeof usage !== "object") return null;
+  const inputTokens = Number(usage.input_tokens || 0);
+  const outputTokens = Number(usage.output_tokens || 0);
+  const totalTokens = Number(usage.total_tokens || inputTokens + outputTokens);
+  if (![inputTokens, outputTokens, totalTokens].some((value) => value > 0)) return null;
+  return { inputTokens, outputTokens, totalTokens };
 }
 
 function reasoningOptions(reasoningEffort) {
@@ -133,7 +146,8 @@ function responseRequestBody({
   topP,
   reasoningEffort,
   maxTokens,
-  tools
+  tools,
+  responseVerbosity
 }, normalizeResponseBody) {
   const body = {
     model,
@@ -141,6 +155,9 @@ function responseRequestBody({
     previous_response_id: previousResponseId || undefined,
     instructions: instructions || undefined,
     ...textOptions({ temperature, topP, reasoningEffort, maxTokens }),
+    text: ["low", "medium", "high"].includes(responseVerbosity)
+      ? { verbosity: responseVerbosity }
+      : undefined,
     tools: tools?.length ? tools : undefined
   };
   return normalizeResponseBody ? normalizeResponseBody(body, { model, reasoningEffort }) : body;
@@ -154,9 +171,11 @@ async function completeWithTools({
   topP,
   reasoningEffort,
   maxTokens,
+  responseVerbosity,
   tools,
   hostedTools,
   runTool,
+  onUsage,
   maxToolRounds = 4,
   signal,
   normalizeResponseBody
@@ -182,10 +201,13 @@ async function completeWithTools({
         topP,
         reasoningEffort,
         maxTokens,
+        responseVerbosity,
         tools: mappedTools
       }, normalizeResponseBody),
       signal
     });
+    const usage = normalizedUsage(json);
+    if (usage) onUsage?.(usage);
     const toolCalls = extractToolCalls(json);
     if (!toolCalls.length) return extractResponseText(json) || JSON.stringify(json);
 
@@ -214,9 +236,11 @@ async function completeText(params) {
     topP,
     reasoningEffort,
     maxTokens,
+    responseVerbosity,
     signal,
     tools,
     hostedTools,
+    onUsage,
     normalizeResponseBody
   } = params;
   if (tools?.length || hostedTools?.length) return completeWithTools(params);
@@ -232,10 +256,13 @@ async function completeText(params) {
       temperature,
       topP,
       reasoningEffort,
-      maxTokens
+      maxTokens,
+      responseVerbosity
     }, normalizeResponseBody),
     signal
   });
+  const usage = normalizedUsage(json);
+  if (usage) onUsage?.(usage);
   return extractResponseText(json) || JSON.stringify(json);
 }
 
@@ -252,7 +279,7 @@ function normalizedImageSize(model, size, aspectRatio) {
   return "1024x1024";
 }
 
-function outputFields({ quality, outputFormat, outputCompression }) {
+function outputFields({ quality, outputFormat, outputCompression, background }) {
   const format = ["png", "jpeg", "webp"].includes(outputFormat) ? outputFormat : undefined;
   const compression = Number.isFinite(Number(outputCompression))
     ? Math.max(0, Math.min(100, Math.trunc(Number(outputCompression))))
@@ -260,7 +287,8 @@ function outputFields({ quality, outputFormat, outputCompression }) {
   return {
     quality: ["auto", "low", "medium", "high"].includes(quality) ? quality : undefined,
     output_format: format,
-    output_compression: format === "jpeg" || format === "webp" ? compression : undefined
+    output_compression: format === "jpeg" || format === "webp" ? compression : undefined,
+    background: ["auto", "opaque", "transparent"].includes(background) ? background : undefined
   };
 }
 
@@ -281,6 +309,7 @@ async function generateImage({
   prompt,
   mode,
   inputImage,
+  inputImages,
   maskImage,
   size,
   aspectRatio,
@@ -288,6 +317,7 @@ async function generateImage({
   quality,
   outputFormat,
   outputCompression,
+  background,
   signal
 }) {
   assertCapability(provider, "image");
@@ -296,25 +326,37 @@ async function generateImage({
     prompt,
     n: normalizedImageCount(count),
     size: normalizedImageSize(model, size, aspectRatio),
-    ...outputFields({ quality, outputFormat, outputCompression })
+    ...outputFields({ quality, outputFormat, outputCompression, background })
   };
 
   if (mode === "edit") {
     assertCapability(provider, "imageEdit");
-    const files = [imageFile(inputImage, "image", "input.png")];
+    const uniqueInputs = [...new Map(
+      [...(Array.isArray(inputImages) ? inputImages : []), inputImage]
+        .filter((item) => item?.dataUrl)
+        .map((item) => [item.dataUrl, item])
+    ).values()];
+    if (!uniqueInputs.length) throw new Error("Image editing requires at least one input image");
+    const files = uniqueInputs.map((item, index) => imageFile(
+      item,
+      index === 0 ? "image" : "image[]",
+      `input-${index + 1}.png`
+    ));
     if (maskImage?.dataUrl) files.push(imageFile(maskImage, "mask", "mask.png"));
     return fetchMultipartForm(providerUrl(provider, "/images/edits"), {
       headers: authHeaders(provider),
       fields,
       files,
-      signal
+      signal,
+      maxResponseBytes: IMAGE_RESPONSE_LIMIT_BYTES
     });
   }
 
   return fetchJson(providerUrl(provider, "/images/generations"), {
     headers: authHeaders(provider),
     body: fields,
-    signal
+    signal,
+    maxResponseBytes: IMAGE_RESPONSE_LIMIT_BYTES
   });
 }
 

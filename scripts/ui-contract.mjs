@@ -56,10 +56,41 @@ const apiConnectionForm = readProjectFile("src/features/settings/ApiConnectionFo
 const apiConnectionModal = readProjectFile("src/features/settings/ApiConnectionModal.tsx");
 const dialog = readProjectFile("src/components/ui/Dialog.tsx");
 const figmaMenu = readProjectFile("src/components/ui/FigmaMenu.tsx");
-const chatModule = readProjectFile("src/features/chat/ChatModule.tsx");
-const automationModule = readProjectFile("src/features/automation/AutomationModule.tsx");
+const chatModule = [
+  "src/features/chat/ChatModule.tsx",
+  "src/features/chat/ChatSessionBlock.tsx"
+].map(readProjectFile).join("\n");
+const chatSettingsDialog = readProjectFile("src/features/chat/ChatSessionSettingsDialog.tsx");
+const app = readProjectFile("src/App.tsx");
+const publicModuleLoader = readProjectFile("src/app/publicModuleLoader.ts");
+const automationModule = [
+  "src/features/automation/AutomationModule.tsx",
+  "src/features/automation/automationShared.tsx",
+  "src/features/automation/AgentsWorkspace.tsx",
+  "src/features/automation/WorkflowsWorkspace.tsx"
+].map(readProjectFile).join("\n");
 const workflowCanvas = readProjectFile("src/features/automation/WorkflowCanvas.tsx");
-const studioModule = readProjectFile("src/features/studio/StudioModule.tsx");
+const studioModule = [
+  "src/features/studio/StudioModule.tsx",
+  "src/features/studio/studioShared.tsx",
+  "src/features/studio/ImageStudio.tsx",
+  "src/features/studio/PptStudio.tsx",
+  "src/features/studio/MindmapStudio.tsx",
+  "src/features/studio/AssistantsStudio.tsx",
+  "src/features/studio/TranslateStudio.tsx"
+].map(readProjectFile).join("\n");
+const publicAuthoredMenuFiles = [
+  "src/components/workbench/ModelPicker.tsx",
+  "src/features/chat/ChatSessionSettingsDialog.tsx",
+  "src/features/generation/GenerationModule.tsx",
+  "src/features/agents/AgentsModule.tsx",
+  "src/features/automation/AutomationModule.tsx",
+  "src/features/automation/AgentsWorkspace.tsx",
+  "src/features/automation/WorkflowsWorkspace.tsx",
+  "src/features/automation/LangflowWorkflowModule.tsx",
+  "src/features/knowledge-cloud/KnowledgeCloudWorkspace.tsx",
+  "src/features/settings/SearchServiceDialog.tsx"
+];
 const apiClient = readProjectFile("src/api.ts");
 const tokensCss = readProjectFile("src/styles/rednote-flat-v2.tokens.css");
 const shellCss = readProjectFile("src/styles/rednote-flat-v2.shell.css");
@@ -93,6 +124,15 @@ assert(topBar.includes('navigation("figma-navigation")'), "TopBar lacks .figma-n
 assert(topBar.includes('className="figma-mobile-header"'), "TopBar lacks .figma-mobile-header");
 assert(topBar.includes('"figma-sidebar mobile-open"'), "TopBar lacks the responsive .figma-sidebar state");
 assert(topBar.includes('"figma-nav-item active"'), "TopBar lacks active .figma-nav-item styling");
+assert(topBar.includes("onPointerEnter={() => onModuleIntent(item.id)}") && topBar.includes("onFocus={() => onModuleIntent(item.id)}"), "Public navigation must preload modules from pointer and keyboard intent");
+assert(app.includes("useTransition()") && app.includes("preloadPublicModule") && app.includes("requestIdleCallback"), "Public module switching must combine React transitions with intent and idle preloading");
+assert(appShell.includes('className="figma-module-transition"') && appShell.includes("aria-busy={moduleTransitionPending}"), "Public workspace must expose a non-blocking accessible transition state");
+assert(app.includes("setModuleTransitionError(moduleId)") && app.includes("replacePublicUrl(activeModule)"), "Failed public module loads must preserve the current module and restore its URL");
+assert(appShell.includes('className="figma-module-transition-error"') && appShell.includes("onRetryModule"), "Failed public module loads must expose an accessible retry response");
+assert(app.includes("window.location.assign(path)"), "Failed module retries must use a clean document so browsers can retry a rejected module import");
+for (const loaderContract of ["loadChatModule", "loadStudioModule", "loadAutomationModule", "loadLangflowWorkflowModule", "loadOnce"]) {
+  assert(publicModuleLoader.includes(loaderContract), `Public module loader is missing ${loaderContract}`);
+}
 assert(topBar.includes('aria-label={mobileNavOpen ? "\u5173\u95ed\u529f\u80fd\u83dc\u5355" : "\u6253\u5f00\u529f\u80fd\u83dc\u5355"}'), "Mobile menu trigger accessible names changed");
 assert(topBar.includes('aria-current={active ? "page" : undefined}'), "Active navigation must expose aria-current");
 assert(topBar.includes("disabled={!item.enabled}"), "Navigation must respect disabled menu state");
@@ -179,8 +219,8 @@ assert(!sharedMenuOptionsBlock.includes("ChevronRight"), "Unselected shared menu
 assert(sharedMenuOptionsBlock.includes("<Check") && sharedMenuOptionsBlock.includes('className="figma-menu-option-mark"'), "Shared menu options must keep selected checks and stable empty marks");
 assert(chatModule.includes("event.shiftKey"), "Chat composer must reserve Shift+Enter for line breaks");
 assert(chatModule.includes("event.nativeEvent.isComposing"), "Chat composer must guard IME composition");
-assert(chatModule.includes('className="figma-chat-skill-selection"'), "Chat settings must expose Skill selection");
-assert(chatModule.includes("管理本地 Skill"), "Chat settings must retain local Skill management");
+assert(chatSettingsDialog.includes('className="figma-chat-skill-selection"'), "Chat settings must expose Skill selection");
+assert(chatSettingsDialog.includes("管理本地 Skill"), "Chat settings must retain local Skill management");
 assert(!chatModule.includes('figma-heading-action-label">Skill'), "Chat heading must not promote Skill management");
 assert(chatModule.includes("skillInstructions: selectedSkills.map"), "Chat must inject only selected Skill instructions");
 assert(chatModule.includes('className="figma-reasoning-menu"'), "Chat must expose the reasoning menu in its composer toolbar");
@@ -208,15 +248,30 @@ const chatRequestBlock = chatModule.slice(chatRequestStart, chatRequestEnd);
 assert(chatRequestStart >= 0 && chatRequestEnd > chatRequestStart, "Chat stream request block is missing");
 assertInOrder(
   chatRequestBlock,
-  ["temperature,", "topP,", "maxTokens: Math.max(1, Number(maxTokens) || 4096)"],
-  "Chat requests must carry saved sampling and maximum-token settings"
+  ["temperature: chatSettings.temperature", "topP: chatSettings.topP", "maxTokens: chatSettings.maxTokensEnabled ? chatSettings.maxTokens : undefined"],
+  "Chat requests must carry saved sampling and omit the output limit when disabled"
 );
 assert(types.includes("topP?: number;") && types.includes("maxTokens?: number;"), "Chat request types must include topP and maxTokens");
-assert(chatModule.includes('const chatSettingsStorageKey = "xi-ai-web-chat-session-settings"'), "Saved Chat settings must use the session-only storage key");
-assert(chatModule.includes("window.sessionStorage.getItem(chatSettingsStorageKey)") && chatModule.includes("window.sessionStorage.setItem(chatSettingsStorageKey"), "Saved Chat settings must use sessionStorage");
-assert(!chatModule.includes("localStorage.getItem(chatSettingsStorageKey)") && !chatModule.includes("localStorage.setItem(chatSettingsStorageKey"), "Saved Chat settings must not use localStorage");
-assert(chatRequestBlock.includes("history: requestConversation.messages.slice(-Math.max(1, Number(contextSize) || 16))"), "Chat requests must honor the selected context window");
-assert(chatModule.includes('toolMode === "\u7981\u7528"') && chatModule.includes('toolMode === "\u8be2\u95ee\u540e\u8c03\u7528"'), "Chat tool mode must affect outbound tool behavior truthfully");
+const chatSettings = fs.readFileSync(path.join(rootDir, "src/features/chat/chatSessionSettings.ts"), "utf8");
+for (const avatarFile of ["avatar-lumi.png", "avatar-fox.png", "avatar-orbit.png", "avatar-cloud.png", "avatar-piko.png", "avatar-nori.png"]) {
+  assert(fs.existsSync(path.join(rootDir, "public/assets/figma", avatarFile)), `Chat avatar asset is missing ${avatarFile}`);
+}
+assert(chatSettings.includes("personalAvatarPresets = assistantAvatarPresets") && chatSettings.includes("userAvatarPresetId"), "Assistant and personal avatar presets must share the six cropped AI assets");
+assert(chatSettings.includes('chatSettingsStorageKey = "xi-ai-web-chat-session-settings"'), "Saved Chat settings must use the session-only storage key");
+assert(chatSettings.includes("window.sessionStorage.getItem(chatSettingsStorageKey)") && chatSettings.includes("window.sessionStorage.setItem(chatSettingsStorageKey"), "Saved Chat settings must use sessionStorage");
+assert(!chatSettings.includes("localStorage.getItem(chatSettingsStorageKey)") && !chatSettings.includes("localStorage.setItem(chatSettingsStorageKey"), "Saved Chat settings must not use localStorage");
+assert(
+  chatModule.includes("const selectedHistory = selectChatHistory(requestConversation.messages, chatSettings)") &&
+  chatRequestBlock.includes("history: chatHistoryWithoutAttachments(selectedHistory)"),
+  "Chat requests must honor the selected context window and message count before replaying bounded attachments"
+);
+assert(chatSettings.includes('chatContextSizeValues = ["4", "16", "32", "64", "128", "256", "512", "1024"]') && chatSettings.includes("contextMessageCount") && chatSettings.includes("maxTokensEnabled"), "Chat settings must expose a 1M context window, independent history-message count, and optional output limit");
+assert(chatSettings.includes("maxTokensEnabled: false"), "Chat maximum output must default to the provider-managed unlimited state");
+assert(chatSettings.includes('titleSummaryModelId: "gpt-5.4-mini"') && chatSettings.includes("titleSummaryMessageCount: 4"), "Collapsed-title summaries must default to gpt-5.4-mini and the latest four messages");
+assert(chatSettings.includes("titleSummaryEnabled: settingBoolean") && chatSettings.includes("titleSummaryModelId: cleanSettingText") && chatSettings.includes("titleSummaryMessageCount: cleanSettingChoice"), "Collapsed-title summary settings must pass through the typed sanitizer");
+assert(chatModule.includes("generateChatTitle") && chatModule.includes(".slice(-chatSettings.titleSummaryMessageCount)") && chatModule.includes("titleSummaryAt: sourceUpdatedAt"), "Chat collapse must generate and freshness-stamp a title from the configured recent history");
+assert(chatModule.includes("Boolean(a.pinned) !== Boolean(b.pinned)") && chatModule.includes("aExpanded !== bExpanded") && chatModule.includes("new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()"), "Chat sessions must sort by pin, expanded state, and recent use");
+assert(chatModule.includes("toolInvocationMode: chatSettings.toolInvocationMode"), "Chat tool mode must affect outbound tool behavior truthfully");
 for (const requiredChatContract of [
   'className="figma-model-trigger"',
   'className="figma-model-popover"',
@@ -232,17 +287,30 @@ for (const requiredChatContract of [
   "DeepSeek",
   "\u901a\u4e49\u5343\u95ee",
   "Math.min(3, vendorModels.length)",
-  "\u663e\u793a ${visibleVendorModelCount} \u4e2a",
+  "\u663e\u793a ${visibleVendorModelCount} \u4e2a"
+]) {
+  assert(chatModule.includes(requiredChatContract), `Chat Phase 11 contract is missing ${requiredChatContract}`);
+}
+
+for (const requiredSettingsContract of [
+  'className="figma-settings-layout"',
+  'className="figma-settings-navigation"',
+  'className="figma-settings-tablist"',
+  'role="tablist"',
+  'role="tab"',
+  'role="tabpanel"',
+  'aria-selected={selected}',
   'className="figma-avatar-presets"',
   'className="figma-personal-avatar"',
   "TOP-P",
-  "\u4e0a\u4e0b\u6587\u6570",
+  "\u6a21\u578b\u4e0a\u4e0b\u6587\u7a97\u53e3",
+  "\u5f15\u7528\u5386\u53f2\u6d88\u606f",
   "\u6700\u5927 Token \u6570",
   "\u6d41\u5f0f\u8f93\u51fa",
   "\u5de5\u5177\u8c03\u7528\u65b9\u5f0f",
   "\u4fdd\u5b58\u8bbe\u7f6e"
 ]) {
-  assert(chatModule.includes(requiredChatContract), `Chat Phase 11 contract is missing ${requiredChatContract}`);
+  assert(chatSettingsDialog.includes(requiredSettingsContract), `Chat settings contract is missing ${requiredSettingsContract}`);
 }
 
 for (const requiredMenuContract of [
@@ -278,8 +346,10 @@ const studioPageContracts = [
       "\u56fe\u50cf\u751f\u6210",
       "\u628a\u6587\u5b57\u7075\u611f\u8f6c\u6362\u4e3a\u4e00\u5e45\u72ec\u6709\u753b\u9762\u3002",
       'className="figma-image-builder"',
-      'className="figma-image-parameters"',
+      'className="figma-image-composer"',
+      'className="figma-image-control-deck figma-image-parameters"',
       "\u521b\u4f5c\u53c2\u6570",
+      'className="figma-image-parameter-grid"',
       "\u7075\u611f\u7011\u5e03\u6d41",
       'className="figma-inspiration-waterfall"'
     ]
@@ -380,7 +450,8 @@ for (const exactStudioCopy of [
 }
 for (const authoredMenuLabel of [
   "\u56fe\u50cf\u751f\u6210\u6a21\u578b",
-  "\u753b\u9762\u6bd4\u4f8b",
+  "\u56fe\u50cf\u5c3a\u5bf8",
+  "\u751f\u6210\u8d28\u91cf",
   "\u751f\u6210\u6570\u91cf",
   "\u76ee\u6807\u53d7\u4f17",
   "\u6f14\u793a\u65f6\u957f",
@@ -390,7 +461,10 @@ for (const authoredMenuLabel of [
 ]) {
   assert(studioModule.includes(`ariaLabel="${authoredMenuLabel}"`), `Studio menu button is missing ${authoredMenuLabel}`);
 }
-assert(!/<select[^>]+aria-label="(?:\u56fe\u50cf\u751f\u6210\u6a21\u578b|\u753b\u9762\u6bd4\u4f8b|\u751f\u6210\u6570\u91cf|\u76ee\u6807\u53d7\u4f17|\u6f14\u793a\u65f6\u957f|\u89c6\u89c9\u6c14\u8d28|\u6e90\u8bed\u8a00|\u76ee\u6807\u8bed\u8a00)"/.test(studioModule), "Authored studio submenus must not fall back to visible native selects");
+for (const removedImageMenu of ["\u753b\u9762\u6bd4\u4f8b", "\u56fe\u50cf\u5206\u8fa8\u7387", "\u80cc\u666f", "\u8f93\u51fa\u683c\u5f0f", "\u538b\u7f29\u8d28\u91cf"]) {
+  assert(!studioModule.includes(`ariaLabel="${removedImageMenu}"`), `Removed image menu must stay hidden: ${removedImageMenu}`);
+}
+assert(!/<select[^>]+aria-label="(?:\u56fe\u50cf\u751f\u6210\u6a21\u578b|\u56fe\u50cf\u5c3a\u5bf8|\u751f\u6210\u8d28\u91cf|\u751f\u6210\u6570\u91cf|\u76ee\u6807\u53d7\u4f17|\u6f14\u793a\u65f6\u957f|\u89c6\u89c9\u6c14\u8d28|\u6e90\u8bed\u8a00|\u76ee\u6807\u8bed\u8a00)"/.test(studioModule), "Authored studio submenus must not fall back to visible native selects");
 for (const zoomContract of ['aria-label="\u7f29\u5c0f"', 'aria-label="\u653e\u5927"', "Math.round(zoom * 100)"]) {
   assert(studioModule.includes(zoomContract), `Mind Map zoom contract is missing ${zoomContract}`);
 }
@@ -414,14 +488,22 @@ for (const imageUiContract of [
   "\u8499\u7248\uff08PNG\uff09",
   'accept="image/png,image/jpeg,image/webp"',
   'accept="image/png"',
-  'ariaLabel="\u56fe\u50cf\u5206\u8fa8\u7387"',
+  'ariaLabel="\u56fe\u50cf\u5c3a\u5bf8"',
   'ariaLabel="\u751f\u6210\u6570\u91cf"',
   'ariaLabel="\u751f\u6210\u8d28\u91cf"',
-  'ariaLabel="\u8f93\u51fa\u683c\u5f0f"',
-  'ariaLabel="\u538b\u7f29\u8d28\u91cf"'
+  "const imageSizePresets = [",
+  'const fixedImageOutputFormat: ImageOutputFormat = "png";',
+  '"1:1": "2880x2880"',
+  "generationAbortRef.current?.abort()",
+  'status: requestSucceeded ? "completed" : requestCancelled ? "cancelled" : "failed"'
 ]) {
   assert(studioModule.includes(imageUiContract), `Image generation/editing UI contract is missing ${imageUiContract}`);
 }
+assert(figmaMenu.includes('placement?: FigmaMenuPlacement;') && figmaMenu.includes('requestedPlacement === "auto"'), "FigmaMenu must keep an opt-in placement override without changing the default adaptive behavior");
+assert((studioModule.match(/placement="up"/g) || []).length >= 4, "All four image parameter menus must open upward");
+assert(workbenchCss.includes("grid-template-columns: repeat(4, minmax(0, 1fr));"), "Desktop image parameter menus must use four equal columns");
+assert(workbenchCss.includes(".figma-image-parameter-grid .figma-menu-popover") && workbenchCss.includes("width: 100%;") && workbenchCss.includes("@keyframes figma-image-menu-popover-in"), "Image parameter popovers must match trigger width and use the shared entrance motion");
+assert(studioModule.includes('const [count, setCount] = useState("1");'), "Image generation must default to one image per request");
 for (const imageTypeContract of [
   'export type ImageGenerationMode = "generate" | "edit";',
   'export type ImageAspectRatio = "1:1" | "3:2" | "2:3" | "16:9" | "9:16";',
@@ -444,20 +526,20 @@ assert(imageRequestStart >= 0 && imageRequestEnd > imageRequestStart, "Image gen
 for (const typedImageOption of [
   "mode,",
   "count: Number(count)",
-  "aspectRatio,",
-  "imageSize: resolution",
-  "size: imageRequestSize(aspectRatio, resolution)",
+  "aspectRatio: selectedSizePreset.aspectRatio",
+  "imageSize: selectedSizePreset.resolution",
+  "size: imageRequestSize(selectedSizePreset.aspectRatio, selectedSizePreset.resolution)",
   'inputImage: mode === "edit"',
   'inputImages: mode === "edit"',
   'referenceImageUrls: mode === "edit" && usesBotcf',
   'maskImage: mode === "edit" && supportsMask',
-  "quality: usesOpenAIImageOptions ? quality : undefined",
-  "outputFormat: usesOpenAIImageOptions ? outputFormat : undefined",
-  "outputCompression: usesOpenAIImageOptions && outputFormat !== \"png\""
+  "quality: imageCapabilities.supportsQuality ? quality : undefined",
+  "outputFormat: fixedImageOutputFormat"
 ]) {
   assert(imageRequestBlock.includes(typedImageOption), `Image request must send typed option ${typedImageOption}`);
 }
-assert(imageRequestBlock.includes("Number(outputCompression)"), "Image compression must be sent as a number");
+assert(!imageRequestBlock.includes("outputCompression"), "Fixed PNG image requests must not send compression options");
+assert(!imageRequestBlock.includes("background:"), "Removed image background controls must not leak hidden request parameters");
 assert(studioModule.includes('result?.assets?.filter((asset) => asset.type === "image") || []'), "Image results must retain every image asset");
 assert(studioModule.includes("resultImages.map((asset, index) => ("), "Image results must render every returned asset");
 assert(studioModule.includes("item.assets") && studioModule.includes(".forEach((asset, index) =>"), "Saved multi-asset image generations must be flattened into the waterfall");
@@ -532,12 +614,13 @@ for (const retiredSelector of [".studio-sidebar", ".studio-mobile-header", ".stu
   assert(!shellCss.includes(retiredSelector), `Active shell CSS still contains ${retiredSelector}`);
 }
 
-assert(apiConnectionForm.includes('autoComplete="url"'), "API URL input should provide URL autocomplete");
-assert(apiConnectionForm.includes('inputMode="url"'), "API URL input should provide URL input mode");
-assert(apiConnectionForm.includes('name="apiUrl"'), "API URL input should provide a meaningful name");
-assert(apiConnectionForm.includes('type="url"'), "API URL input should use the URL type");
+assert(!apiConnectionForm.includes('autoComplete="url"'), "Public BYOK form must not expose URL autocomplete");
+assert(!apiConnectionForm.includes('name="apiUrl"'), "Public BYOK form must not expose an API URL field");
+assert(!apiConnectionForm.includes('inputMode="url"'), "Public BYOK form must not expose URL input mode");
+assert(!apiConnectionForm.includes('type="url"'), "Public BYOK form must not expose a URL input");
 assert(apiConnectionForm.includes('autoComplete="off"'), "API Key input should disable autocomplete");
 assert(apiConnectionForm.includes('name="apiKey"'), "API Key input should provide a meaningful name");
+assert(!apiConnectionModal.includes("API URL") && !apiConnectionModal.includes("apiUrl"), "BYOK modal must only request an API Key");
 for (const retiredByokSurface of [
   "settings-section-title",
   "settings-summary",
@@ -571,12 +654,19 @@ assert(tokensCss.includes("--xhs-range-track-border: #637493"), "Dark range trac
 assert(tokensCss.includes("--xhs-scrollbar-active: rgba(101, 115, 141, 0.42)") && tokensCss.includes("--xhs-scrollbar-active: rgba(147, 163, 191, 0.46)"), "Model scrollbar soft-contrast tokens are missing");
 assert(tokensCss.includes("--xhs-primary-fill: #2368e8") && tokensCss.includes("--xhs-on-primary: #ffffff"), "Filled-primary text contrast tokens are missing");
 assert(!/font-size:\s*(?:8|9)px/.test(activeCss), "Active UI metadata must not render below 10px");
-assert(chatCss.includes('height: 24px;') && chatCss.includes('background: var(--xhs-range-track);'), "Chat range controls must keep the legible track geometry");
+assert(shellCss.includes("@keyframes figma-module-enter") && shellCss.includes("@keyframes figma-module-progress"), "Public module transitions must keep the authored entry and progress motion");
+assert(shellCss.includes("@media (prefers-reduced-motion: reduce)") && shellCss.includes(".figma-module-transition-rail > i"), "Public module transitions must honor reduced-motion preferences");
+assert(chatCss.includes('height: 24px;') && chatCss.includes('background: color-mix(in srgb, var(--xhs-range-track) 68%, var(--xhs-surface));'), "Chat range controls must keep the quiet track geometry");
 assert(chatCss.includes('min-height: 0;') && chatCss.includes('padding: 0;') && chatCss.includes('box-shadow: none;'), "Chat range inputs must reset legacy field chrome");
 assert(chatCss.includes('.figma-range-track > i') && chatCss.includes('width: var(--range-progress);'), "Chat range controls must expose a visible progress segment");
-assert(chatCss.includes('box-shadow: 0 0 0 1px var(--xhs-red), 0 0 0 4px var(--xhs-range-thumb-ring);'), "Chat range thumbs must keep their contrast ring");
-assert(chatModule.includes('aria-labelledby="figma-temperature-label"') && chatModule.includes('aria-labelledby="figma-top-p-label"'), "Chat range names must stay stable when values change");
-assert(chatModule.includes('<output htmlFor="figma-temperature-range">') && chatModule.includes('<output htmlFor="figma-top-p-range">'), "Chat range values must use semantic outputs");
+assert(chatCss.includes('width: 16px;') && chatCss.includes('background: var(--xhs-surface);') && chatCss.includes('border: 2px solid color-mix(in srgb, var(--xhs-red) 62%, var(--xhs-line-strong));'), "Chat range thumbs must keep their restrained surface-and-border treatment");
+assert(chatSettingsDialog.includes('aria-labelledby="figma-temperature-label"') && chatSettingsDialog.includes('aria-labelledby="figma-top-p-label"'), "Chat range names must stay stable when values change");
+assert(chatSettingsDialog.includes('<output htmlFor="figma-temperature-range">') && chatSettingsDialog.includes('<output htmlFor="figma-top-p-range">'), "Chat range values must use semantic outputs");
+assert(chatSettingsDialog.includes('<FigmaMenu') && chatSettingsDialog.includes('figma-setting-row figma-setting-menu ${className}'), "Chat model choices must use the authored menu instead of native select popups");
+assert(!chatSettingsDialog.includes("<select"), "Chat Session Settings must not use native select popups");
+assert(chatSettingsDialog.includes('id="figma-context-window-range"') && chatSettingsDialog.includes('id="figma-context-message-count-range"') && chatSettingsDialog.includes("figma-output-token-setting"), "Chat context and output limits must use the authored slider and manual-input controls");
+assert(chatSettingsDialog.includes("ConfirmationDialog") && chatSettingsDialog.includes("setMaxTokenConfirmationOpen(true)"), "Enabling a manual output limit must show the context-limit warning");
+assert(chatSettingsDialog.includes('className="figma-tool-mode-menu"') && chatSettingsDialog.includes("toolInvocationOptions"), "Tool invocation must use one right-side authored menu");
 assert(chatModule.includes('data-scroll-active={modelListScrolling ? "true" : "false"}') && chatModule.includes("handleModelListScroll"), "Chat model scrolling must expose a transient visual state");
 assert(chatModule.includes('data-scroll-active={vendorListScrolling ? "true" : "false"}') && chatModule.includes("handleVendorListScroll"), "Chat vendor scrolling must expose an independent transient visual state");
 assert(chatCss.includes("scrollbar-color: transparent transparent;") && chatCss.includes('.figma-model-list[data-scroll-active="true"]'), "Chat model scrollbar must stay transparent until interaction");
@@ -585,7 +675,10 @@ assert(chatCss.includes("scrollbar-color: var(--xhs-scrollbar-active) transparen
 assert(chatCss.includes('.figma-model-vendors[data-scroll-active="true"]'), "Chat vendor scrollbar must stay transparent until interaction");
 assert(chatCss.includes("var(--xhs-red) 16%") && chatCss.includes("font-weight: 750;"), "Selected Chat vendors must keep a clearly emphasized rounded background state");
 assert(chatModule.includes("modelValueDescriptionId") && chatModule.includes("aria-describedby={modelValueDescriptionId}"), "Chat model trigger must describe its current value");
-assert(figmaMenu.includes("valueDescriptionId") && figmaMenu.includes("aria-describedby={valueDescriptionId}"), "Shared Figma menus must describe their current value");
+assert(figmaMenu.includes("valueDescriptionId") && figmaMenu.includes('[valueDescriptionId, ariaDescribedBy].filter(Boolean).join(" ")'), "Shared Figma menus must describe their current value and optional help text");
+for (const relativePath of publicAuthoredMenuFiles) {
+  assert(!readProjectFile(relativePath).includes("<select"), `Public authored menus must not use native select popups: ${relativePath}`);
+}
 for (const modelMenuLabel of ["PPT \u751f\u6210\u6a21\u578b", "\u601d\u7ef4\u5bfc\u56fe\u751f\u6210\u6a21\u578b", "\u7ffb\u8bd1\u6a21\u578b"]) {
   assert(studioModule.includes(`ariaLabel="${modelMenuLabel}"`), `Studio model selector is missing ${modelMenuLabel}`);
 }

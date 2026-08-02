@@ -56,7 +56,7 @@ function ResultPanel({
   result,
   emptyIcon = FileText,
   emptyTitle = "结果会显示在这里",
-  emptyDescription = "提交后会经由本地服务端代理转发，API URL 和 Key 不会写入项目数据文件。",
+  emptyDescription = "提交后会经由本地服务端代理转发，API Key 只保存在当前浏览器会话。",
   actions
 }: ResultPanelProps) {
   const retrievalChunks = result ? retrievalChunksFrom(result.raw) : [];

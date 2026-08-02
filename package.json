@@ -23,16 +23,19 @@
     "workspace-storage-contracts": "node scripts/workspace-storage-contracts.mjs",
     "automation-contracts": "node scripts/automation-contracts.mjs",
     "search-contracts": "node scripts/search-contracts.mjs",
+    "prompt-tool-contracts": "node scripts/prompt-tool-contracts.mjs",
     "knowledge:migrate": "node server/knowledge-cloud/migrate.mjs",
     "knowledge:migrate:check": "node server/knowledge-cloud/migrate.mjs --check",
     "knowledge:worker": "node server/knowledge-cloud/worker.mjs",
     "test:langflow": "node --test tests/langflow/*.test.mjs",
     "test:knowledge": "node --test tests/knowledge-cloud/*.test.mjs",
+    "test:security": "node --test tests/security/*.test.mjs",
+    "test:server": "node --test tests/server/*.test.mjs",
     "test:knowledge:db": "node --test tests/knowledge-cloud/postgres.integration.mjs",
     "test:e2e": "playwright test",
     "test:e2e:install": "playwright install chromium",
     "privacy": "node scripts/privacy-scan.mjs",
-    "qa": "npm run check && npm run build && npm run privacy && npm run ui-contract && npm run feature-audit && npm run provider-contracts && npm run chat-local-contracts && npm run workspace-storage-contracts && npm run automation-contracts && npm run search-contracts && npm run test:langflow && npm run test:knowledge && npm run test:knowledge:db && npm run ui-runtime"
+    "qa": "npm run check && npm run build && npm run privacy && npm run ui-contract && npm run feature-audit && npm run provider-contracts && npm run prompt-tool-contracts && npm run chat-local-contracts && npm run workspace-storage-contracts && npm run automation-contracts && npm run search-contracts && npm run test:langflow && npm run test:knowledge && npm run test:security && npm run test:server && npm run test:knowledge:db && npm run ui-runtime && npm run release-check"
   },
   "dependencies": {
     "@xyflow/react": "^12.11.2",

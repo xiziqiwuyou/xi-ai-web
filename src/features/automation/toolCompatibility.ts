@@ -2,6 +2,7 @@ import type {
   AgentSkillDefinition,
   ModelCapability,
   ModelCatalogEntry,
+  ToolInvocationMode,
   ToolSetting
 } from "../../types";
 
@@ -24,6 +25,7 @@ export type ToolCompatibility = {
 export type ToolCompatibilityOptions = {
   hasContext?: boolean;
   searchReady?: boolean;
+  invocationMode?: ToolInvocationMode;
 };
 
 const capabilityLabels: Record<ModelCapability, string> = {
@@ -40,8 +42,7 @@ const capabilityLabels: Record<ModelCapability, string> = {
   toolCalling: "函数工具调用",
   webSearch: "联网搜索",
   urlContext: "网页读取",
-  codeExecution: "代码执行",
-  streaming: "流式输出"
+  codeExecution: "代码执行"
 };
 
 export function capabilitySetCompatibility(
@@ -68,12 +69,16 @@ export function toolCompatibility(
       : { compatible: false, reason: "尚未配置独立联网搜索服务" };
   }
   if (!model) return { compatible: false, reason: "尚未选择模型" };
+  if (options.invocationMode === "prompt" && tool.execution === "provider") {
+    return { compatible: false, reason: "厂商托管工具仅支持函数调用方式" };
+  }
   const vendors = tool.supportedVendors?.length ? tool.supportedVendors : allVendors;
   if (!vendors.includes(model.vendor)) {
     return { compatible: false, reason: `不支持 ${model.label} 所属厂商` };
   }
   const capability = tool.requiredCapability || "toolCalling";
-  if (!model.capabilities.includes(capability)) {
+  const promptLocalTool = options.invocationMode === "prompt" && tool.execution === "local";
+  if (!promptLocalTool && !model.capabilities.includes(capability)) {
     return { compatible: false, reason: `模型未启用 ${capability} 能力` };
   }
   if (tool.requiresContext && !options.hasContext) {
@@ -105,7 +110,10 @@ export function skillCompatibility(
   const requiredCapabilities = skill.allowedTools.includes("web_search")
     ? skill.requiredCapabilities.filter((capability) => capability !== "webSearch")
     : skill.requiredCapabilities;
-  const capabilityResult = capabilitySetCompatibility(requiredCapabilities, model);
+  const invocationCapabilities = options.invocationMode === "prompt"
+    ? requiredCapabilities.filter((capability) => capability !== "toolCalling")
+    : requiredCapabilities;
+  const capabilityResult = capabilitySetCompatibility(invocationCapabilities, model);
   if (!capabilityResult.compatible) return capabilityResult;
   return toolSetCompatibility(skill.allowedTools, tools, model, options);
 }

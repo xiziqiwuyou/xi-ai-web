@@ -3,7 +3,7 @@ import { Heart, Image as ImageIcon, RotateCcw, Trash2, Wand2 } from "lucide-reac
 import { api } from "../../api";
 import AssetGallery from "../../components/workbench/AssetGallery";
 import EmptyState from "../../components/workbench/EmptyState";
-import { MasonryGrid } from "../../components/ui";
+import { FigmaMenu, MasonryGrid, type FigmaMenuOption } from "../../components/ui";
 import {
   ConnectionStatus,
   GenerationOptions,
@@ -55,6 +55,22 @@ const imagePresets = [
   "小红书封面图，明亮质感，圆润卡片排版，适合种草分享",
   "生活方式摄影，柔和自然光，真实场景，高级但不夸张"
 ];
+const imageSizeOptions = [
+  { value: "1024x1024", label: "1024 x 1024" },
+  { value: "1024x1792", label: "1024 x 1792" },
+  { value: "1792x1024", label: "1792 x 1024" },
+  { value: "1280x720", label: "1280 x 720" }
+] as const satisfies readonly FigmaMenuOption[];
+const imageStyleOptions = [
+  { value: "自然高级", label: "自然高级" },
+  { value: "小红书封面", label: "小红书封面" },
+  { value: "产品摄影", label: "产品摄影" },
+  { value: "电影感", label: "电影感" }
+] as const satisfies readonly FigmaMenuOption[];
+const imageQualityOptions = [
+  { value: "standard", label: "标准" },
+  { value: "hd", label: "高清" }
+] as const satisfies readonly FigmaMenuOption[];
 
 function hasImageAsset(item: GalleryItem) {
   return item.sourceModule === "image" && item.assets?.some((asset) => asset.type === "image");
@@ -147,7 +163,7 @@ function GenerationModule({
     event.preventDefault();
     if (!canSubmit) {
       if (!ready) {
-        setError("请先填写 API URL 和 Key");
+      setError("请先填写 API Key");
         onRequestApiConfig();
         return;
       }
@@ -226,31 +242,9 @@ function GenerationModule({
         onPresetPick={(prompt) => updateDraft({ prompt: presetPromptByTitle.get(prompt) || prompt })}
       >
         <GenerationOptions>
-          <label>
-            尺寸
-            <select value={draft.size} onChange={(event) => updateDraft({ size: event.target.value })}>
-              <option value="1024x1024">1024 x 1024</option>
-              <option value="1024x1792">1024 x 1792</option>
-              <option value="1792x1024">1792 x 1024</option>
-              <option value="1280x720">1280 x 720</option>
-            </select>
-          </label>
-          <label>
-            风格
-            <select value={draft.stylePreset} onChange={(event) => updateDraft({ stylePreset: event.target.value })}>
-              <option value="自然高级">自然高级</option>
-              <option value="小红书封面">小红书封面</option>
-              <option value="产品摄影">产品摄影</option>
-              <option value="电影感">电影感</option>
-            </select>
-          </label>
-          <label>
-            质量
-            <select value={draft.quality} onChange={(event) => updateDraft({ quality: event.target.value })}>
-              <option value="standard">standard</option>
-              <option value="hd">hd</option>
-            </select>
-          </label>
+          <FigmaMenu className="workbench-option-menu" label="尺寸" ariaLabel="图片尺寸" value={draft.size} options={imageSizeOptions} onChange={(size) => updateDraft({ size })} />
+          <FigmaMenu className="workbench-option-menu" label="风格" ariaLabel="图片风格" value={draft.stylePreset} options={imageStyleOptions} onChange={(stylePreset) => updateDraft({ stylePreset })} />
+          <FigmaMenu className="workbench-option-menu" label="质量" ariaLabel="图片质量" value={draft.quality} options={imageQualityOptions} onChange={(quality) => updateDraft({ quality })} />
           <label className="wide-option">
             负面提示
             <input

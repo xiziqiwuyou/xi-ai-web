@@ -1,54 +1,96 @@
 import type { ReactNode } from "react";
-import { LockKeyhole } from "lucide-react";
+import { CircleAlert, LoaderCircle, LockKeyhole, RotateCcw } from "lucide-react";
 import TopBar from "./TopBar";
 import type { MenuItem, ModuleId } from "../types";
 
 type AppShellProps = {
   menuItems: MenuItem[];
   activeModule: ModuleId;
+  pendingModule: ModuleId | null;
+  moduleTransitionPending: boolean;
+  pendingModuleLabel: string;
+  moduleTransitionError: ModuleId | null;
+  moduleTransitionErrorLabel: string;
   apiReady: boolean;
+  maskedApiKey: string;
   accessAddress: string;
-  accessKey: string;
   onModuleChange: (moduleId: ModuleId) => void;
+  onModuleIntent: (moduleId: ModuleId) => void;
+  onRetryModule: () => void;
   onOpenWorkspaceData: () => void;
+  onOpenApiConfig: () => void;
   onWorkspaceError: (message: string) => void;
   children: ReactNode;
 };
 
-function maskAccessKey(value: string) {
-  const key = value.trim();
-  if (!key) return "未连接";
-  if (key.length <= 7) return `${key.slice(0, 2)}••••${key.slice(-2)}`;
-  return `${key.slice(0, 4)}••••••${key.slice(-3)}`;
-}
-
 function AppShell({
   menuItems,
   activeModule,
+  pendingModule,
+  moduleTransitionPending,
+  pendingModuleLabel,
+  moduleTransitionError,
+  moduleTransitionErrorLabel,
   apiReady,
+  maskedApiKey,
   accessAddress,
-  accessKey,
   onModuleChange,
+  onModuleIntent,
+  onRetryModule,
   onOpenWorkspaceData,
+  onOpenApiConfig,
   onWorkspaceError,
   children
 }: AppShellProps) {
   return (
-    <div className="figma-studio-shell" data-active-module={activeModule}>
+    <div
+      className="figma-studio-shell"
+      data-active-module={activeModule}
+      data-module-transition={moduleTransitionPending ? "pending" : "idle"}
+    >
       <a className="skip-main-link" href="#workspace-main">
         跳到工作区
       </a>
       <TopBar
         menuItems={menuItems}
         activeModule={activeModule}
+        pendingModule={pendingModule}
         apiReady={apiReady}
+        maskedApiKey={maskedApiKey}
         accessAddress={accessAddress}
         onModuleChange={onModuleChange}
+        onModuleIntent={onModuleIntent}
         onOpenWorkspaceData={onOpenWorkspaceData}
+        onOpenApiConfig={onOpenApiConfig}
         onWorkspaceError={onWorkspaceError}
       />
-      <main id="workspace-main" className="figma-workspace" data-scroll-owner="public-workspace" tabIndex={-1}>
-        <div key={activeModule} className="figma-workspace-canvas">
+      <main
+        id="workspace-main"
+        className="figma-workspace"
+        data-scroll-owner="public-workspace"
+        tabIndex={-1}
+      >
+        {moduleTransitionPending && pendingModule ? (
+          <div className="figma-module-transition" role="status" aria-live="polite" aria-atomic="true">
+            <span className="figma-module-transition-rail" aria-hidden="true"><i /></span>
+            <span className="figma-module-transition-copy">
+              <span className="figma-module-transition-spinner" aria-hidden="true"><LoaderCircle size={14} /></span>
+              正在打开 <strong>{pendingModuleLabel}</strong>
+            </span>
+          </div>
+        ) : null}
+        {moduleTransitionError ? (
+          <div className="figma-module-transition-error" role="alert">
+            <span><CircleAlert size={15} />无法打开 <strong>{moduleTransitionErrorLabel}</strong>，当前页面已保留。</span>
+            <button type="button" onClick={onRetryModule}><RotateCcw size={14} />重试</button>
+          </div>
+        ) : null}
+        <div
+          key={activeModule}
+          className="figma-workspace-canvas"
+          data-module-canvas={activeModule}
+          aria-busy={moduleTransitionPending}
+        >
           {children}
         </div>
         <footer className="figma-public-footer">
@@ -56,7 +98,7 @@ function AppShell({
             <LockKeyhole size={14} />
             此访问链接由管理员授权
           </span>
-          <code>KEY · {maskAccessKey(accessKey)}</code>
+          <code>KEY · {apiReady ? "已配置" : "未配置"}</code>
         </footer>
       </main>
     </div>

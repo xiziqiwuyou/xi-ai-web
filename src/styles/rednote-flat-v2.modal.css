@@ -70,6 +70,17 @@
   visibility: hidden;
 }
 
+.api-config-error {
+  margin: 14px 20px 0;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--xhs-danger) 28%, var(--xhs-line));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--xhs-danger) 8%, var(--xhs-surface));
+  color: var(--xhs-danger);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .api-config-form {
   display: grid !important;
   max-height: calc(100dvh - 150px) !important;
@@ -751,7 +762,11 @@
   backdrop-filter: none;
 }
 
-.ui-dialog-layer:has(.figma-session-settings) .ui-dialog-scrim,
+.ui-dialog-layer:has(.figma-session-settings) .ui-dialog-scrim {
+  background: rgba(2, 7, 18, 0.68);
+  backdrop-filter: none;
+}
+
 .ui-dialog-layer:has(.figma-agent-dialog) .ui-dialog-scrim {
   background: rgba(2, 7, 18, 0.68);
   backdrop-filter: blur(8px);
@@ -777,8 +792,11 @@
 }
 
 .ui-dialog.figma-session-settings {
-  width: min(672px, 100%);
+  width: min(860px, 100%);
+  height: min(720px, calc(100dvh - 40px));
   max-height: calc(100dvh - 40px);
+  overflow-anchor: none;
+  scrollbar-gutter: stable;
 }
 
 .ui-dialog-layer:has(.figma-agent-dialog) {

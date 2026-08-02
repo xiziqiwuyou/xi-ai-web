@@ -11,6 +11,8 @@ import type {
   Assistant,
   ChatStreamEvent,
   ChatStreamPayload,
+  ChatTitlePayload,
+  ChatTitleResult,
   GenerationModuleId,
   GenerationPayload,
   GenerationResult,
@@ -42,11 +44,13 @@ import type {
   LangflowStreamEvent,
   MenuItem,
   ModelCatalogEntry,
+  ModelVendorEntry,
   PromptPreset,
   PublicBootstrapPayload,
   SiteSettings,
   ToolSetting
 } from "./types";
+import { normalizeAdminBootstrapPayload } from "./adminBootstrap";
 
 export class ApiError extends Error {
   status: number;
@@ -93,13 +97,28 @@ async function apiJson<T>(path: string, init: RequestInit = {}): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+let shellJwtExchangeInFlight: { token: string; promise: Promise<{ apiKey: string }> } | null = null;
+
+function exchangeShellJwt(token: string) {
+  if (shellJwtExchangeInFlight?.token === token) return shellJwtExchangeInFlight.promise;
+  const promise = apiJson<{ apiKey: string }>("/api/public/shell-token/exchange", {
+    method: "POST",
+    body: JSON.stringify({ token })
+  }).finally(() => {
+    if (shellJwtExchangeInFlight?.promise === promise) shellJwtExchangeInFlight = null;
+  });
+  shellJwtExchangeInFlight = { token, promise };
+  return promise;
+}
+
 export type ModelCatalogPayload = Partial<ModelCatalogEntry>;
+export type ModelVendorPayload = Pick<ModelVendorEntry, "label" | "adapter">;
 export type AppPresetPayload = Partial<AppPreset>;
 export type PromptPresetPayload = Partial<PromptPreset>;
 
 export const api = {
   publicBootstrap: () => apiJson<PublicBootstrapPayload>("/api/public/bootstrap"),
-  bootstrap: () => apiJson<PublicBootstrapPayload>("/api/public/bootstrap"),
+  exchangeShellJwt,
 
   adminStatus: () => apiJson<AdminStatus>("/api/admin/status"),
   adminLogin: (password: string) =>
@@ -112,7 +131,9 @@ export const api = {
       method: "POST",
       body: JSON.stringify({})
     }),
-  adminBootstrap: () => apiJson<AdminBootstrapPayload>("/api/admin/bootstrap"),
+  adminBootstrap: () =>
+    apiJson<Partial<AdminBootstrapPayload>>("/api/admin/bootstrap")
+      .then(normalizeAdminBootstrapPayload),
   updateSettings: (settings: Partial<SiteSettings>) =>
     apiJson<SiteSettings>("/api/admin/settings", {
       method: "PATCH",
@@ -124,8 +145,18 @@ export const api = {
       body: JSON.stringify({ menuItems })
     }),
 
-  generate: (moduleId: GenerationModuleId, payload: GenerationPayload) =>
+  generate: (moduleId: GenerationModuleId, payload: GenerationPayload, signal?: AbortSignal) =>
     apiJson<GenerationResult>(`/api/generate/${moduleId}`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+      signal
+    }),
+  optimizeImagePrompt: (payload: {
+    connection: GenerationPayload["connection"];
+    modelId: string;
+    prompt: string;
+  }) =>
+    apiJson<{ prompt: string }>("/api/image/optimize-prompt", {
       method: "POST",
       body: JSON.stringify(payload)
     }),
@@ -350,7 +381,6 @@ export const api = {
           embeddingProfileId: payload.embeddingProfileId,
           idempotencyKey: payload.idempotencyKey,
           connection: {
-            baseUrl: payload.connection.baseUrl,
             apiKey: payload.connection.apiKey
           }
         })
@@ -528,8 +558,26 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(entry)
     }),
+  reorderModelCatalog: (modelIds: string[]) =>
+    apiJson<ModelCatalogEntry[]>("/api/admin/model-catalog/order", {
+      method: "PATCH",
+      body: JSON.stringify({ modelIds })
+    }),
   deleteModelEntry: (id: string) =>
     apiJson<void>(`/api/admin/model-catalog/${id}`, { method: "DELETE" }),
+
+  createModelVendor: (vendor: ModelVendorPayload) =>
+    apiJson<ModelVendorEntry>("/api/admin/model-vendors", {
+      method: "POST",
+      body: JSON.stringify(vendor)
+    }),
+  reorderModelVendors: (vendorIds: string[]) =>
+    apiJson<ModelVendorEntry[]>("/api/admin/model-vendors/order", {
+      method: "PATCH",
+      body: JSON.stringify({ vendorIds })
+    }),
+  deleteModelVendor: (id: string) =>
+    apiJson<void>(`/api/admin/model-vendors/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
   createAssistant: (assistant: Partial<Assistant>) =>
     apiJson<Assistant>("/api/admin/assistants", {
@@ -570,12 +618,14 @@ export const api = {
   deletePromptPreset: (id: string) =>
     apiJson<void>(`/api/admin/prompt-presets/${id}`, { method: "DELETE" }),
 
-  exportAdminMetadata: () => apiJson<AdminBootstrapPayload>("/api/admin/metadata-export"),
+  exportAdminMetadata: () =>
+    apiJson<Partial<AdminBootstrapPayload>>("/api/admin/metadata-export")
+      .then(normalizeAdminBootstrapPayload),
   importAdminMetadata: (payload: Partial<AdminBootstrapPayload>) =>
-    apiJson<AdminBootstrapPayload>("/api/admin/metadata-import", {
+    apiJson<Partial<AdminBootstrapPayload>>("/api/admin/metadata-import", {
       method: "PATCH",
       body: JSON.stringify(payload)
-    }),
+    }).then(normalizeAdminBootstrapPayload),
   previewAdminMetadataImport: (payload: Partial<AdminBootstrapPayload>) =>
     apiJson<{
       ok: boolean;
@@ -590,13 +640,13 @@ export const api = {
   getAdminOps: () => apiJson<AdminOpsPayload>("/api/admin/ops"),
   getAdminBackups: () => apiJson<AdminBackupItem[]>("/api/admin/backups"),
   restoreAdminBackup: (name: string) =>
-    apiJson<AdminBootstrapPayload & { restored: boolean; restoredBackup: string }>(
+    apiJson<Partial<AdminBootstrapPayload> & { restored: boolean; restoredBackup: string }>(
       `/api/admin/backups/${encodeURIComponent(name)}/restore`,
       {
         method: "POST",
         body: JSON.stringify({})
       }
-    ),
+    ).then(normalizeAdminBootstrapPayload),
   getAdminAuditLog: (params: { action?: string; limit?: number } = {}) => {
     const search = new URLSearchParams();
     if (params.action) search.set("action", params.action);
@@ -734,6 +784,7 @@ export async function streamChat(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let receivedDone = false;
 
   const flushEvent = (rawEvent: string) => {
     const lines = rawEvent.split(/\r?\n/);
@@ -747,6 +798,7 @@ export async function streamChat(
       .join("\n");
 
     if (!eventName || !data) return;
+    if (eventName === "done") receivedDone = true;
     onEvent({ type: eventName, ...JSON.parse(data) } as ChatStreamEvent);
   };
 
@@ -755,10 +807,21 @@ export async function streamChat(
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
 
-    const events = buffer.split(/\n\n/);
+    const events = buffer.split(/\r?\n\r?\n/);
     buffer = events.pop() || "";
     events.filter(Boolean).forEach(flushEvent);
   }
 
   if (buffer.trim()) flushEvent(buffer);
+  if (!receivedDone) {
+    throw new ApiError(502, "模型响应在完成事件前意外中断");
+  }
+}
+
+export function generateChatTitle(payload: ChatTitlePayload) {
+  return apiJson<ChatTitleResult>("/api/chat/title", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
 }

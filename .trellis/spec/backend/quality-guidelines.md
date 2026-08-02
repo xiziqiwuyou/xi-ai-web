@@ -20,6 +20,50 @@ Questions to answer:
 
 ---
 
+## Managed Upstream And Public Provider Boundary
+
+- `SiteSettings.upstreamBaseUrl` is the only runtime base URL for public model, search, media, and knowledge Embedding requests. Browser-provided `baseUrl` fields are compatibility-only secrets for redaction and must never select an outbound target.
+- The default managed upstream is `https://api.xi-ai.cn`. Production settings require HTTPS and must reject credentials, query/hash fragments, loopback, private, link-local, multicast, metadata, and DNS-resolved restricted addresses. Local HTTP is allowed only outside production with `ALLOW_LOCAL_UPSTREAM=true`.
+- Validate the managed upstream during startup and every privileged settings import, restore, or update. Public request handlers consume the normalized stored value and never silently fall back to a client URL.
+- `providerUrl(provider, endpointPath)` owns API-version projection for model traffic. A bare managed domain receives `/v1` for OpenAI, Anthropic, Kimi, DeepSeek, Qwen, BotCF, and OpenAI-compatible requests, while Gemini receives `/v1beta`. Preserve a base path that already ends in a version segment and never create `/v1/v1` or `/v1beta/v1beta`.
+- Provider JSON and multipart-JSON helpers may accept valid JSON with a missing or incorrect media type for gateway compatibility, but must reject empty, malformed, HTML, and XHTML success bodies. Binary media helpers must reject HTML before creating a data URL. A landing page is an upstream configuration error, never model text or generated media.
+- Prompt optimization performs a route-specific final-text check after provider extraction: remove at most one wrapping-quote layer and one transport-code-fence layer regardless of nesting order, then reject empty or HTML-document output. Normal chat remains allowed to discuss or generate HTML source.
+- Knowledge Embedding uses the same model endpoint projection for `/v1/embeddings`. Kimi independent search uses `/v1/chat/completions`; GLM keeps its separate `/paas/v4/web_search` contract.
+- Mount public Provider rate/concurrency guards before route JSON parsers. Keep request-body limits route-specific; large limits are reserved for bounded media or multi-image payloads.
+- Bound all rate/concurrency environment overrides. Release concurrency slots once on response `finish` or `close`, return `Retry-After` on rejection, map server timeouts to 504, and distinguish client cancellation as 499.
+- Local tools must not use `eval`, `Function`, or another dynamic-code execution path. Parse bounded tool input explicitly and validate the declared schema before execution.
+
+Required regression gates for this boundary:
+
+```powershell
+npm run test:security
+npm run provider-contracts
+npm run search-contracts
+npm run automation-contracts
+npm run test:knowledge
+npm run privacy
+npm run test:server
+```
+
+### Shell Type-3 JWT Exchange Boundary
+
+- `POST /api/public/shell-token/exchange` accepts `{ token }` only and derives both Shell control-plane URLs from the origin of the validated administrator-managed `upstreamBaseUrl`. Never accept a caller-provided host or path.
+- Treat `x_s_token` as a bounded one-shot Shell login JWT, not a model Key. Validate it through `POST /api/user/login/refresh` with `X-S-Token`, then request `GET /api/token/default` with the refreshed token and return only the normalized `sk-...` `data.key`.
+- Reject redirects, malformed or oversized JSON, control characters, short/oversized JWTs, malformed upstream JSON, HTML responses, and missing default Keys. Public errors must be bounded and must not reflect upstream response text or either secret.
+- Mount the exchange-specific rate/concurrency guard and 16 KiB JSON parser before the general parser, enforce a 20-second abort timeout, and return `Cache-Control: no-store` plus `Pragma: no-cache` on success.
+- Never persist, log, cache, audit, or return the Shell JWT. The resulting API Key belongs to the existing browser session-only BYOK boundary and must not enter backend metadata.
+
+---
+
+## Admin JSON Metadata Write Queue
+
+- `createMetadataWriteQueue()` is mounted after `requireAdmin` and before Admin mutation handlers. `GET` and `HEAD` bypass it; `POST`, `PUT`, `PATCH`, and `DELETE` acquire one in-process slot in arrival order.
+- A request releases its slot exactly once on response `finish` or premature `close`. A queued request whose client disconnected must skip its downstream handler. Use `req.aborted` and the explicit abort event for request disconnects; do not treat `req.destroyed` alone as proof of a disconnect because Express may set it after consuming a normal request body. A synchronous downstream throw must release the slot before propagating.
+- The queue serializes one Node process only. It is not a distributed lock and must not be described as horizontal multi-instance consistency.
+- `tests/server/metadata-write-queue.test.mjs` covers ordering, GET bypass, close/finish idempotence, disconnected queued requests, and synchronous throws.
+
+---
+
 ## Forbidden Patterns
 
 <!-- Patterns that should never be used and why -->
@@ -680,4 +724,105 @@ attachments = selectedFiles.slice(0, maxImageAttachments);
 // Correct: the browser improves UX and the server remains authoritative.
 attachments = pendingAttachments.slice(0, maxImageAttachments);
 const sanitized = sanitizeChatAttachments(req.body.attachments, modelEntry).slice(0, 6);
+```
+
+## Model Chat Endpoint Protocol Contract
+
+- `ModelCatalogEntry.endpointProtocol` is the sole chat endpoint selector. Supported values are `openai-chat`, `openai-responses`, `anthropic-messages`, and `gemini-generate-content`.
+- `vendor` continues to own display grouping, capability metadata, media implementations, and Kimi/DeepSeek/Qwen parameter normalization. It must not silently override the selected chat protocol.
+- `createProviderAdapter()` composes a vendor adapter with a protocol chat adapter and replaces only `streamChat` and `completeText`. Image, audio, video, transcription, and embedding methods remain vendor-owned.
+- Legacy records normalize to Responses for OpenAI, Messages for Anthropic, generateContent for Gemini, and Chat Completions for Kimi, DeepSeek, Qwen, BotCF, and OpenAI-compatible vendors.
+- `providerUrl()` must produce `/v1beta/models/{model}:generateContent` for Gemini-native model actions and `/v1/...` for the other supported protocols, replacing an incompatible trailing version on the managed base URL.
+- Provider contracts must cover exact paths, request shapes, authentication headers, Kimi Chat normalization, OpenAI Chat/Responses switching, and a media call after a chat-protocol override.
+
+## Scenario: Administrator Model Vendor Registry
+
+### 1. Scope / Trigger
+
+- Trigger: any change to `ModelVendorEntry`, `ModelCatalogEntry.vendorId`, Admin model-vendor routes, metadata import/restore, registry normalization, or public model projection.
+- A model vendor is an administrator-managed display/grouping entity. Its `adapter` is the existing trusted runtime provider kind; it is not a custom protocol or credential container.
+
+### 2. Signatures
+
+```ts
+type ModelVendorEntry = {
+  id: string;
+  label: string;
+  adapter: ProviderKind;
+  enabled: boolean;
+  order: number;
+};
+
+type ModelCatalogEntry = {
+  order: number;
+  vendorId: string;
+  vendor: ProviderKind;
+  vendorLabel: string;
+  // existing model fields
+};
+```
+
+```text
+POST   /api/admin/model-vendors       { label, adapter } -> 201 ModelVendorEntry
+DELETE /api/admin/model-vendors/:id                      -> 204
+POST   /api/admin/model-catalog       { vendorId, ... }  -> 201 ModelCatalogEntry
+PUT    /api/admin/model-catalog/:id   { vendorId, ... }  -> 200 ModelCatalogEntry
+PATCH  /api/admin/model-catalog/order { modelIds }       -> 200 ModelCatalogEntry[]
+```
+
+### 3. Contracts
+
+- `vendorId` owns grouping and administrator display identity. `vendor` owns runtime adapter dispatch. On every model create/update, resolve `vendor` from the referenced vendor entry and ignore a client-supplied conflicting adapter.
+- Public model projection retains `vendorId`, resolved `vendorLabel`, and trusted `vendor`; disabled models remain excluded.
+- Versioned normalization maps legacy models without `vendorId` to their default provider vendor. Metadata import and backup restore reconcile vendors before models so custom labels and adapter mappings survive round trips.
+- Catalog deduplication is scoped by `vendorId + model`, allowing two display vendors backed by the same adapter to expose the same upstream model name.
+- Duplicate IDs must advance an independent suffix until an unused value is found. Never derive the next candidate solely from a fixed collection size inside the loop.
+- `order` is the global display and capability-fallback priority. Legacy catalogs backfill it from source position, normalized catalogs compact it to consecutive integers, and new models append instead of silently becoming the first default.
+- Reorder is one atomic full-list mutation. Validate exact length, unique non-empty IDs, and complete membership before changing `db.modelCatalog`; persist and audit only after the complete request passes.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| Empty vendor label or unsupported adapter | HTTP 400; no metadata write |
+| Case-insensitive duplicate vendor label | HTTP 409 |
+| Missing vendor on model create/update | HTTP 400 before catalog mutation |
+| Client `vendor` conflicts with selected vendor `adapter` | Ignore the client adapter; persist the trusted adapter |
+| Delete unknown vendor | HTTP 404 |
+| Delete the final remaining vendor | HTTP 409 |
+| Delete a vendor that still owns models | HTTP 409; never cascade-delete models |
+| Import/restore removes the selected model | Select the first surviving model, or create an unsaved draft under the first vendor when no models survive |
+| Reorder omits, duplicates, or invents a model ID | HTTP 400; preserve the complete previous catalog order |
+
+### 5. Good/Base/Bad Cases
+
+- Good: an administrator creates a Qwen-backed display vendor, receives its server-normalized ID, adds a model with that `vendorId`, and the public catalog shows the custom label while runtime requests use the Qwen adapter.
+- Base: legacy metadata contains only `vendor: "openai"`; normalization assigns `vendorId: "openai"` and preserves request behavior.
+- Bad: matching a newly created vendor by submitted label after the server truncates it, trusting a submitted model `vendor`, or deleting a populated vendor and orphaning its models.
+
+### 6. Tests Required
+
+- `tests/server/model-registry.test.mjs`: default vendors, legacy migration, model-order backfill/compaction, custom label projection, adapter enforcement, vendor-scoped deduplication, and occupied duplicate-ID suffix progression.
+- Admin route tests: create, atomic reorder validation, duplicate label, unsupported adapter, forged model adapter, populated/final vendor delete protection, metadata import/export, and restart persistence.
+- `tests/e2e/admin-shell.spec.ts`: returned vendor becomes active without reload, model draft keeps the returned `vendorId`, model ordering persists and drives compatible defaults, populated delete is disabled, empty delete requires confirmation, and desktop/mobile layouts remain contained.
+
+### 7. Wrong vs Correct
+
+```js
+// Wrong: display selection silently controls runtime behavior from client input.
+const entry = { ...req.body, vendor: req.body.vendor };
+
+// Correct: the server owns the adapter boundary.
+const vendor = db.modelVendors.find((item) => item.id === req.body.vendorId);
+if (!vendor) throw httpError(400, "Model vendor does not exist");
+const entry = sanitizeModelEntry({ ...req.body, vendor: vendor.adapter });
+```
+
+```ts
+// Wrong: server normalization can make this lookup fail.
+const created = vendors.find((item) => item.label === submittedLabel);
+
+// Correct: activate the exact response entity.
+const created = await api.createModelVendor(payload);
+setActiveVendorId(created.id);
 ```

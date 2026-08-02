@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "ImageStudio component, overlay, responsive, and visual conventions"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "IndexedDB and feature state boundaries"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Frontend verification and browser contract requirements"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Typed shared contracts and runtime boundaries"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Provider and server quality rules"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Cross-layer payload and storage review"}
+{"file": ".trellis/tasks/07-26-image-generation-audit/research/provider-image-capability-matrix.md", "reason": "Official provider capability evidence"}

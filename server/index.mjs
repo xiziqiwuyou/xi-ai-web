@@ -4,6 +4,7 @@ import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
+import { normalizeOptimizedImagePrompt } from "./image-prompt.mjs";
 import { retrieveContext, formatRetrievedContext } from "./knowledge/retrieval.mjs";
 import { createProviderAdapter } from "./providers/registry.mjs";
 import {
@@ -15,9 +16,14 @@ import {
   buildRuntimeProvider,
   catalogFromLegacyProviders,
   defaultModelCatalog,
+  defaultModelVendors,
   findModelEntry,
   normalizeCatalogEntry,
   normalizeModelCatalog,
+  normalizeModelVendorEntry,
+  normalizeModelVendors,
+  reconcileModelRegistry,
+  vendorKinds,
   publicModelCatalog
 } from "./registry/model-registry.mjs";
 import {
@@ -26,6 +32,7 @@ import {
   resolveRequestedTools,
   runTool as runRegisteredTool
 } from "./tools/registry.mjs";
+import { runPromptToolLoop } from "./tools/prompt-runner.mjs";
 import {
   createKnowledgeRouter,
   knowledgeErrorMiddleware
@@ -54,24 +61,54 @@ import {
 } from "./langflow/catalog.mjs";
 import { loadLangflowConfig, publicLangflowStatus } from "./langflow/config.mjs";
 import { createLangflowRouter } from "./langflow/routes.mjs";
+import {
+  DEFAULT_UPSTREAM_BASE_URL,
+  assertManagedUpstreamBaseUrl,
+  assertSafePublicHttpsUrl,
+  managedUpstreamPolicy,
+  normalizeUpstreamBaseUrl
+} from "./upstream-security.mjs";
+import { createRequestGuard } from "./request-guard.mjs";
+import { exchangeShellJwt, ShellJwtExchangeError } from "./shell-jwt-exchange.mjs";
+import {
+  defaultAppPresets,
+  defaultAssistants,
+  defaultMenuItems,
+  defaultPromptPresets,
+  defaultSettings
+} from "./data/defaults.mjs";
+import { createMetadataWriteQueue } from "./metadata-write-queue.mjs";
+import { createModelUsageStore, trackModelUsageResponse } from "./model-usage.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, "..");
 const isProduction =
   process.argv.includes("--production") || process.env.NODE_ENV === "production";
+const upstreamPolicy = managedUpstreamPolicy({ production: isProduction });
 
 const port = Number(process.env.PORT || 8787);
 const dataDir = path.resolve(process.env.DATA_DIR || path.join(rootDir, "data"));
 const dataFile = path.join(dataDir, "app-data.json");
+const metadataDegradedFile = path.join(dataDir, ".metadata-degraded.json");
 const backupDir = path.join(dataDir, "backups");
 const auditFile = path.join(dataDir, "admin-audit.jsonl");
+const modelUsageStore = createModelUsageStore({ filePath: path.join(dataDir, "model-usage.jsonl") });
 const adminPassword = process.env.ADMIN_PASSWORD || process.env.APP_PASSWORD || "";
+const explicitAdminSessionSecret = process.env.ADMIN_SESSION_SECRET || process.env.APP_SESSION_SECRET || "";
+const derivedAdminSessionSecret = adminPassword
+  ? crypto.createHmac("sha256", adminPassword).update("xi-ai-web/admin-session/v1").digest()
+  : "";
 const adminSessionSecret =
-  process.env.ADMIN_SESSION_SECRET ||
-  process.env.APP_SESSION_SECRET ||
-  adminPassword ||
+  explicitAdminSessionSecret ||
+  derivedAdminSessionSecret ||
   "dev-only-admin-session-secret";
+const MAX_API_KEY_CHARS = 4_096;
+const MAX_CHAT_IMAGE_BYTES = 4 * 1024 * 1024;
+const MAX_CHAT_IMAGE_TOTAL_BYTES = 24 * 1024 * 1024;
+const MAX_IMAGE_EDIT_UPLOAD_BYTES = 20 * 1024 * 1024;
+const DEFAULT_IMAGE_TIMEOUT_MS = 300_000;
+const DEFAULT_SSE_HEARTBEAT_MS = 15_000;
 const knowledgeRuntime = await initializeKnowledgeRuntime();
 const cloudKnowledgeRequests = createCloudKnowledgeRequestIntegration(knowledgeRuntime);
 const langflowConfig = loadLangflowConfig();
@@ -98,267 +135,21 @@ app.use(
 
 const now = () => new Date().toISOString();
 
-function defaultMenuItems() {
-  return [
-    { id: "chat", label: "AI 对话", enabled: true, visible: true, order: 10 },
-    { id: "image", label: "图像生成", enabled: true, visible: true, order: 20 },
-    { id: "agents", label: "智能体", enabled: true, visible: true, order: 30 },
-    { id: "workflows", label: "工作流", enabled: true, visible: true, order: 40 },
-    { id: "ppt", label: "AI 一键 PPT", enabled: true, visible: true, order: 50 },
-    { id: "mindmap", label: "思维导图", enabled: true, visible: true, order: 60 },
-    { id: "assistants", label: "助手库", enabled: true, visible: true, order: 70 },
-    { id: "translate", label: "翻译", enabled: true, visible: true, order: 80 }
-  ];
-}
-
-function defaultSettings() {
-  return {
-    siteName: "xi-ai-web",
-    theme: "rednote",
-    allowGuestChat: true,
-    defaultModule: "chat"
-  };
-}
-
-function defaultAssistants() {
-  const createdAt = now();
-  return [
-    {
-      id: "assistant-general",
-      name: "通用助手",
-      description: "稳健、直接，适合日常问答和任务拆解。",
-      category: "通用效率",
-      tags: ["问答", "规划", "执行"],
-      starterPrompts: ["帮我把今天要做的事排出优先级", "把这个复杂问题拆成可执行步骤", "检查这份计划还有哪些遗漏"],
-      color: "#ff2442",
-      systemPrompt:
-        "你是一个可靠的中文 AI 助手。回答要清晰、准确、可执行；不确定时说明不确定，并给出可验证的下一步。",
-      enabled: true,
-      createdAt,
-      updatedAt: createdAt
-    },
-    {
-      id: "assistant-engineering",
-      name: "工程顾问",
-      description: "适合代码审查、架构设计、调试和技术方案。",
-      category: "编程开发",
-      tags: ["代码", "架构", "调试"],
-      starterPrompts: ["审查这段代码并按严重度列出问题", "帮我定位这个报错的根因", "为这个功能设计可验证的技术方案"],
-      color: "#2364aa",
-      systemPrompt:
-        "你是资深全栈工程师。优先理解上下文，给出可落地的实现建议；指出风险、边界条件和验证方式。",
-      enabled: true,
-      createdAt,
-      updatedAt: createdAt
-    },
-    {
-      id: "assistant-research",
-      name: "研究分析师",
-      description: "适合资料整理、竞品分析、长文归纳和决策备忘。",
-      category: "学习研究",
-      tags: ["研究", "分析", "归纳"],
-      starterPrompts: ["把这些资料整理成一份决策简报", "比较这几个方案的证据与风险", "区分这段内容中的事实和推断"],
-      color: "#d9822b",
-      systemPrompt:
-        "你是严谨的研究分析师。先区分事实、推断和建议；输出结构化结论，并标出需要进一步验证的信息。",
-      enabled: true,
-      createdAt,
-      updatedAt: createdAt
-    },
-    {
-      id: "assistant-content-editor",
-      name: "内容主笔",
-      description: "把想法写成有观点、有结构、可直接发布的内容。",
-      category: "内容创作",
-      tags: ["写作", "编辑", "内容"],
-      starterPrompts: ["把这段草稿改成一篇完整文章", "为这个主题设计标题和内容结构", "保留原意并润色这段文案"],
-      color: "#9b4fc7",
-      systemPrompt: "你是资深中文内容主笔。先明确受众、目标和渠道，再组织观点、结构和节奏；保留事实边界，避免空泛套话和夸张承诺。",
-      enabled: true,
-      createdAt,
-      updatedAt: createdAt
-    },
-    {
-      id: "assistant-rednote-planner",
-      name: "小红书策划",
-      description: "策划自然、有记忆点且不过度营销的小红书内容。",
-      category: "内容创作",
-      tags: ["小红书", "选题", "种草"],
-      starterPrompts: ["把这个产品卖点改成小红书笔记", "围绕这个主题给我 5 个选题", "优化这篇笔记的标题和开头"],
-      color: "#e83f5b",
-      systemPrompt: "你是小红书内容策划。基于真实体验和明确受众设计标题、开头、正文节奏与标签，语言自然具体，避免虚假体验、绝对化效果和生硬营销。",
-      enabled: true,
-      createdAt,
-      updatedAt: createdAt
-    },
-    {
-      id: "assistant-product-manager",
-      name: "产品经理",
-      description: "把用户问题转成范围、优先级、流程和验收标准。",
-      category: "商业办公",
-      tags: ["产品", "需求", "用户"],
-      starterPrompts: ["把这个想法整理成产品需求", "帮我设计一轮用户访谈", "为这个功能写验收标准"],
-      color: "#168f5b",
-      systemPrompt: "你是资深产品经理。围绕用户价值、业务目标和实施成本澄清需求，输出范围、优先级、关键流程、指标、风险和可验证验收标准。",
-      enabled: true,
-      createdAt,
-      updatedAt: createdAt
-    },
-    {
-      id: "assistant-data-analyst",
-      name: "数据分析师",
-      description: "解释指标变化，识别异常并形成可行动的业务洞察。",
-      category: "商业办公",
-      tags: ["数据", "指标", "洞察"],
-      starterPrompts: ["解释这组指标为什么发生变化", "帮我设计这项业务的指标体系", "从这些数据中找出异常和机会"],
-      color: "#0f8d8a",
-      systemPrompt: "你是数据分析师。先确认口径、时间范围和数据质量，再区分描述、相关性与因果推断，输出关键发现、可能原因、验证方法和行动建议。",
-      enabled: true,
-      createdAt,
-      updatedAt: createdAt
-    },
-    {
-      id: "assistant-meeting-notes",
-      name: "会议纪要官",
-      description: "从会议材料中提炼结论、分歧、待办和负责人。",
-      category: "通用效率",
-      tags: ["会议", "纪要", "协作"],
-      starterPrompts: ["把这段会议记录整理成纪要", "提取会议中的决定和待办", "找出这次讨论尚未解决的问题"],
-      color: "#3d7fc4",
-      systemPrompt: "你是会议纪要官。忠实基于输入提炼议题、结论、分歧、待办、负责人和时间点；不补写未出现的决定，缺失信息要明确标注。",
-      enabled: true,
-      createdAt,
-      updatedAt: createdAt
-    },
-    {
-      id: "assistant-learning-coach",
-      name: "学习导师",
-      description: "解释难点、诊断理解缺口并安排循序渐进的练习。",
-      category: "学习研究",
-      tags: ["学习", "讲解", "练习"],
-      starterPrompts: ["用直观例子解释这个概念", "检查我对这个主题的理解", "为我制定一周学习计划"],
-      color: "#6d63c7",
-      systemPrompt: "你是耐心而严谨的学习导师。先判断学习目标和已有基础，再用分层解释、例子、反例和小练习帮助理解；不要只给答案，要暴露推理关键点。",
-      enabled: true,
-      createdAt,
-      updatedAt: createdAt
-    },
-    {
-      id: "assistant-translation-editor",
-      name: "翻译润色师",
-      description: "在保持原意的前提下完成自然翻译与语气润色。",
-      category: "内容创作",
-      tags: ["翻译", "本地化", "润色"],
-      starterPrompts: ["把这段中文翻成自然商务英语", "保留原意并润色这段译文", "解释这两种译法的语气差异"],
-      color: "#3676b8",
-      systemPrompt: "你是专业翻译与本地化编辑。保持原文事实、语气和术语一致，优先自然目标语表达；遇到歧义时列出选项，不擅自补充原文没有的信息。",
-      enabled: true,
-      createdAt,
-      updatedAt: createdAt
-    },
-    {
-      id: "assistant-career-coach",
-      name: "职业规划师",
-      description: "梳理能力、目标与选择，形成可执行的职业行动计划。",
-      category: "生活创意",
-      tags: ["职业", "成长", "决策"],
-      starterPrompts: ["帮我分析这两个职业选择", "根据我的经历优化求职定位", "制定未来三个月的能力提升计划"],
-      color: "#aa6651",
-      systemPrompt: "你是务实的职业规划师。基于用户经历、约束和目标分析选择，区分可控因素与外部不确定性，给出阶段目标、验证动作和风险预案。",
-      enabled: true,
-      createdAt,
-      updatedAt: createdAt
-    },
-    {
-      id: "assistant-creative-curator",
-      name: "创意策展人",
-      description: "把零散灵感发展成差异清晰、可以落地的创意方向。",
-      category: "生活创意",
-      tags: ["创意", "灵感", "策划"],
-      starterPrompts: ["为这个主题提出三个不同创意方向", "把这些灵感整理成一个完整概念", "帮我避免这个方案落入常见套路"],
-      color: "#c34f8c",
-      systemPrompt: "你是创意策展人。先提炼主题、受众与限制，再提出有明显差异的创意方向，并说明核心概念、表现方式、落地步骤和可能风险。",
-      enabled: true,
-      createdAt,
-      updatedAt: createdAt
-    }
-  ];
-}
-
-function defaultAppPresets() {
-  return [
-    {
-      id: "rednote-note",
-      name: "小红书笔记",
-      description: "把主题改写成适合种草、经验分享或产品推荐的笔记。",
-      category: "内容创作",
-      prompt:
-        "你是小红书内容策划。请根据用户输入生成一篇自然、有记忆点的小红书笔记，包含标题、正文、分段亮点和标签。避免夸张承诺。",
-      enabled: true
-    },
-    {
-      id: "copy-polish",
-      name: "文案改写",
-      description: "把粗糙文案改得更清晰、更有转化力。",
-      category: "内容创作",
-      prompt:
-        "你是资深文案编辑。请保留用户原意，输出 3 个不同风格版本，并说明每个版本适合的使用场景。",
-      enabled: true
-    },
-    {
-      id: "competitor-analysis",
-      name: "竞品分析",
-      description: "整理竞品差异、优势短板和可执行机会点。",
-      category: "商业分析",
-      prompt:
-        "你是产品和商业分析师。请根据用户输入输出竞品分析，包含对比维度、差异、风险、机会点和下一步验证清单。",
-      enabled: true
-    },
-    {
-      id: "weekly-report",
-      name: "周报生成",
-      description: "把零散工作记录整理成结构化周报。",
-      category: "办公效率",
-      prompt:
-        "你是工作汇报助手。请根据用户输入生成周报，包含本周完成、关键进展、问题风险、下周计划和需要协同的事项。",
-      enabled: true
-    },
-    {
-      id: "requirement-breakdown",
-      name: "需求拆解",
-      description: "把想法拆成范围、任务、边界和验收标准。",
-      category: "产品研发",
-      prompt:
-        "你是资深产品经理和工程负责人。请把用户需求拆成目标、用户故事、功能范围、技术任务、风险和验收标准。",
-      enabled: true
-    },
-    {
-      id: "code-explainer",
-      name: "代码解释",
-      description: "解释代码、SQL 或报错，给出修复建议。",
-      category: "产品研发",
-      prompt:
-        "你是资深工程师。请解释用户提供的代码、SQL 或错误信息，指出问题原因、风险和可执行修复步骤。",
-      enabled: true
-    }
-  ];
-}
-
-function defaultPromptPresets() {
-  return [
-    { id: "image-product-poster", moduleId: "image", title: "产品海报", prompt: "产品海报，干净高级，红白配色，留白充足", enabled: true },
-    { id: "image-rednote-cover", moduleId: "image", title: "小红书封面", prompt: "小红书封面图，明亮质感，主体清晰，圆润卡片排版", enabled: true },
-    { id: "agents-launch-plan", moduleId: "agents", title: "上线计划", prompt: "拆解一个上线计划，包含目标、里程碑、风险和验收标准", enabled: true },
-    { id: "mindmap-meeting", moduleId: "mindmap", title: "会议导图", prompt: "把会议纪要整理成行动导图，分为结论、任务、负责人和时间点", enabled: true }
-  ];
+function normalizeCatalogRequestModelAliases(modelCatalog) {
+  return modelCatalog.map((entry) =>
+    entry.id === "gemini-nano-banana-2" && entry.model === "nano-banana-2"
+      ? { ...entry, model: "gemini-3.1-flash-image" }
+      : entry
+  );
 }
 
 function createDefaultData() {
   return {
-    version: 9,
+    version: 12,
     settings: defaultSettings(),
     menuItems: defaultMenuItems(),
-    modelCatalog: defaultModelCatalog(),
+    modelVendors: defaultModelVendors(),
+    modelCatalog: normalizeCatalogRequestModelAliases(defaultModelCatalog()),
     assistants: defaultAssistants(),
     appPresets: defaultAppPresets(),
     promptPresets: defaultPromptPresets(),
@@ -390,11 +181,15 @@ function normalizeSettings(dataSettings) {
     ? source.defaultModule
     : fallback.defaultModule;
 
+  const requestedUpstream = source.upstreamBaseUrl || fallback.upstreamBaseUrl;
   return {
     theme: "rednote",
     siteName: String(source.siteName || fallback.siteName).trim(),
     allowGuestChat: typeof source.allowGuestChat === "boolean" ? source.allowGuestChat : fallback.allowGuestChat,
-    defaultModule
+    defaultModule,
+    upstreamBaseUrl: upstreamPolicy.locked
+      ? upstreamPolicy.configuredBaseUrl || fallback.upstreamBaseUrl
+      : normalizeUpstreamBaseUrl(requestedUpstream)
   };
 }
 
@@ -500,7 +295,7 @@ function normalizeToolsData(dataToolSettings) {
 
 function migrateModelCatalog(modelCatalog, sourceVersion) {
   const version = Number(sourceVersion || 0);
-  let migrated = modelCatalog;
+  let migrated = normalizeCatalogRequestModelAliases(modelCatalog);
 
   if (version < 5 && !migrated.some((entry) => entry.capabilities.includes("video"))) {
     const defaultVideoModel = defaultModelCatalog().find((entry) => entry.id === "compatible-video");
@@ -531,6 +326,20 @@ function migrateModelCatalog(modelCatalog, sourceVersion) {
     );
   }
 
+  if (version < 10) {
+    const titleSummaryModel = defaultModelCatalog().find((entry) => entry.id === "openai-gpt-5-4-mini");
+    const hasTitleSummaryModel = migrated.some(
+      (entry) => entry.vendor === "openai" && entry.model === "gpt-5.4-mini"
+    );
+    if (titleSummaryModel && !hasTitleSummaryModel) {
+      migrated = normalizeModelCatalog([...migrated, titleSummaryModel], migrated);
+    }
+  }
+
+  if (version < 11) {
+    migrated = normalizeModelCatalog(migrated, migrated);
+  }
+
   return migrated;
 }
 
@@ -542,7 +351,19 @@ function normalizeData(raw) {
     : Array.isArray(data.providers) && data.providers.length
       ? catalogFromLegacyProviders(data.providers)
       : fallback.modelCatalog;
-  const modelCatalog = migrateModelCatalog(normalizedCatalog, data.version);
+  const legacyPresetBackfill = Number(data.version || 0) < 12
+    ? defaultModelCatalog().filter((preset) =>
+        ["openai-gpt-image-2-vip", "gemini-nano-banana-2"].includes(preset.id)
+      )
+    : [];
+  const migratedCatalog = migrateModelCatalog(
+    normalizeModelCatalog([...normalizedCatalog, ...legacyPresetBackfill], []),
+    data.version
+  );
+  const declaredVendors = Array.isArray(data.modelVendors) && data.modelVendors.length
+    ? normalizeModelVendors(data.modelVendors, [])
+    : defaultModelVendors();
+  const registry = reconcileModelRegistry(declaredVendors, migratedCatalog, fallback.modelCatalog);
   const assistants = migrateAssistants(
     normalizeAssistants(data.assistants, fallback.assistants),
     data.version
@@ -552,7 +373,8 @@ function normalizeData(raw) {
     version: fallback.version,
     settings: normalizeSettings(data.settings),
     menuItems: normalizeMenuItems(data.menuItems, fallback.menuItems),
-    modelCatalog,
+    modelVendors: registry.modelVendors,
+    modelCatalog: registry.modelCatalog,
     assistants,
     appPresets: normalizeAppPresets(data.appPresets, fallback.appPresets),
     promptPresets: normalizePromptPresets(data.promptPresets, fallback.promptPresets),
@@ -599,6 +421,10 @@ function appendAudit(action, details = {}) {
   };
   fs.appendFileSync(auditFile, `${JSON.stringify(record)}\n`);
   return record;
+}
+
+function trackModelInvocation(res, entry, operation) {
+  trackModelUsageResponse({ response: res, store: modelUsageStore, entry, operation });
 }
 
 function parsePositiveInt(value, fallback, max = 500) {
@@ -704,12 +530,39 @@ function buildModelCoverage() {
 }
 
 function dataDirectoryWritable() {
+  const probe = path.join(dataDir, `.readiness-${process.pid}-${crypto.randomUUID()}`);
+  const renamedProbe = `${probe}.ok`;
   try {
-    fs.accessSync(dataDir, fs.constants.W_OK);
+    fs.mkdirSync(dataDir, { recursive: true });
+    fs.writeFileSync(probe, "ready", { flag: "wx" });
+    fs.renameSync(probe, renamedProbe);
+    fs.rmSync(renamedProbe, { force: true });
     return true;
   } catch {
+    try { fs.rmSync(probe, { force: true }); } catch {}
+    try { fs.rmSync(renamedProbe, { force: true }); } catch {}
     return false;
   }
+}
+
+function buildReadinessPayload() {
+  const enabledModels = db.modelCatalog.filter((entry) => entry.enabled !== false);
+  const checks = {
+    adminConfigured: !isProduction || adminPassword.length >= 16,
+    metadata: metadataState.state === "ready",
+    upstream: upstreamState.state === "ready",
+    dataWritable: dataDirectoryWritable(),
+    chatModel: enabledModels.some((entry) => entry.capabilities.includes("chat")),
+    imageModel: enabledModels.some((entry) => entry.capabilities.includes("image"))
+  };
+  const ready = Object.values(checks).every(Boolean);
+  return {
+    ok: ready,
+    ready,
+    checks,
+    metadata: metadataState,
+    upstream: upstreamState
+  };
 }
 
 function buildAdminOpsPayload() {
@@ -725,8 +578,10 @@ function buildAdminOpsPayload() {
     {
       id: "session-secret",
       label: "会话密钥已独立配置",
-      ok: Boolean(process.env.ADMIN_SESSION_SECRET || process.env.APP_SESSION_SECRET),
-      detail: "建议通过 ADMIN_SESSION_SECRET 设置独立随机密钥。"
+      ok: Boolean(explicitAdminSessionSecret || derivedAdminSessionSecret),
+      detail: explicitAdminSessionSecret
+        ? "ADMIN_SESSION_SECRET is configured."
+        : "The session signing key is domain-separated from ADMIN_PASSWORD."
     },
     {
       id: "production-mode",
@@ -770,6 +625,7 @@ function buildAdminOpsPayload() {
     counts: {
       menus: db.menuItems.length,
       visibleMenus: db.menuItems.filter((item) => item.visible).length,
+      modelVendors: db.modelVendors.length,
       enabledModels: db.modelCatalog.filter((entry) => entry.enabled).length,
       modelCatalog: db.modelCatalog.length,
       assistants: db.assistants.length,
@@ -782,8 +638,23 @@ function buildAdminOpsPayload() {
     },
     checklist,
     modelCoverage: coverage,
+    modelInvocations: modelUsageStore.summarize({ catalog: db.modelCatalog }),
     backups: backups.slice(0, 8)
   };
+}
+
+let metadataState = fs.existsSync(metadataDegradedFile)
+  ? { state: "degraded", reason: "metadata_recovery_required", recoveredFile: null }
+  : { state: "ready", reason: null, recoveredFile: null };
+
+function markMetadataDegraded(reason, recoveredFile = null) {
+  metadataState = { state: "degraded", reason, recoveredFile };
+  fs.writeFileSync(metadataDegradedFile, JSON.stringify({ ...metadataState, createdAt: now() }, null, 2));
+}
+
+function clearMetadataDegraded() {
+  metadataState = { state: "ready", reason: null, recoveredFile: null };
+  fs.rmSync(metadataDegradedFile, { force: true });
 }
 
 function loadData() {
@@ -805,11 +676,62 @@ function loadData() {
     saveData(initialData);
     console.warn(`Data file was unreadable and moved to ${brokenFile}`);
     console.warn(error);
+    markMetadataDegraded("metadata_recovered_from_invalid_file", path.basename(brokenFile));
     return initialData;
   }
 }
 
 let db = loadData();
+let upstreamState = { state: "ready", reason: null };
+
+try {
+  db.settings.upstreamBaseUrl = await assertManagedUpstreamBaseUrl(db.settings.upstreamBaseUrl, {
+    production: isProduction,
+    allowLocal: String(process.env.ALLOW_LOCAL_UPSTREAM || "").toLowerCase() === "true"
+  });
+  saveData();
+} catch (error) {
+  console.warn(
+    `Configured upstream rejected; falling back to ${DEFAULT_UPSTREAM_BASE_URL}: ${
+      error instanceof Error ? error.message : String(error)
+    }`
+  );
+  upstreamState = { state: "degraded", reason: "managed_upstream_invalid" };
+  db.settings.upstreamBaseUrl = upstreamPolicy.configuredBaseUrl || DEFAULT_UPSTREAM_BASE_URL;
+  saveData();
+}
+
+if (knowledgeRuntime?.upstreamRef) {
+  knowledgeRuntime.upstreamRef.current = db.settings.upstreamBaseUrl;
+}
+
+const requestGuards = {
+  chat: createRequestGuard({
+    scope: "chat",
+    maxRequests: Number(process.env.CHAT_RATE_LIMIT_MAX || 30),
+    maxConcurrent: Number(process.env.CHAT_MAX_CONCURRENT || 8)
+  }),
+  generation: createRequestGuard({
+    scope: "generation",
+    maxRequests: Number(process.env.GENERATION_RATE_LIMIT_MAX || 20),
+    maxConcurrent: Number(process.env.GENERATION_MAX_CONCURRENT || 4)
+  }),
+  embedding: createRequestGuard({
+    scope: "embedding",
+    maxRequests: Number(process.env.EMBEDDING_RATE_LIMIT_MAX || 20),
+    maxConcurrent: Number(process.env.EMBEDDING_MAX_CONCURRENT || 4)
+  }),
+  shellAuth: createRequestGuard({
+    scope: "shell-auth",
+    maxRequests: Number(process.env.SHELL_AUTH_RATE_LIMIT_MAX || 10),
+    maxConcurrent: Number(process.env.SHELL_AUTH_MAX_CONCURRENT || 2)
+  }),
+  adminLogin: createRequestGuard({
+    scope: "admin-login",
+    maxRequests: Number(process.env.ADMIN_LOGIN_RATE_LIMIT_MAX || 5),
+    maxConcurrent: Number(process.env.ADMIN_LOGIN_MAX_CONCURRENT || 2)
+  })
+};
 
 app.use(
   "/api/workflows",
@@ -826,7 +748,35 @@ app.use(
     }
   })
 );
-app.use(express.json({ limit: "32mb" }));
+
+app.use("/api/chat/stream", requestGuards.chat);
+app.use("/api/chat/title", requestGuards.chat);
+app.use("/api/image/optimize-prompt", requestGuards.generation);
+app.use("/api/agents/run", requestGuards.chat);
+app.use("/api/audio/transcribe", requestGuards.generation);
+app.use("/api/retrieval/embed", requestGuards.embedding);
+app.use("/api/media/video/status", requestGuards.generation);
+app.use("/api/generate", requestGuards.generation);
+app.use("/api/admin/login", requestGuards.adminLogin);
+app.use("/api/public/shell-token/exchange", (req, res, next) => {
+  res.setHeader("Cache-Control", "no-store, max-age=0");
+  res.setHeader("Pragma", "no-cache");
+  next();
+});
+app.use("/api/public/shell-token/exchange", requestGuards.shellAuth);
+
+// Keep large media payloads available while preventing ordinary JSON endpoints
+// from inheriting the 32 MB parser limit.
+app.use("/api/chat/stream", express.json({ limit: "36mb", strict: true }));
+app.use("/api/chat/title", express.json({ limit: "256kb", strict: true }));
+app.use("/api/agents/run", express.json({ limit: "2mb", strict: true }));
+app.use("/api/image/optimize-prompt", express.json({ limit: "256kb", strict: true }));
+app.use("/api/audio/transcribe", express.json({ limit: "36mb", strict: true }));
+app.use("/api/retrieval/embed", express.json({ limit: "512kb", strict: true }));
+app.use("/api/media/video/status", express.json({ limit: "1mb", strict: true }));
+app.use("/api/generate", express.json({ limit: "32mb", strict: true }));
+app.use("/api/public/shell-token/exchange", express.json({ limit: "16kb", strict: true }));
+app.use(express.json({ limit: "2mb", strict: true }));
 
 function httpError(status, message) {
   const error = new Error(message);
@@ -836,6 +786,29 @@ function httpError(status, message) {
 
 const asyncRoute = (handler) => (req, res, next) =>
   Promise.resolve(handler(req, res, next)).catch(next);
+
+function createRequestAbortController(req, res, timeoutMs = Number(process.env.UPSTREAM_TIMEOUT_MS || 120_000)) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    req.upstreamTimedOut = true;
+    controller.abort(new Error("upstream request timeout"));
+  }, Number.isFinite(timeoutMs) && timeoutMs > 0 ? Math.min(Math.trunc(timeoutMs), 900_000) : 120_000);
+  const abort = () => controller.abort();
+  const onClose = () => {
+    abort();
+    cleanup();
+  };
+  const cleanup = () => {
+    clearTimeout(timeout);
+    req.removeListener("aborted", abort);
+    res.removeListener("close", onClose);
+    res.removeListener("finish", cleanup);
+  };
+  req.once("aborted", abort);
+  res.once("close", onClose);
+  res.once("finish", cleanup);
+  return controller;
+}
 
 function parseCookies(header = "") {
   return header
@@ -1014,6 +987,21 @@ function optionalBoundedInteger(value, minimum, maximum) {
   return bounded === undefined ? undefined : Math.trunc(bounded);
 }
 
+function modelInputCharacterLimit(entry) {
+  const configured = Number(entry?.maxInputCharacters);
+  if (!Number.isSafeInteger(configured) || configured < 1_000) return 100_000;
+  return Math.min(configured, 4_000_000);
+}
+
+function assertModelInputCharacters(entry, values, label = "Model input") {
+  const limit = modelInputCharacterLimit(entry);
+  const total = values.reduce((sum, value) => sum + String(value || "").length, 0);
+  if (total > limit) {
+    throw httpError(413, `${label} exceeds the configured ${limit.toLocaleString("en-US")} character limit`);
+  }
+  return limit;
+}
+
 function inlineAgentFromBody(value) {
   if (value === undefined || value === null) return null;
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -1087,7 +1075,19 @@ function makeTitle(content) {
   return compact(content, 32) || "新对话";
 }
 
-function sanitizeRequestMessages(value) {
+function sanitizeGeneratedConversationTitle(value) {
+  const firstLine = String(value || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find(Boolean) || "";
+  const title = firstLine
+    .replace(/^(?:标题|Title)\s*[:：]\s*/i, "")
+    .replace(/^[#*`'"“”‘’\s]+|[#*`'"“”‘’\s]+$/g, "")
+    .trim();
+  return compact(title, 48) || "新对话";
+}
+
+function sanitizeRequestMessages(value, maxMessageCharacters = 24_000) {
   if (!Array.isArray(value)) return [];
   return value
     .slice(-40)
@@ -1095,7 +1095,7 @@ function sanitizeRequestMessages(value) {
       if (!message || typeof message !== "object") return null;
       const role = message.role === "assistant" ? "assistant" : message.role === "user" ? "user" : "";
       if (!role) return null;
-      const content = compact(message.content || "", 24000);
+      const content = boundedText(message.content || "", maxMessageCharacters);
       if (!content) return null;
       return {
         id: compact(message.id || crypto.randomUUID(), 140),
@@ -1110,7 +1110,7 @@ function sanitizeRequestMessages(value) {
     .filter(Boolean);
 }
 
-function requestConversationFromBody(body, assistant, content) {
+function requestConversationFromBody(body, assistant, content, entry) {
   const summary = body?.conversation && typeof body.conversation === "object" ? body.conversation : {};
   const createdAt = summary.createdAt || now();
   return {
@@ -1118,7 +1118,7 @@ function requestConversationFromBody(body, assistant, content) {
     title: compact(summary.title || makeTitle(content), 120),
     assistantId: assistant.id,
     pinned: Boolean(summary.pinned),
-    messages: sanitizeRequestMessages(body?.history),
+    messages: sanitizeRequestMessages(body?.history, modelInputCharacterLimit(entry)),
     createdAt,
     updatedAt: now()
   };
@@ -1162,6 +1162,17 @@ function writeSse(res, event, payload) {
   res.write(`data: ${JSON.stringify(payload)}\n\n`);
 }
 
+function addTokenUsage(current, next) {
+  const inputTokens = Number(next?.inputTokens || 0);
+  const outputTokens = Number(next?.outputTokens || 0);
+  const totalTokens = Number(next?.totalTokens || inputTokens + outputTokens);
+  return {
+    inputTokens: Number(current?.inputTokens || 0) + inputTokens,
+    outputTokens: Number(current?.outputTokens || 0) + outputTokens,
+    totalTokens: Number(current?.totalTokens || 0) + totalTokens
+  };
+}
+
 function publicProviderError(error, ...connections) {
   let message = error instanceof Error ? error.message : String(error);
   connections.forEach((connection) => {
@@ -1175,7 +1186,12 @@ async function prepareIndependentSearch({ resolvedTools, service, query, signal,
   if (!searchTool) return "";
   const startedAt = now();
   try {
-    const result = await runIndependentWebSearch({ service, query, signal });
+    const result = await runIndependentWebSearch({
+      service,
+      query,
+      signal,
+      upstreamBaseUrl: db.settings.upstreamBaseUrl
+    });
     const context = formatSearchContext(result);
     if (Array.isArray(trace)) {
       trace.push({
@@ -1327,12 +1343,10 @@ function mediaAssetsFromJson(json, type, entry) {
 
 function normalizeConnection(value) {
   const source = value && typeof value === "object" ? value : {};
-  const baseUrl = String(source.baseUrl || "").trim().replace(/\/+$/, "");
   const apiKey = String(source.apiKey || "").trim();
-  if (!baseUrl) throw httpError(400, "Base URL 不能为空");
-  if (!/^https?:\/\//i.test(baseUrl)) throw httpError(400, "Base URL 必须以 http:// 或 https:// 开头");
+  if (apiKey.length > MAX_API_KEY_CHARS) throw httpError(400, "API Key is too long");
   if (!apiKey) throw httpError(400, "API Key 不能为空");
-  return { baseUrl, apiKey };
+  return { baseUrl: db.settings.upstreamBaseUrl, apiKey };
 }
 
 function audioFromDataUrl(dataUrl, fileName = "audio.webm", mimeType = "") {
@@ -1362,7 +1376,8 @@ function imageInputFrom(value, label = "图片", maxUploadMb = 8) {
   return {
     dataUrl,
     mimeType: match[1].toLowerCase(),
-    name: compact(source.name || `${label}.png`, 160)
+    name: compact(source.name || `${label}.png`, 160),
+    size: bytes.length
   };
 }
 
@@ -1374,13 +1389,29 @@ function imageInputsFrom(value, label = "图片", maxItems = 1) {
   return value.map((item, index) => imageInputFrom(item, `${label}${index + 1}`));
 }
 
-function referenceImageUrlsFrom(value, maxItems = 4) {
+function pngImageMetadata(dataUrl) {
+  const match = String(dataUrl || "").match(/^data:image\/png;base64,([A-Za-z0-9+/=]+)$/i);
+  if (!match) return null;
+  const bytes = Buffer.from(match[1], "base64");
+  const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  if (bytes.length < 33 || !bytes.subarray(0, 8).equals(signature) || bytes.toString("ascii", 12, 16) !== "IHDR") {
+    return null;
+  }
+  const colorType = bytes[25];
+  return {
+    width: bytes.readUInt32BE(16),
+    height: bytes.readUInt32BE(20),
+    hasAlpha: colorType === 4 || colorType === 6 || bytes.includes(Buffer.from("tRNS"), 8)
+  };
+}
+
+async function referenceImageUrlsFrom(value, maxItems = 4) {
   if (!Array.isArray(value)) return [];
   if (value.length > maxItems) {
     throw httpError(400, `参考图链接最多支持 ${maxItems} 条`);
   }
   const seen = new Set();
-  return value
+  const unique = value
     .map((item) => String(item || "").trim())
     .filter(Boolean)
     .map((item) => {
@@ -1400,6 +1431,11 @@ function referenceImageUrlsFrom(value, maxItems = 4) {
       seen.add(item);
       return true;
     });
+  try {
+    return await Promise.all(unique.map((item) => assertSafePublicHttpsUrl(item)));
+  } catch {
+    throw httpError(400, "Reference image URLs must resolve to public HTTPS addresses");
+  }
 }
 
 function extractConnection(body) {
@@ -1443,7 +1479,7 @@ function resolveCatalogEntry(body, capability) {
 
 function resolveRuntimeProvider(body, capability) {
   const connection = extractConnection(body);
-  if (!connection) throw httpError(400, "请先填写 API URL 和 Key");
+  if (!connection) throw httpError(400, "请先填写 API Key");
   const entry = resolveCatalogEntry(body, capability);
   return {
     connection,
@@ -1453,11 +1489,9 @@ function resolveRuntimeProvider(body, capability) {
 }
 
 function defaultModelFor(capability, preferredVendor) {
-  const enabled = publicModelCatalog(db.modelCatalog).filter((entry) => modelSupports(entry, capability));
+  const enabled = publicModelCatalog(db.modelCatalog, db.modelVendors).filter((entry) => modelSupports(entry, capability));
   return (
-    enabled.find((entry) => entry.vendor === preferredVendor && entry.defaultFor.includes(capability)) ||
     enabled.find((entry) => entry.vendor === preferredVendor) ||
-    enabled.find((entry) => entry.defaultFor.includes(capability)) ||
     enabled[0]
   );
 }
@@ -1518,7 +1552,10 @@ function sanitizeReasoningEffort(value) {
 
 function sanitizeChatAttachments(value, entry) {
   if (!Array.isArray(value)) return [];
-  const attachments = value.slice(0, 6).map((attachment, index) => {
+  let imageCount = 0;
+  let textCount = 0;
+  let totalImageBytes = 0;
+  const attachments = value.slice(0, 10).map((attachment, index) => {
     if (!attachment || typeof attachment !== "object") return null;
     const kind = String(attachment.kind || "");
     const name = compact(attachment.name || `附件 ${index + 1}`, 140);
@@ -1526,21 +1563,32 @@ function sanitizeChatAttachments(value, entry) {
     const size = Number.isFinite(Number(attachment.size)) ? Number(attachment.size) : 0;
 
     if (kind === "image") {
+      imageCount += 1;
+      if (imageCount > 6) throw httpError(400, "单次最多发送 6 张图片");
       const dataUrl = String(attachment.dataUrl || "");
       if (!/^data:image\/(png|jpeg|jpg|webp|gif);base64,/i.test(dataUrl)) {
         throw httpError(400, `${name} 不是可用图片`);
       }
-      if (dataUrl.length > 5_600_000 || size > 4 * 1024 * 1024) {
-        throw httpError(400, `${name} 超过图片附件大小限制`);
+      const decodedBytes = Buffer.from(dataUrl.slice(dataUrl.indexOf(",") + 1), "base64").length;
+      totalImageBytes += decodedBytes;
+      if (
+        dataUrl.length > 5_600_000 ||
+        decodedBytes > MAX_CHAT_IMAGE_BYTES ||
+        size > MAX_CHAT_IMAGE_BYTES ||
+        totalImageBytes > MAX_CHAT_IMAGE_TOTAL_BYTES
+      ) {
+        throw httpError(413, `${name} 超过图片附件大小限制`);
       }
       if (!entry.capabilities.includes("vision")) {
         throw httpError(400, "当前模型未启用视觉能力，不能发送图片附件");
       }
-      return { type: "image", name, mimeType, size, dataUrl };
+      return { type: "image", name, mimeType, size: decodedBytes, dataUrl };
     }
 
     if (kind === "text") {
-      const text = compact(attachment.text || "", 12000);
+      textCount += 1;
+      if (textCount > 4) throw httpError(400, "单次最多发送 4 个文本附件");
+      const text = boundedText(attachment.text || "", 12000);
       if (!text) return null;
       return { type: "text", name, mimeType, size, text };
     }
@@ -1580,11 +1628,13 @@ async function requestChatCompletion({
   topP,
   reasoningEffort,
   maxTokens,
+  responseVerbosity,
   skillInstructions,
   signal,
   tools,
   hostedTools,
-  toolContext
+  toolContext,
+  onUsage
 }) {
   const adapter = createProviderAdapter(provider);
   const enabledTools = Array.isArray(tools) ? tools : [];
@@ -1596,6 +1646,8 @@ async function requestChatCompletion({
     topP,
     reasoningEffort,
     maxTokens,
+    responseVerbosity,
+    onUsage,
     signal,
     tools: enabledTools,
     hostedTools: Array.isArray(hostedTools) ? hostedTools : [],
@@ -1639,6 +1691,74 @@ async function requestChatCompletion({
   });
 }
 
+async function requestPromptToolCompletion({
+  provider,
+  model,
+  messages,
+  temperature,
+  topP,
+  reasoningEffort,
+  maxTokens,
+  responseVerbosity,
+  signal,
+  tools,
+  toolContext,
+  onUsage
+}) {
+  const adapter = createProviderAdapter(provider);
+  const enabledTools = Array.isArray(tools) ? tools : [];
+  const enabledToolNames = new Set(enabledTools.map((tool) => tool.name));
+  return runPromptToolLoop({
+    tools: enabledTools,
+    messages,
+    complete: (nextMessages) => adapter.completeText({
+      model,
+      messages: nextMessages,
+      temperature,
+      topP,
+      reasoningEffort,
+      maxTokens,
+      responseVerbosity,
+      onUsage,
+      signal
+    }),
+    execute: async (toolCall) => {
+      if (!enabledToolNames.has(toolCall.name)) {
+        throw new Error(`Tool is not allowed for this request: ${toolCall.name}`);
+      }
+      const startedAt = now();
+      try {
+        const result = await runRegisteredTool(toolCall, toolContext || {}, db.toolSettings);
+        if (Array.isArray(toolContext?.trace)) {
+          toolContext.trace.push({
+            id: crypto.randomUUID(),
+            toolName: toolCall.name,
+            label: normalizeToolSettings(db.toolSettings).find((tool) => tool.name === toolCall.name)?.label || toolCall.name,
+            argumentsPreview: compact(JSON.stringify(toolCall.arguments || {}), 600),
+            resultPreview: compact(JSON.stringify(result), 800),
+            status: "completed",
+            createdAt: startedAt
+          });
+        }
+        return result;
+      } catch (error) {
+        if (Array.isArray(toolContext?.trace)) {
+          toolContext.trace.push({
+            id: crypto.randomUUID(),
+            toolName: toolCall.name,
+            label: toolCall.name,
+            argumentsPreview: compact(JSON.stringify(toolCall.arguments || {}), 600),
+            resultPreview: publicProviderError(error, null),
+            status: "failed",
+            createdAt: startedAt
+          });
+        }
+        throw error;
+      }
+    }
+  });
+}
+
 async function streamProviderReply({
   provider,
   assistant,
@@ -1649,6 +1769,8 @@ async function streamProviderReply({
   topP,
   reasoningEffort,
   maxTokens,
+  responseVerbosity,
+  toolInvocationMode,
   skillInstructions,
   cloudKnowledge,
   searchContext,
@@ -1656,11 +1778,34 @@ async function streamProviderReply({
   hostedTools,
   toolContext,
   signal,
-  onToken
+  onToken,
+  onUsage
 }) {
   const adapter = createProviderAdapter(provider);
   if (tools?.length || hostedTools?.length) {
-    const text = await requestChatCompletion({
+    const text = await (toolInvocationMode === "prompt" && tools?.length
+      ? requestPromptToolCompletion({
+          provider,
+          model,
+          messages: buildPromptMessages(
+            assistant,
+            conversation,
+            attachments,
+            skillInstructions,
+            cloudKnowledge,
+            searchContext
+          ),
+          temperature,
+          topP,
+          reasoningEffort,
+          maxTokens,
+          responseVerbosity,
+          signal,
+          tools,
+          toolContext,
+          onUsage
+        })
+      : requestChatCompletion({
       provider,
       model,
       messages: buildPromptMessages(
@@ -1675,11 +1820,13 @@ async function streamProviderReply({
       topP,
       reasoningEffort,
       maxTokens,
+      responseVerbosity,
       signal,
       tools,
       hostedTools,
-      toolContext
-    });
+      toolContext,
+      onUsage
+    }));
     if (text) onToken(text);
     return;
   }
@@ -1697,6 +1844,8 @@ async function streamProviderReply({
     topP,
     reasoningEffort,
     maxTokens,
+    responseVerbosity,
+    onUsage,
     signal,
     onToken
   });
@@ -1736,14 +1885,49 @@ function sanitizeAdminModelCatalogEntry(body, existing) {
   if (!model) throw httpError(400, "实际请求模型名不能为空");
   const label = String(body?.label ?? existing?.label ?? "").trim();
   if (!label) throw httpError(400, "前台显示名称不能为空");
+  const vendorId = String(body?.vendorId ?? existing?.vendorId ?? "").trim();
+  const vendorEntry = db.modelVendors.find((vendor) => vendor.id === vendorId);
+  if (!vendorEntry) throw httpError(400, "模型厂商不存在");
   const candidate = normalizeCatalogEntry(
-    { ...(existing || {}), ...(body || {}), model, label, id: existing?.id || body?.id },
+    {
+      ...(existing || {}),
+      ...(body || {}),
+      model,
+      label,
+      id: existing?.id || body?.id,
+      vendorId: vendorEntry.id,
+      vendor: vendorEntry.adapter,
+      order: existing?.order ?? db.modelCatalog.reduce(
+        (highest, entry) => Math.max(highest, Number(entry.order) || 0),
+        -1
+      ) + 1
+    },
     existing
   );
   return {
     ...candidate,
-    id: existing?.id || candidate.id
+    id: existing?.id || candidate.id,
+    vendorId: vendorEntry.id,
+    vendor: vendorEntry.adapter,
+    vendorLabel: vendorEntry.label
   };
+}
+
+function sanitizeAdminModelVendor(body) {
+  const label = String(body?.label || "").trim().slice(0, 80);
+  if (!label) throw httpError(400, "模型厂商名称不能为空");
+  const adapter = String(body?.adapter || "").trim();
+  if (!vendorKinds.includes(adapter)) throw httpError(400, "模型厂商适配器不受支持");
+  if (db.modelVendors.some((vendor) => vendor.label.localeCompare(label, undefined, { sensitivity: "accent" }) === 0)) {
+    throw httpError(409, "模型厂商名称已存在");
+  }
+  return normalizeModelVendorEntry({
+    id: crypto.randomUUID(),
+    label,
+    adapter,
+    enabled: true,
+    order: db.modelVendors.reduce((highest, vendor) => Math.max(highest, vendor.order), -1) + 1
+  });
 }
 
 function sanitizeAppPreset(body, existing) {
@@ -1782,51 +1966,46 @@ app.get("/api/health", (req, res) => {
   });
 });
 
+app.get("/api/ready", (req, res) => {
+  const readiness = buildReadinessPayload();
+  res.status(readiness.ready ? 200 : 503).json(readiness);
+});
+
+function publicBootstrapPayload() {
+  return {
+    settings: db.settings,
+    menuItems: publicMenuItems(),
+    modelCatalog: publicModelCatalog(db.modelCatalog, db.modelVendors),
+    assistants: db.assistants.filter((assistant) => assistant.enabled !== false),
+    appPresets: db.appPresets.filter((preset) => preset.enabled),
+    promptPresets: db.promptPresets.filter((preset) => preset.enabled),
+    langflow: publicLangflowStatus(langflowConfig),
+    langflowWorkflows: publicLangflowWorkflows(db.langflowWorkflows),
+    conversations: [],
+    toolSettings: publicToolSettings()
+  };
+}
+
 app.get("/api/public/bootstrap", (req, res) => {
-  res.json({
-    settings: db.settings,
-    menuItems: publicMenuItems(),
-    modelCatalog: publicModelCatalog(db.modelCatalog),
-    assistants: db.assistants.filter((assistant) => assistant.enabled !== false),
-    appPresets: db.appPresets.filter((preset) => preset.enabled),
-    promptPresets: db.promptPresets.filter((preset) => preset.enabled),
-    langflow: publicLangflowStatus(langflowConfig),
-    langflowWorkflows: publicLangflowWorkflows(db.langflowWorkflows),
-    conversations: [],
-    toolSettings: publicToolSettings()
-  });
+  res.json(publicBootstrapPayload());
 });
 
-app.get("/api/bootstrap", (req, res) => {
-  res.json({
-    settings: db.settings,
-    menuItems: publicMenuItems(),
-    modelCatalog: publicModelCatalog(db.modelCatalog),
-    assistants: db.assistants.filter((assistant) => assistant.enabled !== false),
-    appPresets: db.appPresets.filter((preset) => preset.enabled),
-    promptPresets: db.promptPresets.filter((preset) => preset.enabled),
-    langflow: publicLangflowStatus(langflowConfig),
-    langflowWorkflows: publicLangflowWorkflows(db.langflowWorkflows),
-    conversations: [],
-    toolSettings: publicToolSettings()
-  });
-});
-
-app.get("/api/auth/status", (req, res) => {
-  res.json({
-    authRequired: false,
-    authenticated: true,
-    adminConfigured: Boolean(adminPassword)
-  });
-});
-
-app.post("/api/auth/login", (req, res) => {
-  res.json({ ok: true });
-});
-
-app.post("/api/auth/logout", (req, res) => {
-  res.json({ ok: true });
-});
+app.post("/api/public/shell-token/exchange", asyncRoute(async (req, res) => {
+  const controller = createRequestAbortController(req, res, 20_000);
+  try {
+    const result = await exchangeShellJwt({
+      token: req.body?.token,
+      upstreamBaseUrl: db.settings.upstreamBaseUrl,
+      signal: controller.signal
+    });
+    res.json(result);
+  } catch (error) {
+    if (error instanceof ShellJwtExchangeError) {
+      throw httpError(error.status, error.message);
+    }
+    throw error;
+  }
+}));
 
 app.get("/api/admin/status", (req, res) => {
   res.json({
@@ -1855,11 +2034,13 @@ app.post("/api/admin/logout", (req, res) => {
 
 const adminRouter = express.Router();
 adminRouter.use(requireAdmin);
+adminRouter.use(createMetadataWriteQueue());
 
 adminRouter.get("/bootstrap", (req, res) => {
   res.json({
     settings: db.settings,
     menuItems: adminMenuItems(),
+    modelVendors: db.modelVendors,
     modelCatalog: db.modelCatalog,
     assistants: db.assistants,
     appPresets: db.appPresets,
@@ -1870,7 +2051,7 @@ adminRouter.get("/bootstrap", (req, res) => {
   });
 });
 
-adminRouter.patch("/settings", (req, res) => {
+adminRouter.patch("/settings", asyncRoute(async (req, res) => {
   const nextSettings = {
     ...db.settings,
     ...req.body,
@@ -1884,12 +2065,31 @@ adminRouter.patch("/settings", (req, res) => {
   }
   nextSettings.siteName = String(nextSettings.siteName || db.settings.siteName).trim();
   nextSettings.allowGuestChat = Boolean(nextSettings.allowGuestChat);
+  const requestedUpstream = String(
+    nextSettings.upstreamBaseUrl || db.settings.upstreamBaseUrl || DEFAULT_UPSTREAM_BASE_URL
+  ).trim();
+  let parsedUpstream;
+  try {
+    parsedUpstream = await assertManagedUpstreamBaseUrl(requestedUpstream, {
+      production: isProduction,
+      allowLocal: String(process.env.ALLOW_LOCAL_UPSTREAM || "").toLowerCase() === "true",
+      rejectOverride: true
+    });
+  } catch {
+    throw httpError(400, "上游 API 域名无效或指向受限制的网络地址");
+  }
+  const upstreamUrl = new URL(parsedUpstream);
+  if (isProduction && upstreamUrl.protocol !== "https:") {
+    throw httpError(400, "生产环境的上游 API 域名必须使用 HTTPS");
+  }
+  nextSettings.upstreamBaseUrl = parsedUpstream;
   delete nextSettings.adminEntryEnabled;
   db.settings = nextSettings;
+  if (knowledgeRuntime?.upstreamRef) knowledgeRuntime.upstreamRef.current = db.settings.upstreamBaseUrl;
   saveData();
   appendAudit("settings-update", { siteName: db.settings.siteName, allowGuestChat: db.settings.allowGuestChat });
   res.json(db.settings);
-});
+}));
 
 adminRouter.patch("/menu-items", (req, res) => {
   const incoming = Array.isArray(req.body?.menuItems)
@@ -1918,18 +2118,101 @@ adminRouter.get("/model-catalog", (req, res) => {
   res.json(db.modelCatalog);
 });
 
+adminRouter.post("/model-vendors", (req, res) => {
+  const vendor = sanitizeAdminModelVendor(req.body || {});
+  db.modelVendors.push(vendor);
+  db.modelVendors = normalizeModelVendors(db.modelVendors, []);
+  saveData();
+  appendAudit("model-vendor-create", { id: vendor.id, adapter: vendor.adapter });
+  res.status(201).json(vendor);
+});
+
+adminRouter.patch("/model-vendors/order", (req, res) => {
+  const vendorIds = req.body?.vendorIds;
+  if (!Array.isArray(vendorIds) || vendorIds.length !== db.modelVendors.length) {
+    throw httpError(400, "模型厂商排序必须包含完整的厂商 ID 列表");
+  }
+  if (vendorIds.some((id) => typeof id !== "string" || !id.trim())) {
+    throw httpError(400, "模型厂商排序包含无效的厂商 ID");
+  }
+  if (new Set(vendorIds).size !== vendorIds.length) {
+    throw httpError(400, "模型厂商排序不能包含重复的厂商 ID");
+  }
+
+  const vendorsById = new Map(db.modelVendors.map((vendor) => [vendor.id, vendor]));
+  if (vendorIds.some((id) => !vendorsById.has(id))) {
+    throw httpError(400, "模型厂商排序包含未知的厂商 ID");
+  }
+
+  db.modelVendors = vendorIds.map((id, order) => ({ ...vendorsById.get(id), order }));
+  saveData();
+  appendAudit("model-vendor-reorder", {
+    count: db.modelVendors.length,
+    firstVendorId: db.modelVendors[0]?.id || null
+  });
+  res.json(db.modelVendors);
+});
+
+adminRouter.delete("/model-vendors/:id", (req, res) => {
+  const index = db.modelVendors.findIndex((vendor) => vendor.id === req.params.id);
+  if (index === -1) throw httpError(404, "模型厂商不存在");
+  if (db.modelVendors.length <= 1) throw httpError(409, "必须至少保留一个模型厂商");
+  if (db.modelCatalog.some((entry) => entry.vendorId === req.params.id)) {
+    throw httpError(409, "模型厂商仍包含模型，请先迁移或删除模型");
+  }
+  const [removed] = db.modelVendors.splice(index, 1);
+  saveData();
+  appendAudit("model-vendor-delete", { id: removed.id, adapter: removed.adapter });
+  res.status(204).end();
+});
+
 adminRouter.post("/model-catalog", (req, res) => {
   const entry = sanitizeAdminModelCatalogEntry(req.body || {});
-  db.modelCatalog.unshift(entry);
+  if (db.modelCatalog.some((current) => current.vendorId === entry.vendorId && current.model === entry.model)) {
+    throw httpError(409, "当前模型厂商已存在相同的实际请求模型名");
+  }
+  db.modelCatalog.push(entry);
   saveData();
   appendAudit("model-create", { id: entry.id, vendor: entry.vendor, model: entry.model });
   res.status(201).json(entry);
 });
 
+adminRouter.patch("/model-catalog/order", (req, res) => {
+  const modelIds = req.body?.modelIds;
+  if (!Array.isArray(modelIds) || modelIds.length !== db.modelCatalog.length) {
+    throw httpError(400, "模型排序必须包含完整的模型 ID 列表");
+  }
+  if (modelIds.some((id) => typeof id !== "string" || !id.trim())) {
+    throw httpError(400, "模型排序包含无效的模型 ID");
+  }
+  if (new Set(modelIds).size !== modelIds.length) {
+    throw httpError(400, "模型排序不能包含重复的模型 ID");
+  }
+
+  const catalogById = new Map(db.modelCatalog.map((entry) => [entry.id, entry]));
+  if (modelIds.some((id) => !catalogById.has(id))) {
+    throw httpError(400, "模型排序包含未知的模型 ID");
+  }
+
+  db.modelCatalog = modelIds.map((id, order) => ({ ...catalogById.get(id), order }));
+  saveData();
+  appendAudit("model-reorder", {
+    count: db.modelCatalog.length,
+    firstModelId: db.modelCatalog[0]?.id || null
+  });
+  res.json(db.modelCatalog);
+});
+
 adminRouter.patch("/model-catalog/:id", (req, res) => {
   const index = db.modelCatalog.findIndex((entry) => entry.id === req.params.id);
   if (index === -1) throw httpError(404, "模型不存在");
-  db.modelCatalog[index] = sanitizeAdminModelCatalogEntry(req.body || {}, db.modelCatalog[index]);
+  const nextEntry = sanitizeAdminModelCatalogEntry(req.body || {}, db.modelCatalog[index]);
+  if (db.modelCatalog.some((current, currentIndex) =>
+    currentIndex !== index && current.vendorId === nextEntry.vendorId && current.model === nextEntry.model
+  )) {
+    throw httpError(409, "当前模型厂商已存在相同的实际请求模型名");
+  }
+  db.modelCatalog[index] = nextEntry;
   saveData();
   appendAudit("model-update", { id: db.modelCatalog[index].id, vendor: db.modelCatalog[index].vendor, model: db.modelCatalog[index].model });
   res.json(db.modelCatalog[index]);
@@ -2077,6 +2360,7 @@ function adminMetadataPayload() {
   return {
     settings: db.settings,
     menuItems: adminMenuItems(),
+    modelVendors: db.modelVendors,
     modelCatalog: db.modelCatalog,
     assistants: db.assistants,
     appPresets: db.appPresets,
@@ -2089,6 +2373,7 @@ function adminMetadataPayload() {
 const allowedMetadataKeys = new Set([
   "settings",
   "menuItems",
+  "modelVendors",
   "modelCatalog",
   "assistants",
   "appPresets",
@@ -2101,8 +2386,9 @@ function findCredentialLikeKeys(value, pathParts = [], matches = []) {
   if (!value || typeof value !== "object") return matches;
   Object.entries(value).forEach(([key, child]) => {
     const nextPath = [...pathParts, key];
-    if (/^(apiKey|baseUrl|secret|token|password)$/i.test(key)) {
-      matches.push(nextPath.join("."));
+    const pathName = nextPath.join(".");
+    if (/^(apiKey|baseUrl|secret|token|password)$/i.test(key) && pathName !== "settings.upstreamBaseUrl") {
+      matches.push(pathName);
     }
     if (child && typeof child === "object") findCredentialLikeKeys(child, nextPath, matches);
   });
@@ -2116,10 +2402,33 @@ function buildMetadataImport(body) {
   const credentialKeys = findCredentialLikeKeys(source);
   if (credentialKeys.length) throw httpError(400, `元数据不能包含凭据字段：${credentialKeys.slice(0, 8).join(", ")}`);
 
+  if (Array.isArray(source.modelVendors) && !source.modelVendors.length) {
+    throw httpError(400, "元数据必须至少包含一个模型厂商");
+  }
+  if (Array.isArray(source.modelVendors)) {
+    const labels = new Set();
+    for (const vendor of source.modelVendors) {
+      const label = String(vendor?.label || "").trim();
+      const normalizedLabel = label.toLocaleLowerCase("en-US");
+      if (!label) throw httpError(400, "模型厂商名称不能为空");
+      if (!vendorKinds.includes(vendor?.adapter)) throw httpError(400, "模型厂商适配器不受支持");
+      if (labels.has(normalizedLabel)) throw httpError(409, "模型厂商名称重复");
+      labels.add(normalizedLabel);
+    }
+  }
+  const importedVendors = Array.isArray(source.modelVendors)
+    ? normalizeModelVendors(source.modelVendors, [])
+    : db.modelVendors;
+  const importedCatalog = Array.isArray(source.modelCatalog)
+    ? source.modelCatalog
+    : db.modelCatalog;
+  const registry = reconcileModelRegistry(importedVendors, importedCatalog, db.modelCatalog);
+
   return {
     settings: source.settings ? normalizeSettings(source.settings) : db.settings,
     menuItems: Array.isArray(source.menuItems) ? normalizeMenuItems(source.menuItems) : db.menuItems,
-    modelCatalog: Array.isArray(source.modelCatalog) ? normalizeModelCatalog(source.modelCatalog, db.modelCatalog) : db.modelCatalog,
+    modelVendors: registry.modelVendors,
+    modelCatalog: registry.modelCatalog,
     assistants: Array.isArray(source.assistants) ? normalizeAssistants(source.assistants, db.assistants) : db.assistants,
     appPresets: Array.isArray(source.appPresets) ? normalizeAppPresets(source.appPresets, db.appPresets) : db.appPresets,
     promptPresets: Array.isArray(source.promptPresets) ? normalizePromptPresets(source.promptPresets, db.promptPresets) : db.promptPresets,
@@ -2134,6 +2443,7 @@ function metadataImportReport(nextData) {
   const current = adminMetadataPayload();
   const counts = {
     menuItems: nextData.menuItems.length,
+    modelVendors: nextData.modelVendors.length,
     modelCatalog: nextData.modelCatalog.length,
     assistants: nextData.assistants.length,
     appPresets: nextData.appPresets.length,
@@ -2159,27 +2469,39 @@ adminRouter.get("/metadata-export", (req, res) => {
   res.json(adminMetadataPayload());
 });
 
-adminRouter.patch("/metadata-import", (req, res) => {
+adminRouter.patch("/metadata-import", asyncRoute(async (req, res) => {
   const nextData = buildMetadataImport(req.body);
+  try {
+    nextData.settings.upstreamBaseUrl = await assertManagedUpstreamBaseUrl(nextData.settings.upstreamBaseUrl, {
+      production: isProduction,
+      allowLocal: String(process.env.ALLOW_LOCAL_UPSTREAM || "").toLowerCase() === "true",
+      rejectOverride: true
+    });
+  } catch {
+    throw httpError(400, "导入数据中的上游 API 域名无效或不被允许");
+  }
   const report = metadataImportReport(nextData);
   if (String(req.query.dryRun || "") === "true") return res.json(report);
   const backupFile = backupCurrentData("metadata-import");
   db.settings = nextData.settings;
   db.menuItems = nextData.menuItems;
+  db.modelVendors = nextData.modelVendors;
   db.modelCatalog = nextData.modelCatalog;
   db.assistants = nextData.assistants;
   db.appPresets = nextData.appPresets;
   db.promptPresets = nextData.promptPresets;
   db.langflowWorkflows = nextData.langflowWorkflows;
   db.toolSettings = nextData.toolSettings;
+  if (knowledgeRuntime?.upstreamRef) knowledgeRuntime.upstreamRef.current = db.settings.upstreamBaseUrl;
   saveData();
+  clearMetadataDegraded();
   appendAudit("metadata-import", {
     backupFile: path.relative(dataDir, backupFile),
     counts: report.counts,
     warnings: report.warnings
   });
   res.json(adminMetadataPayload());
-});
+}));
 
 adminRouter.get("/ops", (req, res) => {
   res.json(buildAdminOpsPayload());
@@ -2189,12 +2511,23 @@ adminRouter.get("/backups", (req, res) => {
   res.json(listBackupFiles());
 });
 
-adminRouter.post("/backups/:name/restore", (req, res) => {
+adminRouter.post("/backups/:name/restore", asyncRoute(async (req, res) => {
   const backupPath = safeBackupPath(req.params.name);
   const restored = normalizeData(JSON.parse(fs.readFileSync(backupPath, "utf8")));
+  try {
+    restored.settings.upstreamBaseUrl = await assertManagedUpstreamBaseUrl(restored.settings.upstreamBaseUrl, {
+      production: isProduction,
+      allowLocal: String(process.env.ALLOW_LOCAL_UPSTREAM || "").toLowerCase() === "true",
+      rejectOverride: true
+    });
+  } catch {
+    throw httpError(400, "备份中的上游 API 域名无效或不被允许");
+  }
   const preRestoreBackup = backupCurrentData("pre-restore");
   db = restored;
+  if (knowledgeRuntime?.upstreamRef) knowledgeRuntime.upstreamRef.current = db.settings.upstreamBaseUrl;
   saveData();
+  clearMetadataDegraded();
   appendAudit("backup-restore", {
     backupFile: path.relative(dataDir, backupPath),
     preRestoreBackup: path.relative(dataDir, preRestoreBackup)
@@ -2204,7 +2537,7 @@ adminRouter.post("/backups/:name/restore", (req, res) => {
     restored: true,
     restoredBackup: path.basename(backupPath)
   });
-});
+}));
 
 adminRouter.get("/audit-log", (req, res) => {
   res.json(
@@ -2244,18 +2577,96 @@ app.delete("/api/conversations/:id", (req, res) => {
 });
 
 app.post(
+  "/api/chat/title",
+  asyncRoute(async (req, res) => {
+    assertChatAllowed();
+    const { connection, entry, provider } = resolveRuntimeProvider(req.body || {}, "chat");
+    const history = sanitizeRequestMessages(req.body?.history).slice(-16);
+    assertModelInputCharacters(entry, history.map((message) => message.content), "Title context");
+    if (!history.length) throw httpError(400, "没有可用于总结标题的聊天记录");
+    const transcript = history
+      .map((message) => `${message.role === "assistant" ? "助手" : "用户"}：${message.content}`)
+      .join("\n");
+    const controller = createRequestAbortController(req, res);
+    try {
+      trackModelInvocation(res, entry, "chat-title");
+      const result = await requestChatCompletion({
+        provider,
+        model: entry.model,
+        messages: [
+          {
+            role: "system",
+            content: "请将对话总结为一个准确、简洁的标题。只返回标题，不要引号、标点前缀或解释，最长 24 个汉字。"
+          },
+          { role: "user", content: transcript }
+        ],
+        temperature: 0.2,
+        maxTokens: 64,
+        tools: [],
+        hostedTools: [],
+        signal: controller.signal
+      });
+      res.json({ title: sanitizeGeneratedConversationTitle(result) });
+    } catch (error) {
+      if (req.upstreamTimedOut) throw httpError(504, "上游服务响应超时");
+      if (error?.name === "AbortError" || controller.signal.aborted) throw httpError(499, "请求已取消");
+      throw httpError(502, publicProviderError(error, connection));
+    }
+  })
+);
+
+app.post(
+  "/api/image/optimize-prompt",
+  asyncRoute(async (req, res) => {
+    assertModuleAllowed("image");
+    const prompt = String(req.body?.prompt || "").trim();
+    if (!prompt) throw httpError(400, "请输入需要优化的提示词");
+    const { connection, entry, provider } = resolveRuntimeProvider(req.body || {}, "chat");
+    assertModelInputCharacters(entry, [prompt], "Prompt optimization input");
+    const controller = createRequestAbortController(req, res);
+    try {
+      trackModelInvocation(res, entry, "image-prompt-optimization");
+      const optimized = await requestChatCompletion({
+        provider,
+        model: entry.model,
+        messages: [
+          {
+            role: "system",
+            content: "你是图像提示词优化器。保留用户意图，补充主体、环境、构图、光线、材质和输出约束。只返回一段可直接用于文生图或图像编辑的中文提示词，不要解释，不要加引号。"
+          },
+          { role: "user", content: prompt }
+        ],
+        temperature: 0.35,
+        maxTokens: 1000,
+        tools: [],
+        hostedTools: [],
+        signal: controller.signal
+      });
+      res.json({ prompt: normalizeOptimizedImagePrompt(optimized) });
+    } catch (error) {
+      if (req.upstreamTimedOut) throw httpError(504, "上游服务响应超时");
+      if (error?.name === "AbortError" || controller.signal.aborted) throw httpError(499, "请求已取消");
+      throw httpError(502, publicProviderError(error, connection));
+    }
+  })
+);
+
+app.post(
   "/api/chat/stream",
   asyncRoute(async (req, res) => {
     assertChatAllowed();
     const content = String(req.body?.content || "").trim();
     if (!content) throw httpError(400, "消息不能为空");
-    const displayContent = compact(req.body?.displayContent || content, 24000);
+    const displaySource = req.body?.displayContent || content;
 
     const { connection, entry, provider } = resolveRuntimeProvider(req.body || {}, "chat");
+    const inputLimit = assertModelInputCharacters(entry, [content], "Chat message");
+    const displayContent = boundedText(displaySource, inputLimit);
     const assistant = getAssistant(req.body?.assistantId);
     const model = entry.model;
     const attachments = sanitizeChatAttachments(req.body?.attachments, entry);
     const skillInstructions = chatSkillInstructionsFromBody(req.body?.skillInstructions);
+    const toolInvocationMode = req.body?.toolInvocationMode === "prompt" ? "prompt" : "function";
     if (req.body?.allowedTools !== undefined && !Array.isArray(req.body.allowedTools)) {
       throw httpError(400, "allowedTools 必须是工具名称数组");
     }
@@ -2271,7 +2682,8 @@ app.post(
       context: toolContext,
       settings: db.toolSettings,
       entry,
-      requestedNames: requestedTools
+      requestedNames: requestedTools,
+      invocationMode: toolInvocationMode
     });
     if (resolvedTools.unavailable.length) {
       throw httpError(
@@ -2279,13 +2691,12 @@ app.post(
         resolvedTools.unavailable.map((tool) => `${tool.name}：${tool.reason}`).join("；")
       );
     }
-    const controller = new AbortController();
-    req.on("aborted", () => controller.abort());
+    const controller = createRequestAbortController(req, res);
     const cloudKnowledge = await prepareCloudKnowledge(req, displayContent, controller.signal);
     let searchContext = "";
     if (resolvedTools.searchTools.length) {
-      if (!isSearchServiceReady(req.body?.searchService)) {
-        throw httpError(400, "请先配置独立联网搜索服务的 API URL 和 Key");
+      if (!isSearchServiceReady(req.body?.searchService, { upstreamBaseUrl: db.settings.upstreamBaseUrl })) {
+        throw httpError(400, "请先配置独立联网搜索服务的 API Key");
       }
       try {
         searchContext = await prepareIndependentSearch({
@@ -2296,19 +2707,30 @@ app.post(
           trace: toolContext.trace
         });
       } catch (searchError) {
+        if (req.upstreamTimedOut) throw httpError(504, "上游服务响应超时");
         if (searchError?.name === "AbortError" || controller.signal.aborted) {
           throw httpError(499, "请求已取消");
         }
         throw httpError(502, publicProviderError(searchError, connection, req.body?.searchService));
       }
     }
-    const temperature = Number.isFinite(Number(req.body?.temperature)) ? Number(req.body.temperature) : 0.7;
-    const topP = Number.isFinite(Number(req.body?.topP)) ? Number(req.body.topP) : undefined;
+    const temperature = boundedNumber(req.body?.temperature, 0.7, 0, 2);
+    const topP = optionalBoundedNumber(req.body?.topP, 0, 1);
     const reasoningEffort = sanitizeReasoningEffort(req.body?.reasoningEffort);
-    const maxTokens = Number.isFinite(Number(req.body?.maxTokens))
-      ? Math.max(1, Math.trunc(Number(req.body.maxTokens)))
+    const responseVerbosity = ["low", "medium", "high"].includes(req.body?.responseVerbosity)
+      ? req.body.responseVerbosity
       : undefined;
-    const conversation = requestConversationFromBody(req.body || {}, assistant, displayContent);
+    const maxTokens = optionalBoundedInteger(req.body?.maxTokens, 1, 1_000_000);
+    const conversation = requestConversationFromBody(req.body || {}, assistant, displayContent, entry);
+    assertModelInputCharacters(
+      entry,
+      [
+        ...conversation.messages.map((message) => message.content),
+        content,
+        ...attachments.filter((attachment) => attachment.type === "text").map((attachment) => attachment.text)
+      ],
+      "Chat context"
+    );
 
     const createdAt = now();
     const userMessage = {
@@ -2348,6 +2770,13 @@ app.post(
 
     let finished = false;
     let clientClosed = false;
+    let responseUsage = null;
+    const heartbeatMs = optionalBoundedInteger(process.env.SSE_HEARTBEAT_MS, 5_000, 60_000)
+      || DEFAULT_SSE_HEARTBEAT_MS;
+    const heartbeat = setInterval(() => {
+      if (!clientClosed && !res.writableEnded && !res.destroyed) res.write(": heartbeat\n\n");
+    }, heartbeatMs);
+    heartbeat.unref?.();
     res.on("close", () => {
       if (!finished && !res.writableEnded) {
         clientClosed = true;
@@ -2356,6 +2785,7 @@ app.post(
     });
 
     try {
+      trackModelInvocation(res, entry, "chat");
       await streamProviderReply({
         provider,
         assistant,
@@ -2366,6 +2796,8 @@ app.post(
         topP,
         reasoningEffort,
         maxTokens,
+        responseVerbosity,
+        toolInvocationMode,
         skillInstructions,
         cloudKnowledge,
         searchContext,
@@ -2373,6 +2805,9 @@ app.post(
         hostedTools: resolvedTools.hostedTools,
         toolContext,
         signal: controller.signal,
+        onUsage: (usage) => {
+          responseUsage = addTokenUsage(responseUsage, usage);
+        },
         onToken: (token) => {
           assistantMessage.content += token;
           if (!clientClosed) writeSse(res, "token", { token });
@@ -2380,6 +2815,9 @@ app.post(
       });
 
       assistantMessage.status = "done";
+      if (req.body?.includeUsage === true && responseUsage?.totalTokens > 0) {
+        assistantMessage.usage = responseUsage;
+      }
       conversation.updatedAt = now();
 
       if (!clientClosed) {
@@ -2389,15 +2827,22 @@ app.post(
         });
       }
     } catch (error) {
-      const aborted = error?.name === "AbortError" || controller.signal.aborted;
+      const timedOut = Boolean(req.upstreamTimedOut);
+      const aborted = !timedOut && (error?.name === "AbortError" || controller.signal.aborted);
       assistantMessage.status = aborted ? "stopped" : "error";
       if (!assistantMessage.content && !aborted) {
-        assistantMessage.content = `请求失败：${publicProviderError(error, connection, req.body?.searchService)}`;
+        assistantMessage.content = timedOut
+          ? "请求失败：上游服务响应超时"
+          : `请求失败：${publicProviderError(error, connection, req.body?.searchService)}`;
       }
       conversation.updatedAt = now();
 
       if (!clientClosed) {
-        if (!aborted) writeSse(res, "error", { error: publicProviderError(error, connection, req.body?.searchService) });
+        if (!aborted) {
+          writeSse(res, "error", {
+            error: timedOut ? "上游服务响应超时" : publicProviderError(error, connection, req.body?.searchService)
+          });
+        }
         writeSse(res, "done", {
           conversation: conversationSummary(conversation),
           message: assistantMessage
@@ -2405,6 +2850,7 @@ app.post(
       }
     } finally {
       finished = true;
+      clearInterval(heartbeat);
       if (!res.writableEnded && !res.destroyed) res.end();
     }
   })
@@ -2432,8 +2878,7 @@ app.post(
           .filter(Boolean)
       : [];
     const contextChunks = requestKnowledgeChunks(req.body?.contextChunks);
-    const controller = new AbortController();
-    req.on("aborted", () => controller.abort());
+    const controller = createRequestAbortController(req, res);
     const cloudKnowledge = await prepareCloudKnowledge(req, prompt, controller.signal);
     const searchableKnowledgeChunks = combineCloudKnowledgeSearchChunks(
       contextChunks,
@@ -2464,8 +2909,8 @@ app.post(
     const hostedTools = resolvedTools.hostedTools;
     const searchTools = resolvedTools.searchTools;
     const trace = toolContext.trace;
-    if (searchTools.length && !isSearchServiceReady(req.body?.searchService)) {
-      throw httpError(400, "请先配置独立联网搜索服务的 API URL 和 Key");
+    if (searchTools.length && !isSearchServiceReady(req.body?.searchService, { upstreamBaseUrl: db.settings.upstreamBaseUrl })) {
+      throw httpError(400, "请先配置独立联网搜索服务的 API Key");
     }
 
     try {
@@ -2486,6 +2931,7 @@ app.post(
         knowledge: cloudKnowledge,
         trailingContext: boundedText(searchContext, 24000)
       });
+      trackModelInvocation(res, entry, sourceModule);
       const content = await requestChatCompletion({
         provider,
         model: entry.model,
@@ -2516,6 +2962,7 @@ app.post(
         })
       );
     } catch (error) {
+      if (req.upstreamTimedOut) throw httpError(504, "上游服务响应超时");
       if (error?.name === "AbortError" || controller.signal.aborted) throw httpError(499, "请求已取消");
       throw httpError(502, publicProviderError(error, connection, req.body?.searchService));
     }
@@ -2528,13 +2975,13 @@ app.post(
     assertModuleAllowed("audio");
     const { connection, entry, provider } = resolveRuntimeProvider(req.body || {}, "stt");
     const audio = audioFromDataUrl(req.body?.dataUrl, req.body?.fileName, req.body?.mimeType);
-    const controller = new AbortController();
-    req.on("aborted", () => controller.abort());
+    const controller = createRequestAbortController(req, res);
     try {
       const adapter = createProviderAdapter(provider);
       if (typeof adapter.transcribeAudio !== "function") {
         throw new Error("当前供应商未提供语音识别接口");
       }
+      trackModelInvocation(res, entry, "audio-transcription");
       const json = await adapter.transcribeAudio({
         model: entry.model,
         ...audio,
@@ -2546,6 +2993,7 @@ app.post(
         raw: json
       });
     } catch (error) {
+      if (req.upstreamTimedOut) throw httpError(504, "上游服务响应超时");
       if (error?.name === "AbortError" || controller.signal.aborted) throw httpError(499, "请求已取消");
       throw httpError(502, publicProviderError(error, connection));
     }
@@ -2564,10 +3012,10 @@ app.post(
     }
 
     const { connection, entry, provider } = resolveRuntimeProvider(req.body || {}, "embedding");
-    const controller = new AbortController();
-    req.on("aborted", () => controller.abort());
+    const controller = createRequestAbortController(req, res);
 
     try {
+      trackModelInvocation(res, entry, "embedding");
       const result = await createProviderAdapter(provider).embedText({
         model: entry.model,
         input: Array.isArray(input) ? nonEmptyValues : nonEmptyValues[0],
@@ -2582,6 +3030,7 @@ app.post(
         usage: result.usage
       });
     } catch (error) {
+      if (req.upstreamTimedOut) throw httpError(504, "上游服务响应超时");
       if (error?.name === "AbortError" || controller.signal.aborted) {
         throw httpError(499, "Request was cancelled");
       }
@@ -2598,14 +3047,14 @@ app.post(
     const providerJobId = String(req.body?.providerJobId || "").trim();
     if (!providerJobId) throw httpError(400, "缺少视频任务 ID");
 
-    const controller = new AbortController();
-    req.on("aborted", () => controller.abort());
+    const controller = createRequestAbortController(req, res);
 
     try {
       const adapter = createProviderAdapter(provider);
       if (typeof adapter.getVideoStatus !== "function") {
         throw new Error("当前供应商未提供视频状态查询接口");
       }
+      trackModelInvocation(res, entry, "video-status");
       const json = await adapter.getVideoStatus({
         model: entry.model,
         endpointPath,
@@ -2627,9 +3076,11 @@ app.post(
         })
       );
     } catch (error) {
+      if (req.upstreamTimedOut) throw httpError(504, "上游服务响应超时");
       if (error?.name === "AbortError" || controller.signal.aborted) {
         throw httpError(499, "请求已取消");
       }
+      if (Number.isInteger(error?.status)) throw error;
       throw httpError(502, publicProviderError(error, connection));
     }
   })
@@ -2651,16 +3102,23 @@ app.post(
     const { connection, entry, provider } = resolveRuntimeProvider(req.body || {}, capability);
     const model = entry.model;
     const options = req.body?.options || {};
-    const controller = new AbortController();
-    req.on("aborted", () => controller.abort());
+    if (module === "image") assertModelInputCharacters(entry, [prompt], "Image prompt");
+    const imageTimeoutMs = optionalBoundedInteger(process.env.IMAGE_UPSTREAM_TIMEOUT_MS, 30_000, 900_000)
+      || DEFAULT_IMAGE_TIMEOUT_MS;
+    const controller = createRequestAbortController(
+      req,
+      res,
+      module === "image" ? imageTimeoutMs : undefined
+    );
 
     try {
       if (module === "image") {
+        trackModelInvocation(res, entry, "image");
         const mode = options.mode === "edit" ? "edit" : "generate";
         if (mode === "edit" && !entry.capabilities.includes("imageEdit")) {
           throw httpError(400, "所选模型未启用图片编辑能力");
         }
-        const maxReferenceImages = entry.vendor === "botcf" ? 4 : 1;
+        const maxReferenceImages = entry.vendor === "botcf" ? 4 : entry.vendor === "openai" ? 16 : 1;
         const requestedInputImages = Array.isArray(options.inputImages)
           ? options.inputImages
           : options.inputImage
@@ -2671,7 +3129,7 @@ app.post(
           : [];
         const inputImage = inputImages[0];
         const referenceImageUrls = mode === "edit" && entry.vendor === "botcf"
-          ? referenceImageUrlsFrom(options.referenceImageUrls, 4)
+          ? await referenceImageUrlsFrom(options.referenceImageUrls, 4)
           : [];
         if (mode === "edit" && entry.vendor !== "botcf" && Array.isArray(options.referenceImageUrls) && options.referenceImageUrls.length) {
           throw httpError(400, "当前模型不支持参考图链接，请上传本地图片");
@@ -2682,8 +3140,25 @@ app.post(
         const maskImage = mode === "edit" && options.maskImage
           ? imageInputFrom(options.maskImage, "蒙版", 4)
           : undefined;
+        const totalUploadBytes = inputImages.reduce((sum, item) => sum + Number(item.size || 0), 0)
+          + Number(maskImage?.size || 0);
+        if (totalUploadBytes > MAX_IMAGE_EDIT_UPLOAD_BYTES) {
+          throw httpError(413, "Image edit uploads exceed the total request limit");
+        }
         if (entry.vendor === "openai" && maskImage && maskImage.mimeType !== "image/png") {
           throw httpError(400, "OpenAI 图片编辑蒙版必须为 PNG");
+        }
+        if (entry.vendor === "openai" && maskImage) {
+          if (inputImage?.mimeType !== "image/png") {
+            throw httpError(400, "使用蒙版时，OpenAI 原图与蒙版必须同为 PNG");
+          }
+          const inputMetadata = pngImageMetadata(inputImage.dataUrl);
+          const maskMetadata = pngImageMetadata(maskImage.dataUrl);
+          if (!inputMetadata || !maskMetadata) throw httpError(400, "原图或蒙版不是有效的 PNG 文件");
+          if (inputMetadata.width !== maskMetadata.width || inputMetadata.height !== maskMetadata.height) {
+            throw httpError(400, "OpenAI 蒙版尺寸必须与原图一致");
+          }
+          if (!maskMetadata.hasAlpha) throw httpError(400, "OpenAI 蒙版必须包含透明通道");
         }
         const maxImageCount = entry.vendor === "gemini" ? 4 : 10;
         const requestedCount = Number.isFinite(Number(options.count))
@@ -2701,17 +3176,9 @@ app.post(
         const outputCompression = Number.isFinite(Number(options.outputCompression))
           ? Math.max(0, Math.min(100, Math.trunc(Number(options.outputCompression))))
           : undefined;
-        const styledPrompt = [
-          prompt,
-          options.stylePreset ? `风格：${compact(options.stylePreset, 120)}` : "",
-          options.quality ? `质量：${compact(options.quality, 80)}` : "",
-          options.negativePrompt ? `避免出现：${compact(options.negativePrompt, 400)}` : ""
-        ]
-          .filter(Boolean)
-          .join("\n");
         const json = await createProviderAdapter(provider).generateImage({
           model,
-          prompt: styledPrompt,
+          prompt,
           mode,
           inputImage,
           inputImages,
@@ -2724,6 +3191,7 @@ app.post(
           quality: options.quality,
           outputFormat,
           outputCompression,
+          background: options.background,
           signal: controller.signal
         });
         const fallbackMimeType = outputFormat === "jpeg"
@@ -2732,6 +3200,7 @@ app.post(
             ? "image/webp"
             : "image/png";
         const assets = extractAssets(json, "image", fallbackMimeType).slice(0, requestedCount);
+        if (!assets.length) throw httpError(502, "Image provider returned no usable image assets");
         const revisedPrompts = Array.isArray(json?.data)
           ? json.data.map((item) => item?.revised_prompt).filter(Boolean)
           : [];
@@ -2751,6 +3220,7 @@ app.post(
       }
 
       if (module === "audio") {
+        trackModelInvocation(res, entry, "audio");
         const jsonOrAsset = await createProviderAdapter(provider).synthesizeSpeech({
           model,
           input: prompt,
@@ -2771,6 +3241,7 @@ app.post(
       }
 
       if (module === "video") {
+        trackModelInvocation(res, entry, "video");
         const videoPrompt = [
           prompt,
           options.duration ? `时长：${compact(options.duration, 80)}` : "",
@@ -2803,6 +3274,7 @@ app.post(
       }
 
       if (module === "ppt" || module === "mindmap" || module === "translate") {
+        trackModelInvocation(res, entry, module);
         const systemPrompt =
           module === "ppt"
             ? [
@@ -2850,6 +3322,7 @@ app.post(
       }
 
       if (module === "agents") {
+        trackModelInvocation(res, entry, "agents");
         const assistant = getAssistant(req.body?.assistantId);
         const tools = entry.capabilities.includes("toolCalling") ? availableTools({}, db.toolSettings) : [];
         const trace = [];
@@ -2880,6 +3353,7 @@ app.post(
       const context = compact(req.body?.context || "", 12000);
       const contextChunks = requestKnowledgeChunks(req.body?.contextChunks);
       if (!context && !contextChunks.length) throw httpError(400, "请先提供知识库资料");
+      trackModelInvocation(res, entry, "knowledge");
       const embeddingRuntime = resolveEmbeddingRuntime(req.body || {}, connection, entry.vendor);
       const retrieval = await retrieveContext({
         query: prompt,
@@ -2938,9 +3412,11 @@ app.post(
         })
       );
     } catch (error) {
+      if (req.upstreamTimedOut) throw httpError(504, "上游服务响应超时");
       if (error?.name === "AbortError" || controller.signal.aborted) {
         throw httpError(499, "请求已取消");
       }
+      if (Number.isInteger(error?.status)) throw error;
       throw httpError(502, publicProviderError(error, connection));
     }
   })

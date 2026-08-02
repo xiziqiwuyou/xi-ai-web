@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Bot, Loader2, Send, Workflow } from "lucide-react";
 import { streamLangflowWorkflow } from "../../api";
+import { FigmaMenu, type FigmaMenuOption } from "../../components/ui";
 import { compactModelLabel, modelOptionLabel, modelsForCapability, vendorLabels } from "../../components/workbench/model-utils";
 import type { LangflowStatus, LangflowStreamEvent, LangflowWorkflow, ModelCatalogEntry, UserProviderConfig } from "../../types";
 import { createClientId } from "../../utils/clientId";
@@ -69,6 +70,10 @@ export default function LangflowWorkflowModule({
   useEffect(() => () => abortRef.current?.abort(), []);
 
   const selectedModel = availableModels.find((model) => model.id === modelId) || availableModels[0];
+  const modelOptions = useMemo<FigmaMenuOption[]>(() => availableModels.map((model) => ({
+    value: model.id,
+    label: modelOptionLabel(model)
+  })), [availableModels]);
 
   const selectWorkflow = (workflow: LangflowWorkflow) => {
     if (busy) return;
@@ -192,19 +197,19 @@ export default function LangflowWorkflowModule({
                 <h2>{selectedWorkflow.name}</h2>
                 <p>{selectedWorkflow.description}</p>
               </div>
-              <label className="langflow-workflow-model">
-                <span>使用模型</span>
-                <select
-                  value={selectedModel?.id || ""}
-                  onChange={(event) => {
-                    setModelId(event.target.value);
-                    onUserProviderChange({ lastModelId: event.target.value });
-                  }}
-                  disabled={busy || !availableModels.length}
-                >
-                  {availableModels.map((model) => <option key={model.id} value={model.id}>{modelOptionLabel(model)}</option>)}
-                </select>
-              </label>
+              <FigmaMenu
+                className="langflow-workflow-model"
+                label="使用模型"
+                ariaLabel="工作流使用模型"
+                value={selectedModel?.id || ""}
+                options={modelOptions}
+                onChange={(nextModelId) => {
+                  setModelId(nextModelId);
+                  onUserProviderChange({ lastModelId: nextModelId });
+                }}
+                disabled={busy || !modelOptions.length}
+                triggerText={modelOptions.length ? undefined : "暂无可用模型"}
+              />
             </header>
 
             <div className="langflow-workflow-messages" aria-live="polite">

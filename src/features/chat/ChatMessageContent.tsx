@@ -2,28 +2,51 @@ import {
   createContext,
   useEffect,
   useContext,
+  useMemo,
   useRef,
   useState,
   type ComponentPropsWithoutRef
 } from "react";
-import { Check, Copy } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Copy, Eye, EyeOff } from "lucide-react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import "katex/dist/katex.min.css";
+import type { ChatCodeTheme } from "./chatSessionSettings";
 
-type MarkdownCodeProps = ComponentPropsWithoutRef<"code"> & {
-  node?: unknown;
-};
-
-type MarkdownPreProps = ComponentPropsWithoutRef<"pre"> & {
-  node?: unknown;
-};
-
+type MarkdownCodeProps = ComponentPropsWithoutRef<"code"> & { node?: unknown };
+type MarkdownPreProps = ComponentPropsWithoutRef<"pre"> & { node?: unknown };
 type CopyState = "idle" | "copied" | "failed";
 
+type CodeRenderSettings = {
+  codeTheme: ChatCodeTheme;
+  styledCodeBlocks: boolean;
+  showCodeLineNumbers: boolean;
+  collapseCodeBlocks: boolean;
+  wrapCode: boolean;
+  enableCodePreview: boolean;
+};
+
+export type ChatMessageContentProps = CodeRenderSettings & {
+  content: string;
+  plainText: boolean;
+  collapseThinking: boolean;
+  renderMath: boolean;
+  enableSingleDollarMath: boolean;
+};
+
+const defaultCodeSettings: CodeRenderSettings = {
+  codeTheme: "auto",
+  styledCodeBlocks: true,
+  showCodeLineNumbers: true,
+  collapseCodeBlocks: false,
+  wrapCode: false,
+  enableCodePreview: true
+};
+
 const markdownCodeBlockContext = createContext(false);
+const codeRenderSettingsContext = createContext<CodeRenderSettings>(defaultCodeSettings);
 
 async function copyText(value: string) {
   try {
@@ -36,9 +59,7 @@ async function copyText(value: string) {
   }
 
   const textarea = document.createElement("textarea");
-  const restoreTarget = document.activeElement instanceof HTMLElement
-    ? document.activeElement
-    : null;
+  const restoreTarget = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   textarea.value = value;
   textarea.readOnly = true;
   textarea.tabIndex = -1;
@@ -61,10 +82,22 @@ function codeLanguage(className?: string) {
   return /(?:^|\s)language-([\w-]+)/u.exec(className || "")?.[1] || "text";
 }
 
+function htmlPreviewDocument(code: string) {
+  const csp = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:">`;
+  if (/<head[\s>]/i.test(code)) return code.replace(/<head([^>]*)>/i, `<head$1>${csp}`);
+  if (/<html[\s>]/i.test(code)) return code.replace(/<html([^>]*)>/i, `<html$1><head>${csp}</head>`);
+  return `<!doctype html><html><head>${csp}</head><body>${code}</body></html>`;
+}
+
 function ChatCodeBlock({ className, children, node: _node, ...props }: MarkdownCodeProps) {
   const code = String(children).replace(/\n$/u, "");
+  const settings = useContext(codeRenderSettingsContext);
   const [copyState, setCopyState] = useState<CopyState>("idle");
+  const [collapsed, setCollapsed] = useState(settings.collapseCodeBlocks && code.split("\n").length > 8);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const resetTimerRef = useRef<number | null>(null);
+  const language = codeLanguage(className);
+  const canPreview = settings.enableCodePreview && ["html", "htm"].includes(language.toLowerCase());
 
   useEffect(() => () => {
     if (resetTimerRef.current !== null) window.clearTimeout(resetTimerRef.current);
@@ -80,26 +113,61 @@ function ChatCodeBlock({ className, children, node: _node, ...props }: MarkdownC
     }, 1800);
   };
 
-  const language = codeLanguage(className);
-  return (
-    <section className="figma-code-block" data-language={language}>
-      <header>
-        <span>{language}</span>
-        <button
-          type="button"
-          onClick={() => void copyCode()}
-          aria-label="复制代码"
-          title="复制代码"
-        >
-          {copyState === "copied" ? <Check size={13} /> : <Copy size={13} />}
-          <span aria-live="polite">
-            {copyState === "copied" ? "已复制" : copyState === "failed" ? "复制失败" : "复制"}
-          </span>
-        </button>
-      </header>
-      <pre tabIndex={0} aria-label={`${language} 代码`}>
+  const codeLines = code.split("\n");
+  if (!settings.styledCodeBlocks) {
+    return (
+      <pre className={`figma-code-plain${settings.wrapCode ? " wrap" : ""}`} tabIndex={0} aria-label={`${language} 代码`}>
         <code {...props} className={className}>{code}</code>
       </pre>
+    );
+  }
+
+  return (
+    <section
+      className={`figma-code-block${settings.wrapCode ? " wrap" : ""}${collapsed ? " collapsed" : ""}`}
+      data-language={language}
+      data-theme={settings.codeTheme}
+    >
+      <header>
+        <span>{language}</span>
+        <div>
+          <button type="button" className="figma-code-collapse" onClick={() => setCollapsed((value) => !value)} aria-label={collapsed ? "展开代码" : "折叠代码"} aria-expanded={!collapsed}>
+            {collapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+          </button>
+          {canPreview ? (
+            <button type="button" onClick={() => setPreviewOpen((value) => !value)} aria-label={previewOpen ? "关闭代码预览" : "预览代码"} aria-pressed={previewOpen}>
+              {previewOpen ? <EyeOff size={13} /> : <Eye size={13} />}
+              <span>{previewOpen ? "关闭预览" : "预览"}</span>
+            </button>
+          ) : null}
+          <button type="button" onClick={() => void copyCode()} aria-label="复制代码" title="复制代码">
+            {copyState === "copied" ? <Check size={13} /> : <Copy size={13} />}
+            <span aria-live="polite">{copyState === "copied" ? "已复制" : copyState === "failed" ? "复制失败" : "复制"}</span>
+          </button>
+        </div>
+      </header>
+      {!collapsed ? (
+        <pre tabIndex={0} aria-label={`${language} 代码`}>
+          <code {...props} className={className}>
+            {codeLines.map((line, index) => (
+              <span className="figma-code-line" key={`${index}-${line.slice(0, 16)}`}>
+                {settings.showCodeLineNumbers ? <i aria-hidden="true">{index + 1}</i> : null}
+                <b>{line || "\n"}</b>
+                {index < codeLines.length - 1 ? "\n" : null}
+              </span>
+            ))}
+          </code>
+        </pre>
+      ) : null}
+      {previewOpen && canPreview ? (
+        <iframe
+          className="figma-code-preview"
+          title="HTML 代码预览"
+          sandbox=""
+          referrerPolicy="no-referrer"
+          srcDoc={htmlPreviewDocument(code)}
+        />
+      ) : null}
     </section>
   );
 }
@@ -117,23 +185,64 @@ function MarkdownPre({ children }: MarkdownPreProps) {
   return <markdownCodeBlockContext.Provider value>{children}</markdownCodeBlockContext.Provider>;
 }
 
-const markdownComponents: Components = {
-  code: MarkdownCode,
-  pre: MarkdownPre
-};
+const markdownComponents: Components = { code: MarkdownCode, pre: MarkdownPre };
 
-type ChatMessageContentProps = {
-  content: string;
-};
+function splitThinking(content: string) {
+  const thoughts: string[] = [];
+  const visible = content.replace(/<think>([\s\S]*?)<\/think>/gi, (_match, thought: string) => {
+    const normalized = thought.trim();
+    if (normalized) thoughts.push(normalized);
+    return "";
+  }).trim();
+  return { visible, thoughts };
+}
 
-export default function ChatMessageContent({ content }: ChatMessageContentProps) {
+export default function ChatMessageContent({
+  content,
+  plainText = false,
+  collapseThinking = true,
+  renderMath = true,
+  enableSingleDollarMath = true,
+  codeTheme = "auto",
+  styledCodeBlocks = true,
+  showCodeLineNumbers = true,
+  collapseCodeBlocks = false,
+  wrapCode = false,
+  enableCodePreview = true
+}: Partial<ChatMessageContentProps> & Pick<ChatMessageContentProps, "content">) {
+  const separated = useMemo(() => splitThinking(content), [content]);
+  const codeSettings = useMemo<CodeRenderSettings>(() => ({
+    codeTheme,
+    styledCodeBlocks,
+    showCodeLineNumbers,
+    collapseCodeBlocks,
+    wrapCode,
+    enableCodePreview
+  }), [codeTheme, styledCodeBlocks, showCodeLineNumbers, collapseCodeBlocks, wrapCode, enableCodePreview]);
+  const remarkPlugins = useMemo(() => renderMath
+    ? [remarkGfm, [remarkMath, { singleDollarTextMath: enableSingleDollarMath }]]
+    : [remarkGfm], [enableSingleDollarMath, renderMath]);
+  const rehypePlugins = useMemo(() => renderMath ? [rehypeKatex] : [], [renderMath]);
+
   return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm, remarkMath]}
-      rehypePlugins={[rehypeKatex]}
-      components={markdownComponents}
-    >
-      {content}
-    </ReactMarkdown>
+    <codeRenderSettingsContext.Provider value={codeSettings}>
+      {separated.thoughts.map((thought, index) => (
+        <details className="figma-thinking-block" key={`${index}-${thought.slice(0, 24)}`} open={!collapseThinking}>
+          <summary>思考过程</summary>
+          <p>{thought}</p>
+        </details>
+      ))}
+      {plainText ? (
+        <p className="figma-message-plain-text">{separated.visible}</p>
+      ) : (
+        <ReactMarkdown
+          remarkPlugins={remarkPlugins as never}
+          rehypePlugins={rehypePlugins}
+          components={markdownComponents}
+        >
+          {separated.visible}
+        </ReactMarkdown>
+      )}
+    </codeRenderSettingsContext.Provider>
   );
 }

@@ -1,16 +1,40 @@
-import type { MediaEndpointConfig, ModelCapability, ModelDefaultFor, ProviderKind } from "../../types";
+import type {
+  MediaEndpointConfig,
+  ModelCapability,
+  ModelDefaultFor,
+  ModelEndpointProtocol,
+  ProviderKind
+} from "../../types";
+import { defaultEndpointProtocolForVendor } from "./adminConsoleConfig";
 
 export type ModelPreset = {
   id: string;
   label: string;
   vendor: ProviderKind;
+  endpointProtocol: ModelEndpointProtocol;
   model: string;
   capabilities: ModelCapability[];
   defaultFor: ModelDefaultFor[];
+  contextWindowTokens?: number;
+  maxInputCharacters?: number;
   mediaConfig?: MediaEndpointConfig;
 };
 
-function shippedHostedCapabilities(preset: ModelPreset): ModelCapability[] {
+type ModelPresetSource = Omit<ModelPreset, "endpointProtocol"> & {
+  endpointProtocol?: ModelEndpointProtocol;
+};
+
+function presetContextWindowTokens(preset: ModelPresetSource) {
+  const model = preset.model.toLowerCase();
+  if (/^gpt-4\.1(?:-|$)/.test(model)) return 1_047_576;
+  if (/^gemini-(?:2\.5|3)/.test(model)) return 1_048_576;
+  if (preset.vendor === "anthropic") return 200_000;
+  if (preset.vendor === "kimi") return 262_144;
+  if (preset.vendor === "qwen") return 1_000_000;
+  return 128_000;
+}
+
+function shippedHostedCapabilities(preset: ModelPresetSource): ModelCapability[] {
   if (!preset.capabilities.includes("chat")) return [];
   if (preset.vendor === "openai") return ["webSearch", "codeExecution"];
   if (preset.vendor === "anthropic") {
@@ -26,13 +50,13 @@ function shippedHostedCapabilities(preset: ModelPreset): ModelCapability[] {
   return [];
 }
 
-const baseModelCatalogPresets: ModelPreset[] = [
+const baseModelCatalogPresets: ModelPresetSource[] = [
   {
     id: "openai-gpt-5-6-sol",
     label: "GPT-5.6 Sol",
     vendor: "openai",
     model: "gpt-5.6-sol",
-    capabilities: ["chat", "vision", "toolCalling", "streaming"],
+    capabilities: ["chat", "vision", "toolCalling"],
     defaultFor: []
   },
   {
@@ -40,7 +64,7 @@ const baseModelCatalogPresets: ModelPreset[] = [
     label: "GPT-5.6 Terra",
     vendor: "openai",
     model: "gpt-5.6-terra",
-    capabilities: ["chat", "vision", "toolCalling", "streaming"],
+    capabilities: ["chat", "vision", "toolCalling"],
     defaultFor: []
   },
   {
@@ -48,7 +72,7 @@ const baseModelCatalogPresets: ModelPreset[] = [
     label: "GPT-5.6 Luna",
     vendor: "openai",
     model: "gpt-5.6-luna",
-    capabilities: ["chat", "vision", "toolCalling", "streaming"],
+    capabilities: ["chat", "vision", "toolCalling"],
     defaultFor: ["chat"]
   },
   {
@@ -58,6 +82,14 @@ const baseModelCatalogPresets: ModelPreset[] = [
     model: "gpt-image-2",
     capabilities: ["image", "imageEdit"],
     defaultFor: ["image"]
+  },
+  {
+    id: "openai-gpt-image-2-vip",
+    label: "GPT Image 2 VIP",
+    vendor: "openai",
+    model: "gpt-image-2-vip",
+    capabilities: ["image", "imageEdit"],
+    defaultFor: []
   },
   {
     id: "openai-gpt-image-1-5",
@@ -176,7 +208,7 @@ const baseModelCatalogPresets: ModelPreset[] = [
     label: "Claude Sonnet 5",
     vendor: "anthropic",
     model: "claude-sonnet-5",
-    capabilities: ["chat", "vision", "toolCalling", "streaming"],
+    capabilities: ["chat", "vision", "toolCalling"],
     defaultFor: []
   },
   {
@@ -184,7 +216,7 @@ const baseModelCatalogPresets: ModelPreset[] = [
     label: "Claude Opus 4.8",
     vendor: "anthropic",
     model: "claude-opus-4-8",
-    capabilities: ["chat", "vision", "toolCalling", "streaming"],
+    capabilities: ["chat", "vision", "toolCalling"],
     defaultFor: []
   },
   {
@@ -192,7 +224,7 @@ const baseModelCatalogPresets: ModelPreset[] = [
     label: "Claude Sonnet 4.6",
     vendor: "anthropic",
     model: "claude-sonnet-4-6",
-    capabilities: ["chat", "vision", "toolCalling", "streaming"],
+    capabilities: ["chat", "vision", "toolCalling"],
     defaultFor: []
   },
   {
@@ -200,7 +232,7 @@ const baseModelCatalogPresets: ModelPreset[] = [
     label: "Claude Haiku 4.5",
     vendor: "anthropic",
     model: "claude-haiku-4-5",
-    capabilities: ["chat", "vision", "toolCalling", "streaming"],
+    capabilities: ["chat", "vision", "toolCalling"],
     defaultFor: []
   },
   {
@@ -208,7 +240,7 @@ const baseModelCatalogPresets: ModelPreset[] = [
     label: "Gemini 3.5 Flash",
     vendor: "gemini",
     model: "gemini-3.5-flash",
-    capabilities: ["chat", "vision", "toolCalling", "streaming"],
+    capabilities: ["chat", "vision", "toolCalling"],
     defaultFor: []
   },
   {
@@ -216,12 +248,20 @@ const baseModelCatalogPresets: ModelPreset[] = [
     label: "Gemini 3.1 Pro Preview",
     vendor: "gemini",
     model: "gemini-3.1-pro-preview",
-    capabilities: ["chat", "vision", "toolCalling", "streaming"],
+    capabilities: ["chat", "vision", "toolCalling"],
     defaultFor: []
   },
   {
     id: "gemini-3-1-flash-image",
     label: "Gemini 3.1 Flash Image",
+    vendor: "gemini",
+    model: "gemini-3.1-flash-image",
+    capabilities: ["image", "imageEdit", "vision"],
+    defaultFor: []
+  },
+  {
+    id: "gemini-nano-banana-2",
+    label: "Nano Banana 2",
     vendor: "gemini",
     model: "gemini-3.1-flash-image",
     capabilities: ["image", "imageEdit", "vision"],
@@ -256,7 +296,7 @@ const baseModelCatalogPresets: ModelPreset[] = [
     label: "Kimi K3",
     vendor: "kimi",
     model: "kimi-k3",
-    capabilities: ["chat", "vision", "toolCalling", "streaming"],
+    capabilities: ["chat", "vision", "toolCalling"],
     defaultFor: []
   },
   {
@@ -264,7 +304,7 @@ const baseModelCatalogPresets: ModelPreset[] = [
     label: "Kimi K2.7 Code",
     vendor: "kimi",
     model: "kimi-k2.7-code",
-    capabilities: ["chat", "toolCalling", "streaming"],
+    capabilities: ["chat", "toolCalling"],
     defaultFor: []
   },
   {
@@ -272,7 +312,7 @@ const baseModelCatalogPresets: ModelPreset[] = [
     label: "Kimi K2.7 Code Highspeed",
     vendor: "kimi",
     model: "kimi-k2.7-code-highspeed",
-    capabilities: ["chat", "toolCalling", "streaming"],
+    capabilities: ["chat", "toolCalling"],
     defaultFor: []
   },
   {
@@ -280,7 +320,7 @@ const baseModelCatalogPresets: ModelPreset[] = [
     label: "Kimi K2.6",
     vendor: "kimi",
     model: "kimi-k2.6",
-    capabilities: ["chat", "vision", "toolCalling", "streaming"],
+    capabilities: ["chat", "vision", "toolCalling"],
     defaultFor: []
   },
   {
@@ -288,7 +328,7 @@ const baseModelCatalogPresets: ModelPreset[] = [
     label: "DeepSeek V4 Flash",
     vendor: "deepseek",
     model: "deepseek-v4-flash",
-    capabilities: ["chat", "toolCalling", "streaming"],
+    capabilities: ["chat", "toolCalling"],
     defaultFor: []
   },
   {
@@ -296,7 +336,7 @@ const baseModelCatalogPresets: ModelPreset[] = [
     label: "DeepSeek V4 Pro",
     vendor: "deepseek",
     model: "deepseek-v4-pro",
-    capabilities: ["chat", "toolCalling", "streaming"],
+    capabilities: ["chat", "toolCalling"],
     defaultFor: []
   },
   {
@@ -304,7 +344,7 @@ const baseModelCatalogPresets: ModelPreset[] = [
     label: "Qwen 3.7 Max",
     vendor: "qwen",
     model: "qwen3.7-max",
-    capabilities: ["chat", "toolCalling", "streaming"],
+    capabilities: ["chat", "toolCalling"],
     defaultFor: []
   },
   {
@@ -312,7 +352,7 @@ const baseModelCatalogPresets: ModelPreset[] = [
     label: "Qwen 3.7 Plus",
     vendor: "qwen",
     model: "qwen3.7-plus",
-    capabilities: ["chat", "vision", "toolCalling", "streaming"],
+    capabilities: ["chat", "vision", "toolCalling"],
     defaultFor: []
   },
   {
@@ -320,7 +360,7 @@ const baseModelCatalogPresets: ModelPreset[] = [
     label: "Qwen 3.6 Flash",
     vendor: "qwen",
     model: "qwen3.6-flash",
-    capabilities: ["chat", "vision", "toolCalling", "streaming"],
+    capabilities: ["chat", "vision", "toolCalling"],
     defaultFor: []
   },
   {
@@ -328,7 +368,7 @@ const baseModelCatalogPresets: ModelPreset[] = [
     label: "Qwen 3 Coder Plus",
     vendor: "qwen",
     model: "qwen3-coder-plus",
-    capabilities: ["chat", "toolCalling", "streaming"],
+    capabilities: ["chat", "toolCalling"],
     defaultFor: []
   },
   {
@@ -336,7 +376,7 @@ const baseModelCatalogPresets: ModelPreset[] = [
     label: "Qwen 3.5 Omni Plus",
     vendor: "qwen",
     model: "qwen3.5-omni-plus",
-    capabilities: ["chat", "vision", "audio", "toolCalling", "streaming"],
+    capabilities: ["chat", "vision", "audio", "toolCalling"],
     defaultFor: []
   },
   {
@@ -352,7 +392,7 @@ const baseModelCatalogPresets: ModelPreset[] = [
     label: "Compatible Chat",
     vendor: "openai-compatible",
     model: "gpt-4.1-mini",
-    capabilities: ["chat", "vision", "streaming"],
+    capabilities: ["chat", "vision"],
     defaultFor: ["chat"]
   },
   {
@@ -375,5 +415,8 @@ const baseModelCatalogPresets: ModelPreset[] = [
 
 export const modelCatalogPresets: ModelPreset[] = baseModelCatalogPresets.map((preset) => ({
   ...preset,
+  endpointProtocol: preset.endpointProtocol || defaultEndpointProtocolForVendor(preset.vendor),
+  contextWindowTokens: preset.contextWindowTokens || presetContextWindowTokens(preset),
+  maxInputCharacters: preset.maxInputCharacters || 100_000,
   capabilities: [...new Set([...preset.capabilities, ...shippedHostedCapabilities(preset)])]
 }));

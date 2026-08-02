@@ -3,6 +3,7 @@ import {
   documentOverflow,
   expect,
   isMobileProject,
+  providerStorageKey,
   publicDestinations,
   publicBootstrapFixture,
   readWorkspaceRecords,
@@ -70,6 +71,66 @@ async function openPublicModule(
 
 test.beforeEach(async ({ page }) => {
   await seedReadyProvider(page);
+});
+
+test("public shell masks and replaces the session API Key", async ({ page }, testInfo) => {
+  await page.goto("/chat");
+  await waitForPublicModule(page, publicDestinations[0]);
+
+  if (isMobileProject(testInfo.project.name)) {
+    await page.getByRole("button", { name: "\u6253\u5f00\u529f\u80fd\u83dc\u5355", exact: true }).click();
+  }
+
+  const replaceKey = page.getByRole("button", { name: /\u66f4\u6362 API Key/ });
+  await expect(replaceKey).toBeVisible();
+  await expect(replaceKey).toContainText("\u2022\u2022\u2022\u2022-key");
+  await expect(page.locator(".figma-studio-shell")).not.toContainText("e2e-session-key");
+
+  if (!isMobileProject(testInfo.project.name)) {
+    const accessCard = page.getByRole("region", { name: "\u8bbf\u95ee\u72b6\u6001", exact: true });
+    const details = accessCard.locator(".figma-access-details");
+    const endpoint = details.locator(".figma-access-endpoint");
+    await expect(details).toBeVisible();
+    await expect(endpoint).toContainText("\u670d\u52a1\u5730\u5740");
+    await expect(endpoint).toContainText("api.xi-ai.cn");
+    await expect(accessCard.getByText("\u5df2\u52a0\u5bc6\u8bbf\u95ee", { exact: true })).toHaveCount(0);
+    const rowGeometry = await details.locator(".figma-access-detail").evaluateAll((rows) =>
+      rows.map((row) => {
+        const rect = row.getBoundingClientRect();
+        const icon = row.querySelector<HTMLElement>(".figma-access-detail-icon")?.getBoundingClientRect();
+        const copy = row.querySelector<HTMLElement>(".figma-access-detail-copy")?.getBoundingClientRect();
+        return {
+          width: rect.width,
+          height: rect.height,
+          iconX: icon?.x ?? -1,
+          copyX: copy?.x ?? -1
+        };
+      })
+    );
+    expect(rowGeometry).toHaveLength(2);
+    expect(Math.abs(rowGeometry[0].width - rowGeometry[1].width)).toBeLessThanOrEqual(1);
+    expect(Math.abs(rowGeometry[0].height - rowGeometry[1].height)).toBeLessThanOrEqual(1);
+    expect(Math.abs(rowGeometry[0].iconX - rowGeometry[1].iconX)).toBeLessThanOrEqual(1);
+    expect(Math.abs(rowGeometry[0].copyX - rowGeometry[1].copyX)).toBeLessThanOrEqual(1);
+  }
+
+  await replaceKey.click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByLabel("API Key", { exact: true })).toHaveValue("e2e-session-key");
+  await dialog.getByLabel("API Key", { exact: true }).fill("sk-replaced-4321");
+  await dialog.getByRole("button", { name: "\u4fdd\u5b58\u5e76\u5f00\u59cb\u4f7f\u7528", exact: true }).click();
+  await expect(dialog).toBeHidden();
+
+  if (isMobileProject(testInfo.project.name)) {
+    await page.getByRole("button", { name: "\u6253\u5f00\u529f\u80fd\u83dc\u5355", exact: true }).click();
+  }
+  await expect(page.getByRole("button", { name: /\u66f4\u6362 API Key/ })).toContainText("\u2022\u2022\u2022\u20224321");
+  await expect(page.locator(".figma-studio-shell")).not.toContainText("sk-replaced-4321");
+  await expect.poll(() => page.evaluate((key) => window.sessionStorage.getItem(key), providerStorageKey)).toBe(
+    JSON.stringify({ apiKey: "sk-replaced-4321", lastModelId: "test-chat" })
+  );
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), providerStorageKey)).toBeNull();
 });
 
 test("public modules use the Figma shell and heading contract without overflow", async ({ page }, testInfo) => {
@@ -190,19 +251,30 @@ test("Image matches the prompt, parameter, and inspiration waterfall contract", 
 
   const prompt = module.getByRole("textbox", { name: "\u56fe\u50cf\u63d0\u793a\u8bcd", exact: true });
   await expect(prompt).toHaveValue("\u4e00\u5ea7\u6f02\u6d6e\u5728\u6df1\u6d77\u4e2d\u7684\u672a\u6765\u56fe\u4e66\u9986\uff0c\u84dd\u7d2b\u8272\u751f\u7269\u8367\u5149\uff0c\u7535\u5f71\u611f");
-  const promptChips = module.getByLabel("\u5f53\u524d\u521b\u4f5c\u53c2\u6570", { exact: true });
-  await expect(promptChips.getByRole("button")).toHaveText(["1:1", "\u5199\u5b9e"]);
   await expect(module.getByRole("button", { name: "\u7acb\u5373\u751f\u6210", exact: true })).toBeEnabled();
 
   await expect(module.getByRole("heading", { name: "\u521b\u4f5c\u53c2\u6570", exact: true })).toBeVisible();
+  const composer = module.locator(".figma-image-composer");
+  const controlDeck = module.locator(".figma-image-control-deck");
+  await expect(composer.locator(".figma-image-control-deck")).toHaveCount(1);
+  await expect(controlDeck.locator(".figma-image-parameter-grid")).toHaveCount(1);
   const imageModel = module.getByRole("button", { name: "\u56fe\u50cf\u751f\u6210\u6a21\u578b", exact: true });
-  const aspectRatio = module.getByRole("button", { name: "\u753b\u9762\u6bd4\u4f8b", exact: true });
-  const resolution = module.getByRole("button", { name: "\u56fe\u50cf\u5206\u8fa8\u7387", exact: true });
+  const imageSize = module.getByRole("button", { name: "\u56fe\u50cf\u5c3a\u5bf8", exact: true });
+  const imageQuality = module.getByRole("button", { name: "\u751f\u6210\u8d28\u91cf", exact: true });
   const generationCount = module.getByRole("button", { name: "\u751f\u6210\u6570\u91cf", exact: true });
   await expect(imageModel).toBeVisible();
-  await expect(aspectRatio).toContainText("1 : 1");
-  await expect(resolution).toContainText("1K");
-  await expect(generationCount).toContainText("4 \u5f20");
+  await expect(imageSize).toContainText("1K \u00b7 \u6b63\u65b9\u5f62");
+  await expect(imageQuality).toContainText("\u4f4e");
+  await expect(generationCount).toContainText("1 \u5f20");
+  for (const removedMenu of ["\u753b\u9762\u6bd4\u4f8b", "\u56fe\u50cf\u5206\u8fa8\u7387", "\u80cc\u666f", "\u8f93\u51fa\u683c\u5f0f", "\u538b\u7f29\u8d28\u91cf"]) {
+    await expect(module.getByRole("button", { name: removedMenu, exact: true })).toHaveCount(0);
+  }
+
+  await module.getByRole("button", { name: "\u4f18\u5316\u63d0\u793a\u8bcd", exact: true }).click();
+  const optimizedPreview = module.getByLabel("\u4f18\u5316\u540e\u7684\u63d0\u793a\u8bcd", { exact: true });
+  await expect(optimizedPreview).toContainText("\u672a\u6765\u6df1\u6d77\u56fe\u4e66\u9986\u60ac\u6d6e\u4e8e\u5e7d\u84dd\u6d77\u6c34\u4e2d");
+  await expect(optimizedPreview).not.toContainText("<!doctype html>");
+  await optimizedPreview.getByRole("button", { name: "\u5173\u95ed\u4f18\u5316\u9884\u89c8", exact: true }).click();
 
   await imageModel.click();
   const modelListbox = module.getByRole("listbox", { name: "\u56fe\u50cf\u751f\u6210\u6a21\u578b", exact: true });
@@ -212,20 +284,20 @@ test("Image matches the prompt, parameter, and inspiration waterfall contract", 
   await expect(modelListbox).toHaveCount(0);
   await expect(imageModel).toBeFocused();
 
-  await aspectRatio.focus();
-  await aspectRatio.press("ArrowDown");
-  const ratioListbox = module.getByRole("listbox", { name: "\u753b\u9762\u6bd4\u4f8b", exact: true });
-  const selectedRatio = ratioListbox.getByRole("option", { name: "1 : 1", exact: false });
-  const lastRatio = ratioListbox.getByRole("option", { name: "9 : 16", exact: false });
-  await expect(selectedRatio).toBeFocused();
-  await selectedRatio.press("End");
-  await expect(lastRatio).toBeFocused();
+  await imageSize.focus();
+  await imageSize.press("ArrowDown");
+  const sizeListbox = module.getByRole("listbox", { name: "\u56fe\u50cf\u5c3a\u5bf8", exact: true });
+  const selectedSize = sizeListbox.getByRole("option", { name: "1K \u00b7 \u6b63\u65b9\u5f62", exact: false });
+  const lastSize = sizeListbox.getByRole("option", { name: "4K \u00b7 \u7ad6\u7248", exact: false });
+  await expect(selectedSize).toBeFocused();
+  await selectedSize.press("End");
+  await expect(lastSize).toBeFocused();
   await page.keyboard.press("Escape");
-  await expect(ratioListbox).toHaveCount(0);
-  await expect(aspectRatio).toBeFocused();
+  await expect(sizeListbox).toHaveCount(0);
+  await expect(imageSize).toBeFocused();
 
-  await chooseFigmaMenu(module, "\u753b\u9762\u6bd4\u4f8b", "9 : 16");
-  await expect(aspectRatio).toContainText("9 : 16");
+  await chooseFigmaMenu(module, "\u56fe\u50cf\u5c3a\u5bf8", "1K \u00b7 \u7ad6\u7248");
+  await expect(imageSize).toContainText("1K \u00b7 \u7ad6\u7248");
   await chooseFigmaMenu(module, "\u751f\u6210\u6570\u91cf", "2 \u5f20");
   await expect(generationCount).toContainText("2 \u5f20");
 
@@ -239,16 +311,38 @@ test("Image matches the prompt, parameter, and inspiration waterfall contract", 
   await expect(inspiration.getByRole("listitem").first()).toHaveAccessibleName("\u590d\u7528\u7075\u611f\uff1a\u84dd\u7d2b\u8272\u6df1\u7a7a\u661f\u4e91");
 });
 
+test("Image parameter menus share one width and open upward with motion", async ({ page }) => {
+  await openPublicModule(page, 1);
+  const module = page.getByTestId("image-module");
+  const menuRoots = module.locator(".figma-image-parameter-grid > .figma-menu");
+  await expect(menuRoots).toHaveCount(4);
+  const widths = await menuRoots.evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect().width));
+  expect(Math.max(...widths) - Math.min(...widths)).toBeLessThanOrEqual(1);
+
+  for (const name of ["\u56fe\u50cf\u751f\u6210\u6a21\u578b", "\u56fe\u50cf\u5c3a\u5bf8", "\u751f\u6210\u8d28\u91cf", "\u751f\u6210\u6570\u91cf"]) {
+    const trigger = module.getByRole("button", { name, exact: true });
+    await trigger.click();
+    const popover = module.getByRole("listbox", { name, exact: true });
+    await expect(popover).toBeVisible();
+    await expect(popover).toHaveAttribute("data-placement", "up");
+    await expect.poll(() => popover.evaluate((element) => getComputedStyle(element).animationName)).toContain("figma-image-menu-popover-in");
+    const geometry = await Promise.all([trigger.boundingBox(), popover.boundingBox()]);
+    expect(geometry[0]).not.toBeNull();
+    expect(geometry[1]).not.toBeNull();
+    expect(Math.abs(geometry[0]!.width - geometry[1]!.width)).toBeLessThanOrEqual(1);
+    expect(geometry[1]!.y + geometry[1]!.height).toBeLessThanOrEqual(geometry[0]!.y - 7);
+    await page.keyboard.press("Escape");
+    await expect(popover).toHaveCount(0);
+  }
+});
+
 test("Image sends provider-aware generation and edit options and renders every asset", async ({ page, apiHarness }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop-1440", "One deterministic image request pass is sufficient");
   await openPublicModule(page, 1);
   const module = page.getByTestId("image-module");
 
-  await chooseFigmaMenu(module, "\u753b\u9762\u6bd4\u4f8b", "16 : 9");
-  await chooseFigmaMenu(module, "\u56fe\u50cf\u5206\u8fa8\u7387", "2K");
+  await chooseFigmaMenu(module, "\u56fe\u50cf\u5c3a\u5bf8", "2K \u00b7 \u6a2a\u7248");
   await chooseFigmaMenu(module, "\u751f\u6210\u8d28\u91cf", "\u9ad8");
-  await chooseFigmaMenu(module, "\u8f93\u51fa\u683c\u5f0f", "JPEG");
-  await chooseFigmaMenu(module, "\u538b\u7f29\u8d28\u91cf", "60%");
 
   await module.getByRole("button", { name: "\u7acb\u5373\u751f\u6210", exact: true }).click();
   await expect.poll(() => apiHarness.generationRequests.length).toBe(1);
@@ -258,17 +352,18 @@ test("Image sends provider-aware generation and edit options and renders every a
       modelId: "test-image",
       options: {
         mode: "generate",
-        count: 4,
+        count: 1,
         aspectRatio: "16:9",
         imageSize: "2K",
         size: "2048x1152",
         quality: "high",
-        outputFormat: "jpeg",
-        outputCompression: 60
+        outputFormat: "png"
       }
     }
   });
-  await expect(module.getByRole("list", { name: "\u672c\u6b21\u751f\u6210\u56fe\u7247", exact: true }).getByRole("listitem")).toHaveCount(4);
+  expect(apiHarness.generationRequests[0].payload.options).not.toHaveProperty("outputCompression");
+  expect(apiHarness.generationRequests[0].payload.options).not.toHaveProperty("background");
+  await expect(module.getByRole("list", { name: "\u672c\u6b21\u751f\u6210\u56fe\u7247", exact: true }).getByRole("listitem")).toHaveCount(1);
 
   await module.getByRole("button", { name: "\u56fe\u7247\u7f16\u8f91", exact: true }).click();
   await module.locator('input[type="file"][accept="image/png,image/jpeg,image/webp"]').setInputFiles({
@@ -289,21 +384,68 @@ test("Image sends provider-aware generation and edit options and renders every a
   const editOptions = apiHarness.generationRequests[1].payload.options;
   expect(editOptions).toMatchObject({
     mode: "edit",
-    count: 4,
+    count: 1,
     aspectRatio: "16:9",
     imageSize: "2K",
-    outputFormat: "jpeg",
-    outputCompression: 60
+    quality: "high",
+    outputFormat: "png"
   });
+  expect(editOptions).not.toHaveProperty("outputCompression");
+  expect(editOptions).not.toHaveProperty("background");
   expect(editOptions?.inputImage?.dataUrl).toMatch(/^data:image\/png;base64,/);
   expect(editOptions?.maskImage?.dataUrl).toMatch(/^data:image\/png;base64,/);
-  await expect(module.getByRole("list", { name: "\u672c\u6b21\u751f\u6210\u56fe\u7247", exact: true }).getByRole("listitem")).toHaveCount(4);
+  await expect(module.getByRole("list", { name: "\u672c\u6b21\u751f\u6210\u56fe\u7247", exact: true }).getByRole("listitem")).toHaveCount(1);
 });
 
-test("Image supports BotCF local references and Gemini HTTPS reference URLs", async ({ page, apiHarness }, testInfo) => {
-  test.skip(testInfo.project.name !== "desktop-1440", "BotCF image request shape needs one deterministic pass");
-  const botcfBootstrap = structuredClone(publicBootstrapFixture);
-  botcfBootstrap.modelCatalog.push(
+test("Image keeps orientation while falling back to a supported model size", async ({ page, apiHarness }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-1440", "One deterministic size fallback pass is sufficient");
+  const bootstrap = structuredClone(publicBootstrapFixture);
+  bootstrap.modelCatalog.push({
+    id: "gpt-image-1-e2e",
+    vendor: "openai",
+    model: "gpt-image-1",
+    label: "GPT Image 1",
+    capabilities: ["image", "imageEdit"],
+    defaultFor: [],
+    enabled: true
+  });
+  apiHarness.setBootstrap(bootstrap);
+
+  await openPublicModule(page, 1);
+  const module = page.getByTestId("image-module");
+  await chooseFigmaMenu(module, "\u56fe\u50cf\u5c3a\u5bf8", "4K \u00b7 \u7ad6\u7248");
+  await chooseFigmaMenu(module, "\u56fe\u50cf\u751f\u6210\u6a21\u578b", "GPT Image 1");
+  const sizeTrigger = module.getByRole("button", { name: "\u56fe\u50cf\u5c3a\u5bf8", exact: true });
+  await expect(sizeTrigger).toContainText("1K \u00b7 \u7ad6\u7248");
+  await sizeTrigger.click();
+  const sizeOptions = module.getByRole("listbox", { name: "\u56fe\u50cf\u5c3a\u5bf8", exact: true }).getByRole("option");
+  await expect(sizeOptions).toHaveCount(3);
+  await expect(sizeOptions).toHaveText(["1K \u00b7 \u6b63\u65b9\u5f62\u6807\u51c6\u65b9\u5f62\u753b\u5e03", "1K \u00b7 \u6a2a\u7248\u6807\u51c6\u6a2a\u5411\u6784\u56fe", "1K \u00b7 \u7ad6\u7248\u6807\u51c6\u7ad6\u5411\u6784\u56fe"]);
+  await page.keyboard.press("Escape");
+
+  await module.getByRole("button", { name: "\u7acb\u5373\u751f\u6210", exact: true }).click();
+  await expect.poll(() => apiHarness.generationRequests.length).toBe(1);
+  expect(apiHarness.generationRequests[0]).toMatchObject({
+    moduleId: "image",
+    payload: {
+      modelId: "gpt-image-1-e2e",
+      options: {
+        aspectRatio: "9:16",
+        imageSize: "1K",
+        size: "1024x1536",
+        quality: "low",
+        outputFormat: "png"
+      }
+    }
+  });
+  expect(apiHarness.generationRequests[0].payload.options).not.toHaveProperty("outputCompression");
+  expect(apiHarness.generationRequests[0].payload.options).not.toHaveProperty("background");
+});
+
+test("Image keeps the requested catalog and sends Nano Banana edits through the official Gemini model", async ({ page, apiHarness }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-1440", "One deterministic Gemini image request pass is sufficient");
+  const bootstrap = structuredClone(publicBootstrapFixture);
+  bootstrap.modelCatalog.push(
     {
       id: "botcf-image2-e2e",
       vendor: "botcf",
@@ -314,65 +456,48 @@ test("Image supports BotCF local references and Gemini HTTPS reference URLs", as
       enabled: true
     },
     {
-      id: "botcf-gemini-image-e2e",
-      vendor: "botcf",
+      id: "gemini-nano-banana-2",
+      vendor: "gemini",
       model: "gemini-3.1-flash-image",
-      label: "BotCF Gemini Image",
-      capabilities: ["image", "imageEdit"],
+      label: "Nano Banana 2",
+      capabilities: ["image", "imageEdit", "vision"],
       defaultFor: [],
       enabled: true
     }
   );
-  apiHarness.setBootstrap(botcfBootstrap);
+  apiHarness.setBootstrap(bootstrap);
 
   await openPublicModule(page, 1);
   const module = page.getByTestId("image-module");
 
-  await chooseFigmaMenu(module, "\u56fe\u50cf\u751f\u6210\u6a21\u578b", "BotCF Image2");
+  const modelTrigger = module.getByRole("button", { name: "\u56fe\u50cf\u751f\u6210\u6a21\u578b", exact: true });
+  await modelTrigger.click();
+  const modelList = module.getByRole("listbox", { name: "\u56fe\u50cf\u751f\u6210\u6a21\u578b", exact: true });
+  await expect(modelList.getByRole("option", { name: "BotCF Image2" })).toHaveCount(0);
+  await modelList.getByRole("option", { name: "Nano Banana 2", exact: false }).click();
   await module.getByRole("button", { name: "\u56fe\u7247\u7f16\u8f91", exact: true }).click();
-  await module.locator('input[type="file"][accept="image/png,image/jpeg,image/webp"]').setInputFiles([
-    {
-      name: "reference-one.png",
-      mimeType: "image/png",
-      buffer: Buffer.from("reference-one")
-    },
-    {
-      name: "reference-two.webp",
-      mimeType: "image/webp",
-      buffer: Buffer.from("reference-two")
-    }
-  ]);
+  await module.locator('input[type="file"][accept="image/png,image/jpeg,image/webp"]').setInputFiles({
+    name: "reference-one.png",
+    mimeType: "image/png",
+    buffer: Buffer.from("reference-one")
+  });
   await expect(module.getByRole("img", { name: "\u53c2\u8003\u56fe 1", exact: true })).toBeVisible();
-  await expect(module.getByRole("img", { name: "\u53c2\u8003\u56fe 2", exact: true })).toBeVisible();
-  await expect(module.getByRole("button", { name: "\u6dfb\u52a0\u53c2\u8003\u56fe", exact: true })).toBeVisible();
+  await expect(module.getByRole("textbox", { name: "\u53c2\u8003\u56fe\u94fe\u63a5", exact: true })).toHaveCount(0);
 
   await module.getByRole("button", { name: "\u7acb\u5373\u751f\u6210", exact: true }).click();
   await expect.poll(() => apiHarness.generationRequests.length).toBe(1);
-  const nativeOptions = apiHarness.generationRequests[0].payload.options;
-  expect(apiHarness.generationRequests[0].payload.modelId).toBe("botcf-image2-e2e");
-  expect(nativeOptions?.inputImages).toHaveLength(2);
-  expect(nativeOptions?.inputImage?.dataUrl).toMatch(/^data:image\/png;base64,/);
-  expect(nativeOptions?.referenceImageUrls).toEqual([]);
-
-  await chooseFigmaMenu(module, "\u56fe\u50cf\u751f\u6210\u6a21\u578b", "BotCF Gemini Image");
-  await expect(module.locator(".figma-image-reference-field")).toHaveCount(0);
-  const urlInput = module.getByRole("textbox", { name: "\u53c2\u8003\u56fe\u94fe\u63a5", exact: true });
-  await urlInput.fill("https://example.com/reference.png");
-  await module.getByRole("button", { name: "\u6dfb\u52a0\u53c2\u8003\u56fe\u94fe\u63a5", exact: true }).click();
-  await expect(module.getByText("\u94fe\u63a5 1", { exact: true })).toBeVisible();
-
-  await module.getByRole("button", { name: "\u7acb\u5373\u751f\u6210", exact: true }).click();
-  await expect.poll(() => apiHarness.generationRequests.length).toBe(2);
-  const geminiOptions = apiHarness.generationRequests[1].payload.options;
-  expect(apiHarness.generationRequests[1].payload.modelId).toBe("botcf-gemini-image-e2e");
-  expect(geminiOptions?.inputImages).toEqual([]);
-  expect(geminiOptions?.referenceImageUrls).toEqual(["https://example.com/reference.png"]);
+  const options = apiHarness.generationRequests[0].payload.options;
+  expect(apiHarness.generationRequests[0].payload.modelId).toBe("gemini-nano-banana-2");
+  expect(options?.inputImages).toHaveLength(1);
+  expect(options?.inputImage?.dataUrl).toMatch(/^data:image\/png;base64,/);
+  expect(options).not.toHaveProperty("quality");
+  expect(options).not.toHaveProperty("background");
 });
 
 test("authored menus keep selected state, focus restoration, and mobile touch targets", async ({ page }, testInfo) => {
   await openPublicModule(page, 1);
   const image = page.getByTestId("image-module");
-  for (const name of ["图像生成模型", "画面比例", "图像分辨率", "生成数量", "生成质量", "输出格式"]) {
+  for (const name of ["图像生成模型", "图像尺寸", "生成质量", "生成数量"]) {
     await assertMenuLifecycle(image, name);
   }
 
@@ -409,8 +534,10 @@ test("tablet creative builders follow the authored stacked breakpoint", async ({
   const imageParameters = await page.locator(".figma-image-parameters").boundingBox();
   expect(imageComposer).not.toBeNull();
   expect(imageParameters).not.toBeNull();
-  expect(Math.abs(imageComposer!.x - imageParameters!.x)).toBeLessThanOrEqual(1);
-  expect(imageParameters!.y - (imageComposer!.y + imageComposer!.height)).toBeGreaterThanOrEqual(19);
+  expect(imageParameters!.x).toBeGreaterThanOrEqual(imageComposer!.x);
+  expect(imageParameters!.x + imageParameters!.width).toBeLessThanOrEqual(imageComposer!.x + imageComposer!.width + 1);
+  expect(imageParameters!.y).toBeGreaterThan(imageComposer!.y);
+  expect(imageParameters!.y + imageParameters!.height).toBeLessThanOrEqual(imageComposer!.y + imageComposer!.height + 1);
 
   await openPublicModule(page, 2);
   const pptInput = await page.locator(".figma-ppt-input-panel").boundingBox();
@@ -421,7 +548,7 @@ test("tablet creative builders follow the authored stacked breakpoint", async ({
   expect(pptStages!.y).toBeGreaterThanOrEqual(pptInput!.y + pptInput!.height - 1);
 });
 
-test("creative builders keep their desktop split from 1024px upward", async ({ page }, testInfo) => {
+test("Image keeps parameters inside the composer while PPT retains its desktop split", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop-1440", "One deterministic breakpoint pass is sufficient");
 
   for (const width of [1024, 1279]) {
@@ -432,8 +559,10 @@ test("creative builders keep their desktop split from 1024px upward", async ({ p
     const imageParameters = await page.locator(".figma-image-parameters").boundingBox();
     expect(imageComposer).not.toBeNull();
     expect(imageParameters).not.toBeNull();
-    expect(imageParameters!.x).toBeGreaterThan(imageComposer!.x + imageComposer!.width - 1);
-    expect(Math.abs(imageParameters!.y - imageComposer!.y)).toBeLessThanOrEqual(1);
+    expect(imageParameters!.x).toBeGreaterThanOrEqual(imageComposer!.x);
+    expect(imageParameters!.x + imageParameters!.width).toBeLessThanOrEqual(imageComposer!.x + imageComposer!.width + 1);
+    expect(imageParameters!.y).toBeGreaterThan(imageComposer!.y);
+    expect(imageParameters!.y + imageParameters!.height).toBeLessThanOrEqual(imageComposer!.y + imageComposer!.height + 1);
 
     await openPublicModule(page, 2);
     const pptInput = await page.locator(".figma-ppt-input-panel").boundingBox();
@@ -450,20 +579,19 @@ test("mobile image actions and mind map branches keep the authored compact geome
 
   await openPublicModule(page, 1);
   const imageActionMetrics = await page.locator(".figma-image-composer-footer").evaluate((element) => {
-    const chips = element.querySelector<HTMLElement>(".figma-prompt-chips");
     const action = element.querySelector<HTMLElement>(".figma-primary-action");
-    if (!chips || !action) return null;
-    const chipsBox = chips.getBoundingClientRect();
+    if (!action) return null;
+    const footerBox = element.getBoundingClientRect();
     const actionBox = action.getBoundingClientRect();
     return {
       direction: getComputedStyle(element).flexDirection,
-      chipsCenter: chipsBox.y + chipsBox.height / 2,
-      actionCenter: actionBox.y + actionBox.height / 2
+      footerWidth: footerBox.width,
+      actionWidth: actionBox.width
     };
   });
   expect(imageActionMetrics).not.toBeNull();
-  expect(imageActionMetrics!.direction).toBe("row");
-  expect(Math.abs(imageActionMetrics!.chipsCenter - imageActionMetrics!.actionCenter)).toBeLessThanOrEqual(1);
+  expect(imageActionMetrics!.direction).toBe("column");
+  expect(Math.abs(imageActionMetrics!.footerWidth - imageActionMetrics!.actionWidth)).toBeLessThanOrEqual(1);
 
   await openPublicModule(page, 3);
   const branchHeights = await page.locator(".figma-map-branch").evaluateAll((elements) =>
@@ -477,9 +605,9 @@ test("mobile image actions and mind map branches keep the authored compact geome
 test("shared authored menus use the Figma base radius", async ({ page }) => {
   await openPublicModule(page, 1);
   const image = page.getByTestId("image-module");
-  const trigger = image.getByRole("button", { name: "\u753b\u9762\u6bd4\u4f8b", exact: true });
+  const trigger = image.getByRole("button", { name: "\u56fe\u50cf\u5c3a\u5bf8", exact: true });
   await trigger.click();
-  const popover = image.getByRole("listbox", { name: "\u753b\u9762\u6bd4\u4f8b", exact: true });
+  const popover = image.getByRole("listbox", { name: "\u56fe\u50cf\u5c3a\u5bf8", exact: true });
   await expect(popover).toBeVisible();
   await expect.poll(() => trigger.evaluate((element) => getComputedStyle(element).borderRadius)).toBe("16px");
   await expect.poll(() => popover.evaluate((element) => getComputedStyle(element).borderRadius)).toBe("16px");
@@ -489,7 +617,7 @@ test("shared authored menus use the Figma base radius", async ({ page }) => {
 
 test("authored menu popovers stay inside their viewport and clipping ancestors", async ({ page }) => {
   const menuCases = [
-    { index: 1, names: ["图像生成模型", "画面比例", "生成数量"] },
+    { index: 1, names: ["图像生成模型", "图像尺寸", "生成质量", "生成数量"] },
     { index: 2, names: ["PPT 生成模型", "目标受众", "演示时长", "视觉气质"] },
     { index: 3, names: ["思维导图生成模型"] },
     { index: 5, names: ["翻译模型", "源语言", "目标语言"] }
@@ -991,13 +1119,59 @@ test("Translation exposes tone, language, clear, result, and copy interactions",
   await expect(module.getByText("TRANSLATION \u00b7 \u8425\u9500\u611f", { exact: true })).toBeVisible();
 
   const source = module.getByRole("textbox", { name: "\u5f85\u7ffb\u8bd1\u5185\u5bb9", exact: true });
-  await expect(source).toHaveAttribute("maxlength", "5000");
+  await expect(source).toHaveAttribute("maxlength", "600000");
+  await chooseFigmaMenu(module, "\u7ffb\u8bd1\u6a21\u578b", "Test Chat");
+  await expect(source).toHaveAttribute("maxlength", "24000");
+  await expect(module.getByText(/\/ 24,000 \u5b57\u7b26$/)).toBeVisible();
+  await chooseFigmaMenu(module, "\u7ffb\u8bd1\u6a21\u578b", "Gemini Flash");
+  await expect(source).toHaveAttribute("maxlength", "600000");
+  await source.focus();
+  const editorGeometry = await module.locator(".figma-translate-editor").evaluate((element) => {
+    const sourcePanel = element.querySelector<HTMLElement>(".figma-translate-source");
+    const resultPanel = element.querySelector<HTMLElement>(".figma-translate-result");
+    const textarea = sourcePanel?.querySelector<HTMLTextAreaElement>("textarea");
+    const sourceFooter = sourcePanel?.querySelector<HTMLElement>(":scope > footer");
+    const output = resultPanel?.querySelector<HTMLElement>(".figma-translate-output");
+    if (!sourcePanel || !resultPanel || !textarea || !sourceFooter || !output) return null;
+    const sourceBox = sourcePanel.getBoundingClientRect();
+    const resultBox = resultPanel.getBoundingClientRect();
+    const textareaBox = textarea.getBoundingClientRect();
+    const outputBox = output.getBoundingClientRect();
+    const footerBox = sourceFooter.getBoundingClientRect();
+    const textareaStyle = getComputedStyle(textarea);
+    const outputStyle = getComputedStyle(output);
+    return {
+      panelHeightDelta: Math.abs(sourceBox.height - resultBox.height),
+      inputFooterOverlap: Math.max(0, textareaBox.bottom - footerBox.top),
+      inputContained: textareaBox.top >= sourceBox.top && textareaBox.bottom <= sourceBox.bottom,
+      contentInsetDelta: Math.abs(textareaBox.left - sourceBox.left - (outputBox.left - resultBox.left)),
+      borderStyle: textareaStyle.borderStyle,
+      borderRadius: textareaStyle.borderRadius,
+      outputBorderStyle: outputStyle.borderStyle,
+      outputBorderRadius: outputStyle.borderRadius,
+      boxShadow: textareaStyle.boxShadow,
+      outlineStyle: textareaStyle.outlineStyle
+    };
+  });
+  expect(editorGeometry).not.toBeNull();
+  expect(editorGeometry!.panelHeightDelta).toBeLessThanOrEqual(1);
+  expect(editorGeometry!.inputFooterOverlap).toBe(0);
+  expect(editorGeometry!.inputContained).toBe(true);
+  expect(editorGeometry!.contentInsetDelta).toBeLessThanOrEqual(1);
+  expect(editorGeometry!.borderStyle).toBe("solid");
+  expect(editorGeometry!.borderRadius).toBe("12px");
+  expect(editorGeometry!.outputBorderStyle).toBe("solid");
+  expect(editorGeometry!.outputBorderRadius).toBe("12px");
+  expect(editorGeometry!.boxShadow).toBe("none");
+  expect(editorGeometry!.outlineStyle).toBe("none");
   const clear = module.getByRole("button", { name: "\u6e05\u7a7a", exact: true });
   const copy = module.getByRole("button", { name: "\u590d\u5236\u8bd1\u6587", exact: true });
+  await expect(module.getByText("\u8bed\u4e49\u4fdd\u771f", { exact: true })).toHaveCount(0);
+  await expect(module.getByText("\u672c\u5730\u5316\u8868\u8fbe", { exact: true })).toHaveCount(0);
   await expect(copy).toBeEnabled();
   await expect(module.getByText(/Today, we are officially launching/)).toBeVisible();
   await source.fill("hello");
-  await expect(module.getByText("5 / 5,000", { exact: true })).toBeVisible();
+  await expect(module.getByText("5 / 600,000 字符", { exact: true })).toBeVisible();
   await clear.click();
   await expect(source).toHaveValue("");
   await expect(clear).toBeDisabled();
@@ -1050,7 +1224,6 @@ test("public shell excludes retired modules, layouts, and persistent API actions
       ".gallery-grid"
     ].join(", "))
   ).toHaveCount(0);
-  await expect(page.locator(".figma-sidebar").getByRole("button", { name: /API/i })).toHaveCount(0);
   await expect(page.locator('a[href="/admin"]')).toHaveCount(0);
 
   const forbiddenEffects = await page.evaluate(() =>

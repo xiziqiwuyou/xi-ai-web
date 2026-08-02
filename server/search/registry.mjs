@@ -1,3 +1,6 @@
+import { DEFAULT_UPSTREAM_BASE_URL } from "../upstream-security.mjs";
+import { providerUrl } from "../providers/types.mjs";
+
 const SEARCH_ENGINES = new Set([
   "search_std",
   "search_pro",
@@ -7,11 +10,9 @@ const SEARCH_ENGINES = new Set([
 
 const SEARCH_DEFAULTS = {
   glm: {
-    baseUrl: "https://open.bigmodel.cn/api",
     model: ""
   },
   kimi: {
-    baseUrl: "https://api.moonshot.cn/v1",
     model: "kimi-k3"
   }
 };
@@ -259,12 +260,16 @@ function appendContentBlock(output, prefix, content, footer, contentLimit = MAX_
   return `${output}${fixed}${boundedContent}`;
 }
 
-export function normalizeSearchService(value) {
+export function normalizeSearchService(value, { upstreamBaseUrl } = {}) {
   const source = isRecord(value) ? value : {};
   const rawProvider = cleanConfigText(source.provider, "glm", 20).toLowerCase();
   const provider = rawProvider === "glm" || rawProvider === "kimi" ? rawProvider : "";
   const defaults = SEARCH_DEFAULTS[provider || "glm"];
-  const baseUrl = cleanConfigText(source.baseUrl, defaults.baseUrl, MAX_URL_CHARS).replace(/\/+$/u, "");
+  const baseUrl = cleanConfigText(
+    upstreamBaseUrl,
+    DEFAULT_UPSTREAM_BASE_URL,
+    MAX_URL_CHARS
+  ).replace(/\/+$/u, "");
   const searchEngine = SEARCH_ENGINES.has(source.searchEngine) ? source.searchEngine : "search_std";
 
   return {
@@ -278,8 +283,8 @@ export function normalizeSearchService(value) {
   };
 }
 
-export function isSearchServiceReady(value) {
-  const service = normalizeSearchService(value);
+export function isSearchServiceReady(value, options) {
+  const service = normalizeSearchService(value, options);
   return Boolean(
     service.provider &&
       validHttpBaseUrl(service.baseUrl) &&
@@ -327,7 +332,7 @@ async function runGlmSearch(service, query, signal) {
 
 async function runKimiSearch(service, query, signal) {
   const messages = [{ role: "user", content: query }];
-  const url = endpointUrl(service.baseUrl, "/chat/completions");
+  const url = providerUrl({ kind: "kimi", baseUrl: service.baseUrl }, "/chat/completions");
 
   for (let round = 1; round <= MAX_KIMI_ROUNDS; round += 1) {
     const payload = await postJson(
@@ -380,8 +385,8 @@ async function runKimiSearch(service, query, signal) {
   throw new Error(`Kimi web search exceeded the ${MAX_KIMI_ROUNDS}-round limit`);
 }
 
-export async function runIndependentWebSearch({ service: inputService, query: inputQuery, signal } = {}) {
-  const service = normalizeSearchService(inputService);
+export async function runIndependentWebSearch({ service: inputService, query: inputQuery, signal, upstreamBaseUrl } = {}) {
+  const service = normalizeSearchService(inputService, { upstreamBaseUrl });
   if (!service.provider) throw new Error("Unsupported search service provider");
   if (!validHttpBaseUrl(service.baseUrl)) throw new Error("Search service base URL must be a valid HTTP(S) URL");
   if (!service.apiKey) throw new Error("Search service API key is required");

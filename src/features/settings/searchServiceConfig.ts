@@ -1,7 +1,8 @@
 import type {
   SearchEngine,
   SearchProviderKind,
-  SearchServiceConfig
+  SearchServiceConfig,
+  UserProviderConfig
 } from "../../types";
 
 const storageKey = "xi-ai-web-search-service";
@@ -15,11 +16,10 @@ const searchEngines: SearchEngine[] = [
 
 export const searchServicePresets: Record<
   SearchProviderKind,
-  Pick<SearchServiceConfig, "provider" | "baseUrl" | "model" | "searchEngine" | "count" | "contentSize">
+  Pick<SearchServiceConfig, "provider" | "model" | "searchEngine" | "count" | "contentSize">
 > = {
   glm: {
     provider: "glm",
-    baseUrl: "https://open.bigmodel.cn/api",
     model: "",
     searchEngine: "search_std",
     count: 8,
@@ -27,7 +27,6 @@ export const searchServicePresets: Record<
   },
   kimi: {
     provider: "kimi",
-    baseUrl: "https://api.moonshot.cn/v1",
     model: "kimi-k3",
     searchEngine: "search_std",
     count: 8,
@@ -44,22 +43,6 @@ function cleanText(value: unknown, fallback = "") {
   return typeof value === "string" ? value.trim() : fallback;
 }
 
-function validHttpBaseUrl(value: string) {
-  try {
-    const url = new URL(value);
-    return (
-      (url.protocol === "http:" || url.protocol === "https:") &&
-      Boolean(url.hostname) &&
-      !url.username &&
-      !url.password &&
-      !url.search &&
-      !url.hash
-    );
-  } catch {
-    return false;
-  }
-}
-
 export function sanitizeSearchServiceConfig(value: unknown): SearchServiceConfig {
   const source = value && typeof value === "object" ? (value as Partial<SearchServiceConfig>) : {};
   const provider: SearchProviderKind = source.provider === "kimi" ? "kimi" : "glm";
@@ -67,7 +50,6 @@ export function sanitizeSearchServiceConfig(value: unknown): SearchServiceConfig
   const parsedCount = Number(source.count);
   return {
     provider,
-    baseUrl: cleanText(source.baseUrl, preset.baseUrl).replace(/\/+$/, ""),
     apiKey: cleanText(source.apiKey),
     model: cleanText(source.model, preset.model),
     searchEngine: searchEngines.includes(source.searchEngine as SearchEngine)
@@ -81,14 +63,23 @@ export function sanitizeSearchServiceConfig(value: unknown): SearchServiceConfig
 export function isSearchServiceReady(value: SearchServiceConfig) {
   const config = sanitizeSearchServiceConfig(value);
   return Boolean(
-    validHttpBaseUrl(config.baseUrl) &&
-      config.apiKey &&
+    config.apiKey &&
       (config.provider !== "kimi" || config.model)
   );
 }
 
 export function searchServicePayload(value: SearchServiceConfig) {
   return isSearchServiceReady(value) ? sanitizeSearchServiceConfig(value) : undefined;
+}
+
+export function searchServiceForUserProvider(
+  provider: SearchProviderKind,
+  connection: UserProviderConfig
+) {
+  return searchServicePayload({
+    ...searchServicePresets[provider],
+    apiKey: connection.apiKey
+  });
 }
 
 export function loadSearchServiceConfig() {

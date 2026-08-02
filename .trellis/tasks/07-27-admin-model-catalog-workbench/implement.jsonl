@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "Admin component and responsive conventions"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Admin model editor interaction contract"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Parent-owned draft state"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "E2E visual verification"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Admin save and bootstrap boundary"}
+{"file": ".trellis/spec/frontend/admin-console-design.md", "reason": "Admin shell, navigation tile, Bento, and responsive contract"}
+{"file": ".trellis/tasks/07-27-admin-model-catalog-workbench/research/2026-admin-navigation-design.md", "reason": "Figma and 2026 UX research decisions"}

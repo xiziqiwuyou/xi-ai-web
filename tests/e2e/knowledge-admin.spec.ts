@@ -18,7 +18,7 @@ async function openKnowledgeSection(
     return;
   }
   const navigation = page.getByRole("navigation", { name: "后台管理分区", exact: true });
-  const group = navigation.locator(".admin-nav-group-toggle", { hasText: "知识库运营" });
+  const group = navigation.locator(".admin-nav-group-toggle", { hasText: "知识库" });
   if (await group.getAttribute("aria-expanded") !== "true") await group.click();
   await navigation.getByRole("button", { name: label, exact: true }).click();
 }

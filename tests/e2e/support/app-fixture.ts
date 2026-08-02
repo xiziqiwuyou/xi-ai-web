@@ -5,6 +5,7 @@ import type {
   AdminStatus,
   AgentRunPayload,
   ChatStreamPayload,
+  ChatTitlePayload,
   Conversation,
   GenerationPayload,
   GenerationResult,
@@ -23,10 +24,50 @@ import type {
   KnowledgeRetrievalRequest,
   AdminLangflowWorkflow,
   LangflowWorkflow,
+  ModelCatalogEntry,
+  ModelVendorEntry,
+  ProviderKind,
   PublicBootstrapPayload,
   SearchServiceConfig,
   UserProviderConfig
 } from "../../../src/types";
+
+type ModelCatalogMutation = {
+  method: "POST" | "PATCH" | "REORDER";
+  id?: string;
+  payload?: Partial<ModelCatalogEntry>;
+  modelIds?: string[];
+};
+
+type ModelVendorMutation = {
+  method: "POST" | "DELETE" | "REORDER";
+  id?: string;
+  payload?: Partial<Pick<ModelVendorEntry, "label" | "adapter">>;
+  result?: ModelVendorEntry;
+  vendorIds?: string[];
+};
+
+const modelVendorLabels: Record<ProviderKind, string> = {
+  openai: "OpenAI",
+  anthropic: "Claude",
+  gemini: "Gemini",
+  kimi: "Kimi",
+  deepseek: "DeepSeek",
+  qwen: "通义千问",
+  botcf: "BotCF",
+  "openai-compatible": "OpenAI Compatible"
+};
+
+function modelFixtures(
+  entries: Array<Omit<ModelCatalogEntry, "vendorId" | "vendorLabel" | "order"> & { order?: number }>
+): ModelCatalogEntry[] {
+  return entries.map((entry, order) => ({
+    ...entry,
+    order: entry.order ?? order,
+    vendorId: entry.vendor,
+    vendorLabel: modelVendorLabels[entry.vendor]
+  }));
+}
 
 export const providerStorageKey = "cherry-web-user-provider";
 export const searchServiceStorageKey = "xi-ai-web-search-service";
@@ -113,7 +154,8 @@ export const publicBootstrapFixture: PublicBootstrapPayload = {
     siteName: "xi-ai-web",
     theme: "rednote",
     allowGuestChat: true,
-    defaultModule: "chat"
+    defaultModule: "chat",
+    upstreamBaseUrl: "https://api.xi-ai.cn"
   },
   menuItems: publicDestinations.map((destination, index) => ({
     id: destination.id,
@@ -122,37 +164,43 @@ export const publicBootstrapFixture: PublicBootstrapPayload = {
     visible: true,
     order: (index + 1) * 10
   })),
-  modelCatalog: [
+  modelCatalog: modelFixtures([
     {
       id: "test-chat",
       vendor: "openai",
+      endpointProtocol: "openai-responses",
       model: mappedRequestModel,
       label: "Test Chat",
-      capabilities: ["chat", "vision", "toolCalling", "webSearch", "codeExecution", "streaming"],
+      capabilities: ["chat", "vision", "toolCalling", "webSearch", "codeExecution"],
       defaultFor: ["chat"],
+      contextWindowTokens: 32768,
+      maxInputCharacters: 24000,
       enabled: true
     },
     {
       id: "openai-fast",
       vendor: "openai",
+      endpointProtocol: "openai-responses",
       model: "openai-fast",
       label: "OpenAI Fast",
-      capabilities: ["chat", "streaming"],
+      capabilities: ["chat"],
       defaultFor: [],
       enabled: true
     },
     {
       id: "openai-code",
       vendor: "openai",
+      endpointProtocol: "openai-responses",
       model: "openai-code",
       label: "OpenAI Code",
-      capabilities: ["chat", "toolCalling", "streaming"],
+      capabilities: ["chat", "toolCalling"],
       defaultFor: [],
       enabled: true
     },
     {
       id: "openai-long",
       vendor: "openai",
+      endpointProtocol: "openai-responses",
       model: "openai-long",
       label: "OpenAI Long",
       capabilities: ["chat"],
@@ -162,24 +210,27 @@ export const publicBootstrapFixture: PublicBootstrapPayload = {
     {
       id: "anthropic-sonnet",
       vendor: "anthropic",
+      endpointProtocol: "anthropic-messages",
       model: "anthropic-sonnet",
       label: "Claude Sonnet",
-      capabilities: ["chat", "vision", "streaming"],
+      capabilities: ["chat", "vision"],
       defaultFor: [],
       enabled: true
     },
     {
       id: "anthropic-haiku",
       vendor: "anthropic",
+      endpointProtocol: "anthropic-messages",
       model: "anthropic-haiku",
       label: "Claude Haiku",
-      capabilities: ["chat", "streaming"],
+      capabilities: ["chat"],
       defaultFor: [],
       enabled: true
     },
     {
       id: "anthropic-reason",
       vendor: "anthropic",
+      endpointProtocol: "anthropic-messages",
       model: "anthropic-reason",
       label: "Claude Reason",
       capabilities: ["chat", "toolCalling"],
@@ -189,6 +240,7 @@ export const publicBootstrapFixture: PublicBootstrapPayload = {
     {
       id: "anthropic-long",
       vendor: "anthropic",
+      endpointProtocol: "anthropic-messages",
       model: "anthropic-long",
       label: "Claude Long",
       capabilities: ["chat"],
@@ -198,24 +250,29 @@ export const publicBootstrapFixture: PublicBootstrapPayload = {
     {
       id: "gemini-vision",
       vendor: "gemini",
+      endpointProtocol: "gemini-generate-content",
       model: "gemini-vision",
       label: "Gemini Vision",
-      capabilities: ["chat", "vision", "streaming"],
+      capabilities: ["chat", "vision"],
       defaultFor: [],
       enabled: true
     },
     {
       id: "gemini-flash",
       vendor: "gemini",
+      endpointProtocol: "gemini-generate-content",
       model: "gemini-flash",
       label: "Gemini Flash",
-      capabilities: ["chat", "vision", "streaming"],
+      capabilities: ["chat", "vision"],
       defaultFor: [],
+      contextWindowTokens: 1048576,
+      maxInputCharacters: 600000,
       enabled: true
     },
     {
       id: "gemini-pro-vision",
       vendor: "gemini",
+      endpointProtocol: "gemini-generate-content",
       model: "gemini-pro-vision",
       label: "Gemini Pro Vision",
       capabilities: ["chat", "vision", "toolCalling"],
@@ -225,6 +282,7 @@ export const publicBootstrapFixture: PublicBootstrapPayload = {
     {
       id: "compatible-vision",
       vendor: "openai-compatible",
+      endpointProtocol: "openai-chat",
       model: "compatible-vision",
       label: "Compatible Vision",
       capabilities: ["chat", "vision"],
@@ -234,33 +292,37 @@ export const publicBootstrapFixture: PublicBootstrapPayload = {
     {
       id: "kimi-chat",
       vendor: "kimi",
+      endpointProtocol: "openai-chat",
       model: "kimi-k3",
       label: "Kimi K3",
-      capabilities: ["chat", "vision", "toolCalling", "streaming"],
+      capabilities: ["chat", "vision", "toolCalling"],
       defaultFor: [],
       enabled: true
     },
     {
       id: "deepseek-chat",
       vendor: "deepseek",
+      endpointProtocol: "openai-chat",
       model: "deepseek-v4-flash",
       label: "DeepSeek V4 Flash",
-      capabilities: ["chat", "toolCalling", "streaming"],
+      capabilities: ["chat", "toolCalling"],
       defaultFor: [],
       enabled: true
     },
     {
       id: "qwen-chat",
       vendor: "qwen",
+      endpointProtocol: "openai-chat",
       model: "qwen3.7-plus",
       label: "Qwen 3.7 Plus",
-      capabilities: ["chat", "vision", "toolCalling", "streaming"],
+      capabilities: ["chat", "vision", "toolCalling"],
       defaultFor: [],
       enabled: true
     },
     {
       id: "test-image",
       vendor: "openai",
+      endpointProtocol: "openai-responses",
       model: "gpt-image-2",
       label: "OpenAI Image",
       capabilities: ["image", "imageEdit"],
@@ -270,13 +332,14 @@ export const publicBootstrapFixture: PublicBootstrapPayload = {
     {
       id: "gemini-image",
       vendor: "gemini",
+      endpointProtocol: "gemini-generate-content",
       model: "gemini-3.1-flash-image",
       label: "Gemini Image",
       capabilities: ["image", "imageEdit", "vision"],
       defaultFor: [],
       enabled: true
     }
-  ],
+  ]),
   assistants: [
     {
       id: "test-assistant",
@@ -436,9 +499,21 @@ export const publicBootstrapFixture: PublicBootstrapPayload = {
   ]
 };
 
+const modelVendorFixtures: ModelVendorEntry[] = [
+  { id: "openai", label: "OpenAI", adapter: "openai", enabled: true, order: 10 },
+  { id: "anthropic", label: "Claude", adapter: "anthropic", enabled: true, order: 20 },
+  { id: "gemini", label: "Gemini", adapter: "gemini", enabled: true, order: 30 },
+  { id: "kimi", label: "Kimi", adapter: "kimi", enabled: true, order: 40 },
+  { id: "deepseek", label: "DeepSeek", adapter: "deepseek", enabled: true, order: 50 },
+  { id: "qwen", label: "通义千问", adapter: "qwen", enabled: true, order: 60 },
+  { id: "botcf", label: "BotCF", adapter: "botcf", enabled: true, order: 70 },
+  { id: "openai-compatible", label: "OpenAI Compatible", adapter: "openai-compatible", enabled: true, order: 80 }
+];
+
 const adminBootstrapFixture: AdminBootstrapPayload = {
   settings: publicBootstrapFixture.settings,
   menuItems: publicBootstrapFixture.menuItems,
+  modelVendors: modelVendorFixtures,
   modelCatalog: publicBootstrapFixture.modelCatalog,
   assistants: publicBootstrapFixture.assistants,
   appPresets: publicBootstrapFixture.appPresets,
@@ -472,6 +547,34 @@ const adminOpsFixture: AdminOpsPayload = {
   },
   checklist: [],
   modelCoverage: [],
+  modelInvocations: [
+    {
+      modelId: "openai-test-chat",
+      displayName: "Test Chat",
+      requestModel: "gpt-test-chat",
+      vendor: "OpenAI",
+      calls: 18,
+      successCalls: 17,
+      errorCalls: 1,
+      cancelledCalls: 0,
+      averageDurationMs: 1840,
+      totalDurationMs: 33120,
+      lastCalledAt: "2026-07-29T10:05:00.000Z"
+    },
+    {
+      modelId: "anthropic-claude-sonnet",
+      displayName: "Claude Sonnet",
+      requestModel: "claude-sonnet-test",
+      vendor: "Claude",
+      calls: 6,
+      successCalls: 6,
+      errorCalls: 0,
+      cancelledCalls: 0,
+      averageDurationMs: 2680,
+      totalDurationMs: 16080,
+      lastCalledAt: "2026-07-29T09:40:00.000Z"
+    }
+  ],
   backups: []
 };
 
@@ -710,6 +813,7 @@ type ApiHarness = {
   requests: string[];
   unexpectedRequests: string[];
   chatRequests: ChatStreamPayload[];
+  chatTitleRequests: ChatTitlePayload[];
   chatKnowledgeCsrfHeaders: string[];
   agentRequests: AgentRunPayload[];
   agentKnowledgeCsrfHeaders: string[];
@@ -719,8 +823,11 @@ type ApiHarness = {
     moduleId: "image" | "ppt" | "mindmap" | "translate";
     payload: GenerationPayload;
   }>;
+  modelCatalogMutations: ModelCatalogMutation[];
+  modelVendorMutations: ModelVendorMutation[];
   setBootstrap: (payload: PublicBootstrapPayload) => void;
   setAdminBootstrap: (payload: AdminBootstrapPayload) => void;
+  setAdminBootstrapModelVendors: (modelVendors: ModelVendorEntry[] | undefined) => void;
   setAdminStatus: (status: AdminStatus) => void;
   setKnowledgeSession: (authenticated: boolean, bases?: KnowledgeBase[]) => void;
   setKnowledgeRetrievalError: (error: { code: string; message: string; status?: number } | null) => void;
@@ -739,6 +846,7 @@ export const test = base.extend<BrowserFixtures>({
     async ({ page }, use) => {
       let bootstrap = cloneBootstrap(publicBootstrapFixture);
       let adminBootstrap = structuredClone(adminBootstrapFixture);
+      let adminModelVendorsOverride: ModelVendorEntry[] | undefined | null = null;
       let adminStatus: AdminStatus = {
         authRequired: true,
         authenticated: false,
@@ -747,6 +855,7 @@ export const test = base.extend<BrowserFixtures>({
       const requests: string[] = [];
       const unexpectedRequests: string[] = [];
       const chatRequests: ChatStreamPayload[] = [];
+      const chatTitleRequests: ChatTitlePayload[] = [];
       const chatKnowledgeCsrfHeaders: string[] = [];
       const agentRequests: AgentRunPayload[] = [];
       const agentKnowledgeCsrfHeaders: string[] = [];
@@ -756,6 +865,8 @@ export const test = base.extend<BrowserFixtures>({
       let knowledgeBases = structuredClone(readyKnowledgeBases);
       let knowledgeRetrievalError: { code: string; message: string; status?: number } | null = null;
       const generationRequests: ApiHarness["generationRequests"] = [];
+      const modelCatalogMutations: ModelCatalogMutation[] = [];
+      const modelVendorMutations: ModelVendorMutation[] = [];
 
       await page.route("https://api.example.test/**", async (route) => {
         const request = route.request();
@@ -931,7 +1042,210 @@ export const test = base.extend<BrowserFixtures>({
         }
 
         if (request.method() === "GET" && pathname === "/api/admin/bootstrap") {
-          await route.fulfill({ json: adminBootstrap });
+          await route.fulfill({
+            json: adminModelVendorsOverride === null
+              ? adminBootstrap
+              : { ...adminBootstrap, modelVendors: adminModelVendorsOverride }
+          });
+          return;
+        }
+
+        if (request.method() === "POST" && pathname === "/api/admin/model-vendors") {
+          const payload = request.postDataJSON() as Partial<Pick<ModelVendorEntry, "label" | "adapter">>;
+          const mutation: ModelVendorMutation = { method: "POST", payload };
+          modelVendorMutations.push(mutation);
+          const label = String(payload.label || "").trim();
+          const supportedAdapters: ProviderKind[] = [
+            "openai",
+            "anthropic",
+            "gemini",
+            "kimi",
+            "deepseek",
+            "qwen",
+            "botcf",
+            "openai-compatible"
+          ];
+          if (!label) {
+            await route.fulfill({ status: 400, json: { error: "模型厂商名称不能为空" } });
+            return;
+          }
+          if (!payload.adapter || !supportedAdapters.includes(payload.adapter)) {
+            await route.fulfill({ status: 400, json: { error: "模型厂商适配器不受支持" } });
+            return;
+          }
+          if (adminBootstrap.modelVendors.some((vendor) => vendor.label.localeCompare(label, undefined, { sensitivity: "accent" }) === 0)) {
+            await route.fulfill({ status: 409, json: { error: "模型厂商名称已存在" } });
+            return;
+          }
+          let sequence = adminBootstrap.modelVendors.length + 1;
+          while (adminBootstrap.modelVendors.some((vendor) => vendor.id === `vendor-e2e-${sequence}`)) sequence += 1;
+          const created: ModelVendorEntry = {
+            id: `vendor-e2e-${sequence}`,
+            label,
+            adapter: payload.adapter,
+            enabled: true,
+            order: Math.max(-1, ...adminBootstrap.modelVendors.map((vendor) => vendor.order)) + 1
+          };
+          adminBootstrap = {
+            ...adminBootstrap,
+            modelVendors: [...adminBootstrap.modelVendors, created]
+          };
+          mutation.result = created;
+          await route.fulfill({ status: 201, json: created });
+          return;
+        }
+
+        if (request.method() === "PATCH" && pathname === "/api/admin/model-vendors/order") {
+          const payload = request.postDataJSON() as { vendorIds?: string[] };
+          const vendorIds = Array.isArray(payload.vendorIds) ? payload.vendorIds : [];
+          const vendorsById = new Map(adminBootstrap.modelVendors.map((vendor) => [vendor.id, vendor]));
+          if (
+            vendorIds.length !== adminBootstrap.modelVendors.length
+            || new Set(vendorIds).size !== vendorIds.length
+            || vendorIds.some((id) => !vendorsById.has(id))
+          ) {
+            await route.fulfill({ status: 400, json: { error: "模型厂商排序必须包含完整且唯一的厂商 ID" } });
+            return;
+          }
+          modelVendorMutations.push({ method: "REORDER", vendorIds: [...vendorIds] });
+          const modelVendors = vendorIds.map((id, order) => ({ ...vendorsById.get(id)!, order }));
+          adminBootstrap = { ...adminBootstrap, modelVendors };
+          await route.fulfill({ json: modelVendors });
+          return;
+        }
+
+        const modelVendorAdminMatch = pathname.match(/^\/api\/admin\/model-vendors\/([^/]+)$/);
+        if (request.method() === "DELETE" && modelVendorAdminMatch) {
+          const vendorId = decodeURIComponent(modelVendorAdminMatch[1]);
+          modelVendorMutations.push({ method: "DELETE", id: vendorId });
+          if (!adminBootstrap.modelVendors.some((vendor) => vendor.id === vendorId)) {
+            await route.fulfill({ status: 404, json: { error: "模型厂商不存在" } });
+            return;
+          }
+          if (adminBootstrap.modelVendors.length <= 1) {
+            await route.fulfill({ status: 409, json: { error: "必须至少保留一个模型厂商" } });
+            return;
+          }
+          if (adminBootstrap.modelCatalog.some((entry) => entry.vendorId === vendorId)) {
+            await route.fulfill({ status: 409, json: { error: "模型厂商仍包含模型，请先迁移或删除模型" } });
+            return;
+          }
+          adminBootstrap = {
+            ...adminBootstrap,
+            modelVendors: adminBootstrap.modelVendors.filter((vendor) => vendor.id !== vendorId)
+          };
+          await route.fulfill({ status: 204, body: "" });
+          return;
+        }
+
+        if (request.method() === "POST" && pathname === "/api/admin/model-catalog") {
+          const payload = request.postDataJSON() as Partial<ModelCatalogEntry>;
+          modelCatalogMutations.push({ method: "POST", payload });
+          const vendorId = String(payload.vendorId || "");
+          const selectedVendor = adminBootstrap.modelVendors.find((vendor) => vendor.id === vendorId);
+          if (!selectedVendor) {
+            await route.fulfill({ status: 400, json: { error: "模型厂商不存在" } });
+            return;
+          }
+          const created: ModelCatalogEntry = {
+            id: `model-e2e-${adminBootstrap.modelCatalog.length + 1}`,
+            vendorId: selectedVendor.id,
+            vendor: selectedVendor.adapter,
+            vendorLabel: selectedVendor.label,
+            order: adminBootstrap.modelCatalog.length,
+            endpointProtocol: payload.endpointProtocol || "openai-responses",
+            model: String(payload.model || "e2e-model"),
+            label: String(payload.label || "E2E Model"),
+            capabilities: payload.capabilities || ["chat"],
+            defaultFor: payload.defaultFor || [],
+            enabled: payload.enabled !== false,
+            contextWindowTokens: payload.contextWindowTokens,
+            maxInputCharacters: payload.maxInputCharacters,
+            mediaConfig: payload.mediaConfig
+          };
+          adminBootstrap = {
+            ...adminBootstrap,
+            modelCatalog: [...adminBootstrap.modelCatalog, created]
+          };
+          bootstrap = {
+            ...bootstrap,
+            modelCatalog: adminBootstrap.modelCatalog.filter((entry) => entry.enabled)
+          };
+          await route.fulfill({ status: 201, json: created });
+          return;
+        }
+
+        if (request.method() === "PATCH" && pathname === "/api/admin/model-catalog/order") {
+          const payload = request.postDataJSON() as { modelIds?: string[] };
+          const modelIds = Array.isArray(payload.modelIds) ? payload.modelIds : [];
+          const catalogById = new Map(adminBootstrap.modelCatalog.map((entry) => [entry.id, entry]));
+          if (
+            modelIds.length !== adminBootstrap.modelCatalog.length
+            || new Set(modelIds).size !== modelIds.length
+            || modelIds.some((id) => !catalogById.has(id))
+          ) {
+            await route.fulfill({ status: 400, json: { error: "模型排序必须包含完整且唯一的模型 ID" } });
+            return;
+          }
+          modelCatalogMutations.push({ method: "REORDER", modelIds: [...modelIds] });
+          const modelCatalog = modelIds.map((id, order) => ({ ...catalogById.get(id)!, order }));
+          adminBootstrap = { ...adminBootstrap, modelCatalog };
+          bootstrap = { ...bootstrap, modelCatalog: modelCatalog.filter((entry) => entry.enabled) };
+          await route.fulfill({ json: modelCatalog });
+          return;
+        }
+
+        const modelCatalogAdminMatch = pathname.match(/^\/api\/admin\/model-catalog\/([^/]+)$/);
+        if (request.method() === "PATCH" && modelCatalogAdminMatch) {
+          const payload = request.postDataJSON() as Partial<ModelCatalogEntry>;
+          modelCatalogMutations.push({ method: "PATCH", id: modelCatalogAdminMatch[1], payload });
+          const current = adminBootstrap.modelCatalog.find((entry) => entry.id === modelCatalogAdminMatch[1]);
+          if (!current) {
+            await route.fulfill({ status: 404, json: { error: "Model not found" } });
+            return;
+          }
+          const vendorId = String(payload.vendorId || current.vendorId);
+          const selectedVendor = adminBootstrap.modelVendors.find((vendor) => vendor.id === vendorId);
+          if (!selectedVendor) {
+            await route.fulfill({ status: 400, json: { error: "模型厂商不存在" } });
+            return;
+          }
+          const updated: ModelCatalogEntry = {
+            ...current,
+            ...payload,
+            id: current.id,
+            vendorId: selectedVendor.id,
+            vendor: selectedVendor.adapter,
+            vendorLabel: selectedVendor.label
+          };
+          adminBootstrap = {
+            ...adminBootstrap,
+            modelCatalog: adminBootstrap.modelCatalog.map((entry) => entry.id === updated.id ? updated : entry)
+          };
+          bootstrap = {
+            ...bootstrap,
+            modelCatalog: adminBootstrap.modelCatalog.filter((entry) => entry.enabled)
+          };
+          await route.fulfill({ json: updated });
+          return;
+        }
+
+        if (request.method() === "DELETE" && modelCatalogAdminMatch) {
+          const modelId = modelCatalogAdminMatch[1];
+          const current = adminBootstrap.modelCatalog.find((entry) => entry.id === modelId);
+          if (!current) {
+            await route.fulfill({ status: 404, json: { error: "Model not found" } });
+            return;
+          }
+          adminBootstrap = {
+            ...adminBootstrap,
+            modelCatalog: adminBootstrap.modelCatalog.filter((entry) => entry.id !== modelId)
+          };
+          bootstrap = {
+            ...bootstrap,
+            modelCatalog: adminBootstrap.modelCatalog.filter((entry) => entry.enabled)
+          };
+          await route.fulfill({ json: { ok: true } });
           return;
         }
 
@@ -1163,6 +1477,12 @@ export const test = base.extend<BrowserFixtures>({
           return;
         }
 
+        if (request.method() === "POST" && pathname === "/api/chat/title") {
+          chatTitleRequests.push(request.postDataJSON() as ChatTitlePayload);
+          await route.fulfill({ json: { title: "自动总结标题" } });
+          return;
+        }
+
         if (request.method() === "POST" && pathname === "/api/chat/stream") {
           const payload = request.postDataJSON() as ChatStreamPayload;
           chatRequests.push(payload);
@@ -1304,6 +1624,15 @@ export const test = base.extend<BrowserFixtures>({
           return;
         }
 
+        if (request.method() === "POST" && pathname === "/api/image/optimize-prompt") {
+          await route.fulfill({
+            json: {
+              prompt: "未来深海图书馆悬浮于幽蓝海水中，生物荧光勾勒建筑轮廓，电影级构图与体积光"
+            }
+          });
+          return;
+        }
+
         const generationMatch = pathname.match(/^\/api\/generate\/(image|ppt|mindmap|translate)$/);
         if (request.method() === "POST" && generationMatch) {
           const moduleId = generationMatch[1] as ApiHarness["generationRequests"][number]["moduleId"];
@@ -1349,17 +1678,25 @@ export const test = base.extend<BrowserFixtures>({
         requests,
         unexpectedRequests,
         chatRequests,
+        chatTitleRequests,
         chatKnowledgeCsrfHeaders,
         agentRequests,
         agentKnowledgeCsrfHeaders,
         langflowRequests,
         knowledgeRetrievalRequests,
         generationRequests,
+        modelCatalogMutations,
+        modelVendorMutations,
         setBootstrap(nextPayload) {
           bootstrap = cloneBootstrap(nextPayload);
         },
         setAdminBootstrap(nextPayload) {
           adminBootstrap = structuredClone(nextPayload);
+        },
+        setAdminBootstrapModelVendors(modelVendors) {
+          adminModelVendorsOverride = modelVendors === undefined
+            ? undefined
+            : structuredClone(modelVendors);
         },
         setAdminStatus(nextStatus) {
           adminStatus = { ...nextStatus };

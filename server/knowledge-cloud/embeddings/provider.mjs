@@ -1,6 +1,10 @@
 import { KNOWLEDGE_ERROR_CODES, KnowledgeError, knowledgeError } from "../errors.mjs";
+import {
+  DEFAULT_UPSTREAM_BASE_URL,
+  normalizeUpstreamBaseUrl
+} from "../../upstream-security.mjs";
+import { providerUrl } from "../../providers/types.mjs";
 
-const MAX_BASE_URL_CHARS = 2048;
 const MAX_API_KEY_CHARS = 4096;
 const MAX_PROVIDER_RESPONSE_BYTES = 16 * 1024 * 1024;
 const MAX_PROVIDER_ERROR_BYTES = 64 * 1024;
@@ -26,7 +30,7 @@ function assertConnectionObject(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw knowledgeError(
       KNOWLEDGE_ERROR_CODES.EMBEDDING_CONNECTION_REQUIRED,
-      "请配置当前向量模型的 API URL 和 Key",
+      "请配置当前向量模型的 API Key",
       { status: 400 }
     );
   }
@@ -44,7 +48,7 @@ function boundedSecret(value, field, max) {
   if (!text || text.length > max || /[\u0000-\u001f\u007f]/u.test(text)) {
     throw knowledgeError(
       KNOWLEDGE_ERROR_CODES.EMBEDDING_CONNECTION_REQUIRED,
-      "请配置当前向量模型的 API URL 和 Key",
+      "请配置当前向量模型的 API Key",
       { status: 400, details: { field } }
     );
   }
@@ -53,36 +57,8 @@ function boundedSecret(value, field, max) {
 
 export function normalizeKnowledgeEmbeddingConnection(value) {
   assertConnectionObject(value);
-  const baseUrlText = boundedSecret(value.baseUrl, "connection.baseUrl", MAX_BASE_URL_CHARS)
-    .replace(/\/+$/u, "");
   const apiKey = boundedSecret(value.apiKey, "connection.apiKey", MAX_API_KEY_CHARS);
-  let baseUrl;
-  try {
-    baseUrl = new URL(baseUrlText);
-  } catch {
-    throw knowledgeError(
-      KNOWLEDGE_ERROR_CODES.EMBEDDING_CONNECTION_REQUIRED,
-      "向量 API URL 必须是有效的 HTTP(S) 地址",
-      { status: 400, details: { field: "connection.baseUrl" } }
-    );
-  }
-  if (
-    !new Set(["http:", "https:"]).has(baseUrl.protocol) ||
-    baseUrl.username ||
-    baseUrl.password ||
-    baseUrl.hash
-  ) {
-    throw knowledgeError(
-      KNOWLEDGE_ERROR_CODES.EMBEDDING_CONNECTION_REQUIRED,
-      "向量 API URL 必须是有效的 HTTP(S) 地址",
-      { status: 400, details: { field: "connection.baseUrl" } }
-    );
-  }
-  return Object.freeze({ baseUrl: baseUrlText, apiKey });
-}
-
-function providerEndpoint(baseUrl) {
-  return /\/embeddings$/iu.test(baseUrl) ? baseUrl : `${baseUrl}/embeddings`;
+  return Object.freeze({ apiKey });
 }
 
 export function buildKnowledgeEmbeddingRequest(profile, input) {
@@ -221,7 +197,7 @@ function providerFailure(response, raw, profile, connection) {
   );
   const providerMessage = safeProviderMessage(
     upstream?.message || raw || `HTTP ${response.status}`,
-    [connection.apiKey, connection.baseUrl]
+    connection.redactions
   );
   return knowledgeError(
     KNOWLEDGE_ERROR_CODES.EMBEDDING_PROVIDER_ERROR,
@@ -241,14 +217,34 @@ function providerFailure(response, raw, profile, connection) {
 
 export function createKnowledgeEmbeddingProvider({
   fetchImpl = globalThis.fetch,
-  requestTimeoutMs = 60_000
+  requestTimeoutMs = 60_000,
+  upstreamRef
 } = {}) {
   if (typeof fetchImpl !== "function") {
     throw new TypeError("Knowledge embedding provider requires fetch");
   }
   return Object.freeze({
     async embed({ profile, connection: rawConnection, input, signal }) {
-      const connection = normalizeKnowledgeEmbeddingConnection(rawConnection);
+      const connectionCredential = normalizeKnowledgeEmbeddingConnection(rawConnection);
+      const configuredBaseUrl = normalizeUpstreamBaseUrl(
+        upstreamRef?.current || DEFAULT_UPSTREAM_BASE_URL,
+        { fallback: "" }
+      );
+      if (!configuredBaseUrl) {
+        throw knowledgeError(
+          KNOWLEDGE_ERROR_CODES.EMBEDDING_PROVIDER_ERROR,
+          "向量服务上游地址不可用",
+          { status: 503, details: { retryable: false } }
+        );
+      }
+      const connection = Object.freeze({
+        apiKey: connectionCredential.apiKey,
+        baseUrl: configuredBaseUrl,
+        redactions: [
+          connectionCredential.apiKey,
+          typeof rawConnection?.baseUrl === "string" ? rawConnection.baseUrl : ""
+        ].filter(Boolean)
+      });
       if (!profile || !["openai", "qwen"].includes(profile.vendor)) {
         throw knowledgeError(
           KNOWLEDGE_ERROR_CODES.EMBEDDING_PROFILE_INVALID,
@@ -268,7 +264,10 @@ export function createKnowledgeEmbeddingProvider({
       const abort = () => controller.abort(signal?.reason);
       signal?.addEventListener?.("abort", abort, { once: true });
       try {
-        const response = await fetchImpl(providerEndpoint(connection.baseUrl), {
+        const response = await fetchImpl(providerUrl({
+          kind: profile.vendor,
+          baseUrl: connection.baseUrl
+        }, "/embeddings"), {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -303,7 +302,7 @@ export function createKnowledgeEmbeddingProvider({
             status: 502,
             details: {
               vendor: profile.vendor,
-              providerMessage: safeProviderMessage(error?.message, [connection.apiKey, connection.baseUrl]),
+              providerMessage: safeProviderMessage(error?.message, connection.redactions),
               retryable: true
             },
             cause: error

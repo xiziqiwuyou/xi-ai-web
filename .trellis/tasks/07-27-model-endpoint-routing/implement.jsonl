@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "Admin model editor conventions"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Shared model catalog contract"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Provider implementation conventions"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Upstream request boundary"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Catalog data flow"}
+{"file": ".trellis/tasks/07-27-model-endpoint-routing/research/official-chat-endpoints.md", "reason": "Protocol contracts"}

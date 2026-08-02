@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { BrainCircuit, CheckCircle2, ChevronLeft, Loader2, PlayCircle, Wrench } from "lucide-react";
 import { api } from "../../api";
-import { MasonryGrid } from "../../components/ui";
+import { FigmaMenu, MasonryGrid, type FigmaMenuOption } from "../../components/ui";
 import {
   ConnectionStatus,
   GenerationOptions,
@@ -89,6 +89,10 @@ function AgentsModule({
   const presetLabels = presets.length ? presets.map((preset) => preset.title) : ["拆解上线计划", "生成竞品分析", "制定执行清单"];
   const presetPromptByTitle = useMemo(() => new Map(presets.map((preset) => [preset.title, preset.prompt])), [presets]);
   const enabledTools = useMemo(() => toolSettings.filter((tool) => tool.enabled), [toolSettings]);
+  const assistantOptions = useMemo<FigmaMenuOption[]>(() => assistants.map((assistant) => ({
+    value: assistant.id,
+    label: assistant.name
+  })), [assistants]);
   const canSubmit = ready && Boolean(selectedModel) && Boolean(prompt.trim()) && !busy;
 
   useEffect(() => {
@@ -126,7 +130,7 @@ function AgentsModule({
     event.preventDefault();
     if (!canSubmit || !selectedModel) {
       if (!ready) onRequestApiConfig();
-      setNotice(!ready ? "请先填写 API URL 和 Key" : "请补全任务，并选择支持工具调用的模型");
+      setNotice(!ready ? "请先填写 API Key" : "请补全任务，并选择支持工具调用的模型");
       return;
     }
     setMobileView("timeline");
@@ -158,16 +162,16 @@ function AgentsModule({
   const sidebar = (
     <form id="agent-setup-panel" className="workbench-form" onSubmit={submit}>
       <ConnectionStatus ready={ready} modelLabel={compactModelLabel(selectedModel)} onOpenSettings={onRequestApiConfig} />
-      <label className="prompt-field agent-role-field">
-        <span>智能体角色</span>
-        <select value={assistantId} onChange={(event) => setAssistantId(event.target.value)}>
-          {assistants.map((assistant) => (
-            <option key={assistant.id} value={assistant.id}>
-              {assistant.name}
-            </option>
-          ))}
-        </select>
-      </label>
+      <FigmaMenu
+        className="agent-role-menu"
+        label="智能体角色"
+        ariaLabel="智能体角色"
+        value={assistantId}
+        options={assistantOptions}
+        onChange={setAssistantId}
+        disabled={busy || !assistantOptions.length}
+        triggerText={assistantOptions.length ? undefined : "暂无可用智能体"}
+      />
       <ModelPicker
         className="workbench-model-picker"
         models={modelCatalog}

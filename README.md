@@ -1,6 +1,6 @@
 # xi-ai-web
 
-xi-ai-web is a self-hostable Web AI workspace. It is designed for browser-side BYOK usage: public users provide an API base URL and API key in the web page, and those credentials stay in the browser session.
+xi-ai-web is a self-hostable Web AI workspace. It is designed for browser-side BYOK usage: public users provide only an API Key in the web page, while the operator controls the single upstream gateway.
 
 The public app does not require user registration. The address-only Admin console is used by the developer or operator to maintain public metadata such as menus, model catalog entries, assistants, app presets, prompt presets, tool settings, backups, and audit records.
 
@@ -8,7 +8,7 @@ The public app does not require user registration. The address-only Admin consol
 
 - Public modules: AI Chat, Image Generation, Agents, Workflows, AI PPT, Mind Map, Assistants, and Translation.
 - Address-only Admin route: `/admin`. It is not rendered in public navigation.
-- Session-only BYOK: API URL and API key are stored in `sessionStorage` and sent only with user-initiated requests.
+- Session-only BYOK: the API Key is stored in `sessionStorage` and sent only with user-initiated requests.
 - Developer-managed model catalog: each entry can have a short display name and a separate real request model name.
 - Provider adapters: OpenAI, Anthropic Claude, Google Gemini, Kimi, DeepSeek, Qwen, and generic OpenAI-compatible endpoints.
 - Chat: streaming responses, attachments, model picker, assistant binding, Chat settings, local Skills via `$`, app prompts via `/`, independent web search configuration, local conversations, and workspace import/export.
@@ -22,7 +22,7 @@ The public app does not require user registration. The address-only Admin consol
 
 - Main public workspace data lives in the browser through IndexedDB or `sessionStorage`.
 - The server stores only operator-managed metadata in JSON files under `DATA_DIR`.
-- Public API URL and API key values are never written to server metadata, logs, exports, or Admin configuration.
+- Public API Keys are never written to server metadata, logs, exports, or Admin configuration. Caller-provided URLs never select an outbound target.
 - The Admin console uses an HttpOnly signed cookie after password login.
 - Cloud knowledge, when enabled, is a separate subsystem and the only part that needs PostgreSQL, pgvector, and Tencent COS.
 
@@ -62,7 +62,7 @@ npm ci
 PORT=8787
 DATA_DIR=/opt/xi-ai-web/data
 ADMIN_PASSWORD=replace-with-a-strong-password
-ADMIN_SESSION_SECRET=replace-with-a-long-random-secret
+UPSTREAM_BASE_URL=https://api.xi-ai.cn
 KNOWLEDGE_ENABLED=false
 ```
 
@@ -79,7 +79,7 @@ PowerShell example:
 $env:PORT="8787"
 $env:DATA_DIR="C:\xi-ai-web\data"
 $env:ADMIN_PASSWORD="replace-with-a-strong-password"
-$env:ADMIN_SESSION_SECRET="replace-with-a-long-random-secret"
+$env:UPSTREAM_BASE_URL="https://api.xi-ai.cn"
 $env:KNOWLEDGE_ENABLED="false"
 npm run build
 npm start
@@ -97,7 +97,7 @@ docker run -d \
   --name xi-ai-web \
   -p 8787:8787 \
   -e ADMIN_PASSWORD=replace-with-a-strong-password \
-  -e ADMIN_SESSION_SECRET=replace-with-a-long-random-secret \
+  -e UPSTREAM_BASE_URL=https://api.xi-ai.cn \
   -e KNOWLEDGE_ENABLED=false \
   -v xi-ai-web-data:/app/data \
   xi-ai-web
@@ -105,7 +105,7 @@ docker run -d \
 
 Production-ready templates are available in [`deploy/app`](deploy/app). See [`deploy/app/README.md`](deploy/app/README.md) for exact usage:
 
-- [`compose.yaml`](deploy/app/compose.yaml) for the main no-database app;
+- [`docker-compose.yml`](deploy/app/docker-compose.yml) for the main no-database app;
 - [`.env.example`](deploy/app/.env.example) for container environment values;
 - [`nginx.conf`](deploy/app/nginx.conf) for HTTPS reverse proxying and SSE streaming;
 - [`xi-ai-web.service`](deploy/app/xi-ai-web.service) for non-Docker systemd deployment.
@@ -118,10 +118,8 @@ Production-ready templates are available in [`deploy/app`](deploy/app). See [`de
 | `DATA_DIR` | `./data` | Recommended | Persistent JSON metadata, backups, and Admin audit directory. |
 | `TRUST_PROXY_HOPS` | `0` | No | Set to the exact trusted reverse-proxy hop count, normally `1` behind one Nginx/1Panel proxy. |
 | `ADMIN_PASSWORD` | empty | Yes in production | Admin login password. Production Admin is locked when this is missing. |
-| `ADMIN_SESSION_SECRET` | derived fallback | Yes in production | Long random secret used to sign Admin cookies. |
-| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | No | Optional operator default for initial metadata or local testing. |
-| `OPENAI_API_KEY` | empty | No | Optional operator-side key. Public BYOK users still send their own request credentials. |
-| `OPENAI_MODEL` | `gpt-4.1-mini` | No | Optional default model name. |
+| `ADMIN_SESSION_SECRET` | derived fallback | No | Optional advanced override. By default a domain-separated signing secret is derived from `ADMIN_PASSWORD`. |
+| `UPSTREAM_BASE_URL` | `https://api.xi-ai.cn` | No | Administrator-managed provider gateway origin. Public requests ignore caller-provided URLs. |
 | `LANGFLOW_ENABLED` | `false` | No | Enables the optional Langflow workflow gateway. |
 | `LANGFLOW_BASE_URL` | `http://langflow:7860` | When enabled | Private Langflow service URL. |
 | `LANGFLOW_API_KEY` | empty | When enabled | Server-side Langflow API key; never sent to public bootstrap. |
@@ -153,11 +151,11 @@ Admin configuration is operator metadata only. It is not a public user account s
 
 After deployment:
 
-1. Open `/api/health` and confirm `"ok": true`.
+1. Open `/api/health` and confirm `"ok": true`, then open `/api/ready` and confirm `"ready": true`.
 2. Open `/admin` and log in with `ADMIN_PASSWORD`.
 3. Confirm at least one enabled Chat-capable model exists in the Admin model catalog.
 4. Open `/chat` in a fresh browser session.
-5. Enter an API base URL and API key in the required BYOK dialog.
+5. Enter an API Key in the required BYOK dialog.
 6. Send one short Chat message with a known working model.
 7. Test one image model if image generation is part of the rollout.
 8. Export Admin metadata from `/admin` and verify it does not contain public BYOK credentials.

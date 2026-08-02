@@ -36,7 +36,7 @@ import {
   X
 } from "lucide-react";
 import { ApiError, api } from "../../api";
-import { Dialog } from "../../components/ui";
+import { Dialog, FigmaMenu, type FigmaMenuOption } from "../../components/ui";
 import { createClientId } from "../../utils/clientId";
 import type {
   KnowledgeAccount,
@@ -192,7 +192,7 @@ function KnowledgeCloudWorkspace({
   );
 
   const [editingVendor, setEditingVendor] = useState<EmbeddingVendor | null>(null);
-  const [connectionDraft, setConnectionDraft] = useState({ baseUrl: "", apiKey: "" });
+  const [connectionDraft, setConnectionDraft] = useState({ apiKey: "" });
   const [indexing, setIndexing] = useState(false);
   const [indexPaused, setIndexPaused] = useState(false);
   const [dialog, setDialog] = useState<WorkspaceDialog>(null);
@@ -224,6 +224,11 @@ function KnowledgeCloudWorkspace({
     () => new Map(profiles.map((profile) => [profile.id, profile])),
     [profiles]
   );
+  const profileOptions = useMemo<FigmaMenuOption[]>(() => profiles.map((profile) => ({
+    value: profile.id,
+    label: profile.label || profile.actualModel,
+    detail: `${profile.dimensions} 维`
+  })), [profiles]);
   const pendingBases = useMemo(
     () => bases.filter((base) => base.embeddingProgress.pendingChunks > 0),
     [bases]
@@ -245,6 +250,9 @@ function KnowledgeCloudWorkspace({
   }, [connections, pendingBases]);
   const uploadActive = uploadQueue.some((item) => ["grant", "upload", "finalize"].includes(item.stage));
   const activeBases = bases.filter((base) => base.status !== "deleting");
+  const migrationTargetOptions = useMemo<FigmaMenuOption[]>(() => bases
+    .filter((base) => base.status === "active")
+    .map((base) => ({ value: base.id, label: base.name })), [bases]);
   const capacityUsed = Number(account.usedBytes || 0);
   const capacityReserved = Number(account.reservedBytes || 0);
   const capacityQuota = Number(account.quotaBytes || 0);
@@ -382,29 +390,27 @@ function KnowledgeCloudWorkspace({
 
   const editEmbeddingConnection = (vendor: EmbeddingVendor) => {
     const current = connections[vendor];
-    const defaultUrl = profiles.find((profile) => profile.vendor === vendor)?.defaultBaseUrl || "";
     setEditingVendor(vendor);
-    setConnectionDraft({ baseUrl: current?.baseUrl || defaultUrl, apiKey: current?.apiKey || "" });
+    setConnectionDraft({ apiKey: current?.apiKey || "" });
     setError("");
   };
 
   const saveEmbeddingConnection = () => {
     if (!editingVendor) return;
-    const baseUrl = connectionDraft.baseUrl.trim().replace(/\/+$/u, "");
     const apiKey = connectionDraft.apiKey.trim();
-    if (!/^https?:\/\//iu.test(baseUrl) || !apiKey) {
-      setError("请填写有效的 API URL 和 Key");
+    if (!apiKey) {
+      setError("请填写 API Key");
       return;
     }
     const next: KnowledgeEmbeddingConnectionMap = {
       ...connections,
-      [editingVendor]: { vendor: editingVendor, baseUrl, apiKey }
+      [editingVendor]: { vendor: editingVendor, apiKey }
     };
     setConnections(next);
     saveKnowledgeEmbeddingConnections(next);
     setNotice(`${embeddingVendorLabels[editingVendor]} 向量连接已保存到当前会话`);
     setEditingVendor(null);
-    setConnectionDraft({ baseUrl: "", apiKey: "" });
+    setConnectionDraft({ apiKey: "" });
     setError("");
   };
 
@@ -905,7 +911,6 @@ function KnowledgeCloudWorkspace({
               })}
               {editingVendor ? (
                 <div className="knowledge-cloud-connection-form">
-                  <label><span>API URL</span><input value={connectionDraft.baseUrl} onChange={(event) => setConnectionDraft((current) => ({ ...current, baseUrl: event.target.value }))} autoComplete="url" /></label>
                   <label><span>API Key</span><input type="password" value={connectionDraft.apiKey} onChange={(event) => setConnectionDraft((current) => ({ ...current, apiKey: event.target.value }))} autoComplete="off" /></label>
                   <div className="knowledge-cloud-connection-actions">
                     <button type="button" className="knowledge-cloud-compact-button" onClick={() => setEditingVendor(null)}>取消</button>
@@ -1057,7 +1062,7 @@ function KnowledgeCloudWorkspace({
             <label><span>名称</span><input value={baseDraft.name} onChange={(event) => setBaseDraft((current) => ({ ...current, name: event.target.value }))} maxLength={120} autoFocus required /></label>
             <label><span>描述</span><textarea value={baseDraft.description} onChange={(event) => setBaseDraft((current) => ({ ...current, description: event.target.value }))} maxLength={500} rows={3} /></label>
             {dialog.kind === "create-base" ? (
-              <label><span>向量模型</span><select value={baseDraft.profileId} onChange={(event) => setBaseDraft((current) => ({ ...current, profileId: event.target.value }))} required>{profiles.map((profile) => <option value={profile.id} key={profile.id}>{profile.label || profile.actualModel} · {profile.dimensions} 维</option>)}</select></label>
+              <FigmaMenu className="knowledge-dialog-field" label="向量模型" ariaLabel="向量模型" value={baseDraft.profileId} options={profileOptions} onChange={(profileId) => setBaseDraft((current) => ({ ...current, profileId }))} />
             ) : null}
             <div className="knowledge-dialog-actions"><button type="button" className="knowledge-workspace-button" onClick={() => setDialog(null)}>取消</button><button type="submit" className="knowledge-workspace-button primary" disabled={busy}><Save size={15} />保存</button></div>
           </form>
@@ -1073,7 +1078,7 @@ function KnowledgeCloudWorkspace({
 
         {dialog?.kind === "reindex" ? (
           <div className="knowledge-dialog-form">
-            <label><span>新向量模型</span><select value={reindexProfileId} onChange={(event) => setReindexProfileId(event.target.value)}>{profiles.map((profile) => <option value={profile.id} key={profile.id}>{profile.label || profile.actualModel} · {profile.dimensions} 维</option>)}</select></label>
+            <FigmaMenu className="knowledge-dialog-field" label="新向量模型" ariaLabel="新向量模型" value={reindexProfileId} options={profileOptions} onChange={setReindexProfileId} />
             {dialogBase?.documentCount ? <div className="knowledge-dialog-note"><RefreshCw size={16} /><span>重建期间新旧索引会同时占用容量，旧索引保持可用；容量不足时服务端会拒绝开始。</span></div> : null}
             <div className="knowledge-dialog-actions"><button type="button" className="knowledge-workspace-button" onClick={() => setDialog(null)}>取消</button><button type="button" className="knowledge-workspace-button primary" onClick={() => void confirmReindex()} disabled={busy}><RotateCcw size={15} />{dialogBase?.documentCount ? "开始重建" : "切换模型"}</button></div>
           </div>
@@ -1081,7 +1086,7 @@ function KnowledgeCloudWorkspace({
 
         {dialog?.kind === "migration" ? (
           <div className="knowledge-migration-dialog">
-            <label className="knowledge-dialog-field"><span>目标知识库</span><select value={migrationTargetId} onChange={(event) => setMigrationTargetId(event.target.value)} disabled={migrationRunning}>{activeBases.filter((base) => base.status === "active").map((base) => <option key={base.id} value={base.id}>{base.name}</option>)}</select></label>
+            <FigmaMenu className="knowledge-dialog-field" label="目标知识库" ariaLabel="目标知识库" value={migrationTargetId} options={migrationTargetOptions} onChange={setMigrationTargetId} disabled={migrationRunning} />
             <div className="knowledge-migration-selection">
               {localDocuments.map((document) => (
                 <label key={document.id}>

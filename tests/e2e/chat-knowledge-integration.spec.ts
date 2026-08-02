@@ -51,11 +51,9 @@ test("Chat sends stable cloud knowledge IDs and renders authorized sources", asy
   );
   expect(apiHarness.chatRequests[0].embeddingConnections).toEqual({
     openai: {
-      baseUrl: "https://api.openai.example.test/v1",
       apiKey: "e2e-openai-embedding-key"
     },
     qwen: {
-      baseUrl: "https://dashscope.example.test/compatible-mode/v1",
       apiKey: "e2e-qwen-embedding-key"
     }
   });

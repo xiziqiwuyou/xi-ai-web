@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defaultModelCatalog, normalizeModelCatalog } from "../server/registry/model-registry.mjs";
+import { defaultMenuItems } from "../server/data/defaults.mjs";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const publicDestinations = [
@@ -47,15 +48,37 @@ const types = readProjectFile("src/types.ts");
 const publicRoutes = readProjectFile("src/app/publicRoutes.ts");
 const moduleRegistry = readProjectFile("src/app/moduleRegistry.tsx");
 const topBar = readProjectFile("src/app/TopBar.tsx");
-const chatModule = readProjectFile("src/features/chat/ChatModule.tsx");
-const automationModule = readProjectFile("src/features/automation/AutomationModule.tsx");
+const chatModule = [
+  "src/features/chat/ChatModule.tsx",
+  "src/features/chat/ChatSessionBlock.tsx"
+].map(readProjectFile).join("\n");
+const automationModule = [
+  "src/features/automation/AutomationModule.tsx",
+  "src/features/automation/automationShared.tsx",
+  "src/features/automation/AgentsWorkspace.tsx",
+  "src/features/automation/WorkflowsWorkspace.tsx"
+].map(readProjectFile).join("\n");
 const workflowCanvas = readProjectFile("src/features/automation/WorkflowCanvas.tsx");
 const workflowGraph = readProjectFile("src/features/automation/workflowGraph.ts");
 const workflowRuntime = readProjectFile("src/features/automation/workflowRuntime.ts");
-const studioModule = readProjectFile("src/features/studio/StudioModule.tsx");
+const studioModule = [
+  "src/features/studio/StudioModule.tsx",
+  "src/features/studio/studioShared.tsx",
+  "src/features/studio/ImageStudio.tsx",
+  "src/features/studio/PptStudio.tsx",
+  "src/features/studio/MindmapStudio.tsx",
+  "src/features/studio/AssistantsStudio.tsx",
+  "src/features/studio/TranslateStudio.tsx"
+].map(readProjectFile).join("\n");
 const figmaMenu = readProjectFile("src/components/ui/FigmaMenu.tsx");
 const adminConsole = readProjectFile("src/features/admin/AdminConsole.tsx");
+const adminNavigation = readProjectFile("src/features/admin/AdminNavigation.tsx");
+const adminModelsSection = readProjectFile("src/features/admin/AdminModelsSection.tsx");
+const modelUtils = readProjectFile("src/components/workbench/model-utils.ts");
+const adminCss = readProjectFile("src/styles/rednote-flat-v2.admin.css");
+const adminConsoleConfig = readProjectFile("src/features/admin/adminConsoleConfig.ts");
 const adminValidation = readProjectFile("src/features/admin/adminValidation.ts");
+const chatSessionSettings = readProjectFile("src/features/chat/ChatSessionSettingsDialog.tsx");
 const server = readProjectFile("server/index.mjs");
 const providerRegistry = readProjectFile("server/providers/registry.mjs");
 const api = readProjectFile("src/api.ts");
@@ -65,6 +88,88 @@ const appDataPath = path.join(rootDir, "data/app-data.json");
 const appData = fs.existsSync(appDataPath) ? JSON.parse(fs.readFileSync(appDataPath, "utf8")) : {};
 const currentCatalog = normalizeModelCatalog(appData.modelCatalog || [], []);
 const freshCatalog = defaultModelCatalog();
+assert(freshCatalog.every((entry, index) => entry.order === index), "Fresh model catalogs must expose compact model order");
+assert(
+  freshCatalog.some((entry) => entry.vendor === "openai" && entry.model === "gpt-5.4-mini" && entry.capabilities.includes("chat")),
+  "Fresh model catalogs must include the default Chat title-summary model"
+);
+assert(server.includes("version: 12") && server.includes('entry.model === "gpt-5.4-mini"'), "Current metadata must retain the title-summary model migration");
+assert(
+  types.includes("ModelEndpointProtocol") && providerRegistry.includes("createChatProtocolAdapter"),
+  "Model catalog endpoint protocols must be typed and routed independently from vendors"
+);
+for (const protocol of ["openai-chat", "openai-responses", "anthropic-messages", "gemini-generate-content"]) {
+  assert(adminConsoleConfig.includes(`value: "${protocol}"`), `Admin model endpoint selector must expose ${protocol}`);
+}
+assert(
+  adminModelsSection.includes('aria-label="对话请求端点"') && adminModelsSection.includes("仅控制对话请求"),
+  "Admin model editor must expose the chat endpoint selector without implying media endpoint changes"
+);
+assert(
+  adminModelsSection.includes("admin-model-workbench")
+    && adminModelsSection.includes("admin-model-vendor-list")
+    && adminModelsSection.includes("admin-model-list-panel")
+    && adminModelsSection.includes("admin-model-detail-panel"),
+  "Admin model catalog must keep the vendor, model list, and detail inspector workbench"
+);
+assert(
+  types.includes("export type ModelVendorEntry")
+    && types.includes("vendorId: string")
+    && types.includes("modelVendors: ModelVendorEntry[]")
+    && adminModelsSection.includes("orderedCatalog.filter((entry) => entry.vendorId === activeVendor.id)")
+    && adminModelsSection.includes("preset.vendor === activeVendor.adapter")
+    && adminModelsSection.includes("onCreate: (vendor: ModelVendorEntry)")
+    && adminModelsSection.includes("onCreateVendor: (label: string, adapter: ProviderKind)")
+    && adminModelsSection.includes("onDeleteVendor: (vendor: ModelVendorEntry)")
+    && adminModelsSection.includes("admin-model-management"),
+  "Admin model catalog must scope models and presets to stable vendor entities and expose guarded vendor management"
+);
+assert(
+  adminConsole.includes("vendors={sortedModelVendors}")
+    && adminConsole.includes("vendorId: vendor.id")
+    && server.includes('adminRouter.post("/model-vendors"')
+    && server.includes('adminRouter.delete("/model-vendors/:id"'),
+  "Admin bootstrap, model drafts, and vendor routes must retain the model-vendor association"
+);
+assert(
+  adminModelsSection.includes('form.capabilities.includes("chat")')
+    && adminModelsSection.includes('aria-label="专用请求通道"')
+    && adminModelsSection.includes("/v1/images/generations")
+    && adminModelsSection.includes("/v1beta/models/{model}:generateContent"),
+  "Admin media-only models must expose their dedicated provider route instead of a chat protocol selector"
+);
+assert(
+  adminCss.includes(".admin-console-inner {")
+    && adminCss.includes("width: min(1680px, 100%)")
+    && !adminCss.includes(".admin-console-inner:has("),
+  "Every Admin destination must share the wide responsive content boundary"
+);
+let adminGroupCursor = -1;
+for (const groupLabel of ["运行总览", "AI 能力", "内容与展示", "知识库", "系统与安全"]) {
+  const nextCursor = adminConsoleConfig.indexOf(`label: "${groupLabel}"`, adminGroupCursor + 1);
+  assert(nextCursor > adminGroupCursor, `Admin navigation group order is missing ${groupLabel}`);
+  adminGroupCursor = nextCursor;
+}
+assert(
+  adminNavigation.includes("admin-nav-group-icon")
+    && adminNavigation.includes("admin-nav-group-meta")
+    && adminNavigation.includes("group.items.length"),
+  "Admin first-level navigation must expose an icon, label, and destination count"
+);
+assert(
+  adminConsole.includes("setExpandedNavigationGroups([group.id])")
+    && adminConsole.includes("activeNavigationGroup?.label")
+    && !adminConsoleConfig.includes("eyebrow:"),
+  "Admin navigation must use one expanded group and a Chinese group breadcrumb without English eyebrows"
+);
+assert(
+  adminCss.includes(".admin-console {")
+    && adminCss.includes("border: 0;")
+    && adminCss.includes(".admin-nav-group.is-expanded")
+    && adminCss.includes(".admin-model-usage-table")
+    && adminNavigation.includes("admin-nav-item-icon"),
+  "Admin shell must use an unframed content canvas, one-column expanded navigation, and real model usage statistics"
+);
 
 const moduleIdType = types.match(/export type ModuleId =([\s\S]*?);/)?.[1] || "";
 const generationModuleIdType = types.match(/export type GenerationModuleId =([\s\S]*?);/)?.[1] || "";
@@ -123,6 +228,8 @@ assert(studioModule.includes("const [activeBranchId, setActiveBranchId]"), "Mind
 assert(studioModule.includes("const branchSource = useMemo"), "Mind Map must derive branch cards from one normalized branch source");
 assert(!studioModule.includes("activeBranchIndex"), "Mind Map must not track active branches by rotated visual index");
 assert(chatModule.includes("streamChat("), "Chat module must use streaming chat");
+assert(!adminConsoleConfig.includes('{ value: "streaming"'), "Streaming must not be exposed as an Admin model capability");
+assert(chatSessionSettings.includes('label="流式输出"'), "Streaming output must remain isolated in Chat session settings");
 assert(chatModule.includes("ChatSkillManagerDialog"), "Chat must manage local Skills inside the Chat workspace");
 assert(chatModule.includes("skillInstructions: selectedSkills.map"), "Chat must send resolved Skill instructions, not storage records");
 assert(chatModule.includes("ChatCommandPalette"), "Chat must expose inline $ and / command results");
@@ -145,12 +252,22 @@ assert(
   chatModule.includes('const modelVendorTabs: ModelVendorTab[] = ["OpenAI", "Claude", "Gemini", "Kimi", "DeepSeek", "\u901a\u4e49\u5343\u95ee"]'),
   "Chat model picker must expose the six named vendor labels"
 );
-assert(chatModule.includes("topP,") && chatModule.includes("maxTokens: Math.max(1, Number(maxTokens) || 4096)"), "Chat requests must carry topP and maxTokens");
-assert(chatModule.includes('const chatSettingsStorageKey = "xi-ai-web-chat-session-settings"'), "Chat settings must use the session-scoped settings key");
-assert(chatModule.includes("window.sessionStorage.getItem(chatSettingsStorageKey)") && chatModule.includes("window.sessionStorage.setItem(chatSettingsStorageKey"), "Chat settings must persist through sessionStorage only");
-assert(!chatModule.includes("localStorage.getItem(chatSettingsStorageKey)") && !chatModule.includes("localStorage.setItem(chatSettingsStorageKey"), "Chat settings must not use localStorage");
-assert(chatModule.includes("history: requestConversation.messages.slice(-Math.max(1, Number(contextSize) || 16))"), "Chat requests must honor the saved context size");
-assert(chatModule.includes('toolMode === "\u7981\u7528"') && chatModule.includes('toolMode === "\u8be2\u95ee\u540e\u8c03\u7528"'), "Chat tool mode must change truthful request behavior");
+assert(chatModule.includes("topP: chatSettings.topP") && chatModule.includes("maxTokens: chatSettings.maxTokensEnabled ? chatSettings.maxTokens : undefined"), "Chat requests must carry topP and omit a disabled output limit");
+const chatSettings = fs.readFileSync(path.join(rootDir, "src/features/chat/chatSessionSettings.ts"), "utf8");
+assert(chatSettings.includes('chatSettingsStorageKey = "xi-ai-web-chat-session-settings"'), "Chat settings must use the session-scoped settings key");
+assert(chatSettings.includes("window.sessionStorage.getItem(chatSettingsStorageKey)") && chatSettings.includes("window.sessionStorage.setItem(chatSettingsStorageKey"), "Chat settings must persist through sessionStorage only");
+assert(!chatSettings.includes("localStorage.getItem(chatSettingsStorageKey)") && !chatSettings.includes("localStorage.setItem(chatSettingsStorageKey"), "Chat settings must not use localStorage");
+assert(
+  chatModule.includes("const selectedHistory = selectChatHistory(requestConversation.messages, chatSettings)") &&
+  chatModule.includes("history: chatHistoryWithoutAttachments(selectedHistory)"),
+  "Chat requests must honor both saved context settings while replaying bounded historical attachments"
+);
+assert(chatSettings.includes('chatContextSizeValues = ["4", "16", "32", "64", "128", "256", "512", "1024"]') && chatSettings.includes("chatContextMessageCountValues"), "Chat context settings must cover 1M windows and independent message counts");
+assert(chatSettings.includes("maxTokensEnabled: false"), "Chat output limit must default to unlimited");
+assert(chatSettings.includes('titleSummaryModelId: "gpt-5.4-mini"') && chatSettings.includes("titleSummaryMessageCount: 4"), "Chat title summaries must use the requested default model and history count");
+assert(chatModule.includes("generateChatTitle") && chatModule.includes("titleSummaryAt: sourceUpdatedAt"), "Chat must generate and persist fresh collapsed titles");
+assert(chatModule.includes("Boolean(a.pinned) !== Boolean(b.pinned)") && chatModule.includes("aExpanded !== bExpanded"), "Chat sessions must prioritize pinned and expanded conversations");
+assert(chatModule.includes("toolInvocationMode: chatSettings.toolInvocationMode"), "Chat tool mode must change truthful request behavior");
 assert(!chatModule.includes("ChevronRight"), "Chat model options must not render trailing chevrons");
 assert(chatModule.includes('className="figma-model-option-mark"'), "Chat model options must reserve stable trailing alignment");
 const figmaMenuOptions = figmaMenu.slice(
@@ -164,17 +281,24 @@ for (const imageContract of [
   "\u6587\u751f\u56fe",
   "\u56fe\u7247\u7f16\u8f91",
   "count: Number(count)",
-  "imageSize: resolution",
+  "aspectRatio: selectedSizePreset.aspectRatio",
+  "imageSize: selectedSizePreset.resolution",
+  "size: imageRequestSize(selectedSizePreset.aspectRatio, selectedSizePreset.resolution)",
   'inputImage: mode === "edit"',
   'inputImages: mode === "edit"',
   'referenceImageUrls: mode === "edit" && usesBotcf',
   'maskImage: mode === "edit" && supportsMask',
-  "outputFormat: usesOpenAIImageOptions ? outputFormat : undefined",
-  "Number(outputCompression)",
+  "quality: imageCapabilities.supportsQuality ? quality : undefined",
+  "outputFormat: fixedImageOutputFormat",
+  '"1:1": "2880x2880"',
+  "generationAbortRef.current?.abort()",
   "resultImages.map((asset, index) => ("
 ]) {
   assert(studioModule.includes(imageContract), `Image Studio contract is missing ${imageContract}`);
 }
+assert(!studioModule.includes('ariaLabel="\u753b\u9762\u6bd4\u4f8b"') && !studioModule.includes('ariaLabel="\u56fe\u50cf\u5206\u8fa8\u7387"'), "Image Studio must keep ratio and resolution inside the unified size control");
+assert(!studioModule.includes('ariaLabel="\u8f93\u51fa\u683c\u5f0f"') && !studioModule.includes('ariaLabel="\u538b\u7f29\u8d28\u91cf"'), "Image Studio must keep PNG and compression defaults internal");
+assert(!studioModule.includes("background: fixedImageBackground"), "Image Studio must not send removed background parameters");
 
 assert(server.includes('"/api/chat/stream"'), "Chat stream route is missing");
 assert(server.includes('"/api/generate/:module"'), "Generation route is missing");
@@ -187,16 +311,7 @@ assert(server.includes("for (const item of data)"), "OpenAI image assets must be
 assert(server.includes("for (const candidate of candidates)") && server.includes("for (const part of parts)"), "Gemini image assets must be fully extracted");
 assert(server.includes('extractAssets(json, "image", fallbackMimeType).slice(0, requestedCount)'), "Image generation must return every requested asset up to the limit");
 
-const serverMenuBlock = server.match(/function defaultMenuItems\(\)\s*\{\s*return \[([\s\S]*?)\];\s*\}/)?.[1] || "";
-const serverMenuItems = [...serverMenuBlock.matchAll(
-  /\{\s*id:\s*"([^"]+)",\s*label:\s*"([^"]+)",\s*enabled:\s*(true|false),\s*visible:\s*(true|false),\s*order:\s*(\d+)\s*\}/g
-)].map(([, id, label, enabled, visible, order]) => ({
-  id,
-  label,
-  enabled: enabled === "true",
-  visible: visible === "true",
-  order: Number(order)
-}));
+const serverMenuItems = defaultMenuItems();
 assert(JSON.stringify(serverMenuItems) === JSON.stringify(expectedMenuItems), "Server defaults must match the exact Figma menu metadata");
 
 const textGenerationStart = server.indexOf('if (module === "ppt" || module === "mindmap" || module === "translate")');
@@ -208,6 +323,17 @@ assert(textGenerationBranch.includes("你是专业翻译助手。"), "Translate 
 assert(textGenerationBranch.includes('"翻译结果"'), "Translate must return a translation result");
 assert(api.includes('connection: GenerationPayload["connection"]'), "Client API must carry user connection payloads");
 assert(adminConsole.includes("validateModelCatalog(bootstrap.modelCatalog, bootstrap.menuItems)"), "Admin console must validate catalog against enabled menus");
+assert(types.includes("order: number") && api.includes("reorderModelCatalog"), "Model ordering must be typed and exposed by the Admin API client");
+assert(server.includes('adminRouter.patch("/model-catalog/order"'), "Server must expose the atomic model reorder route");
+assert(
+  adminModelsSection.includes("admin-model-entry-row")
+    && adminModelsSection.includes("draggable={!modelOrderBusy}")
+    && adminModelsSection.includes("上移模型")
+    && adminModelsSection.includes("下移模型")
+    && !adminModelsSection.includes("AdminModelOrderDialog"),
+  "Admin model ordering must be direct in-list drag plus explicit move controls"
+);
+assert(modelUtils.includes("sortModelsByOrder") && !modelUtils.includes("isDefaultFor"), "Public model defaults must derive from catalog order rather than defaultFor");
 assert(adminValidation.includes("moduleRequirements"), "Admin validation must define per-module model requirements");
 assert(!adminValidation.includes("knowledge:"), "Admin validation must not require removed knowledge menu coverage");
 assert(!adminValidation.includes("video:"), "Admin validation must not require removed video menu coverage");

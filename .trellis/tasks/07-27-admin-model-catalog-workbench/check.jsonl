@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Responsive and E2E check"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Accessibility and composition check"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Callback and persistence review"}
+{"file": ".trellis/spec/frontend/admin-console-design.md", "reason": "Admin geometry, accessibility, and responsive verification"}
+{"file": ".trellis/tasks/07-27-admin-model-catalog-workbench/research/2026-admin-navigation-design.md", "reason": "Validate implementation against approved Figma and UX decisions"}

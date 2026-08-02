@@ -1,65 +1,38 @@
 # xi-ai-web App Deployment
 
-This directory contains deployment templates for the main no-database BYOK app. It does not enable the optional cloud knowledge stack.
+This directory contains deployment templates for the main no-database BYOK app. The optional cloud knowledge stack is disabled by default.
 
 ## Docker Compose
 
-1. Copy the environment file.
+Run these commands on the server after cloning the repository:
 
 ```bash
+cd deploy/app
 cp .env.example .env
-```
-
-2. Edit `.env`.
-
-Required changes:
-
-- `ADMIN_PASSWORD`
-- `ADMIN_SESSION_SECRET`
-- `PUBLIC_ORIGIN`
-- `TRUST_PROXY_HOPS`
-- Keep `LANGFLOW_ENABLED=false` unless the separate Langflow service is ready.
-
-Keep `KNOWLEDGE_ENABLED=false` for the first rollout.
-
-3. Build and start.
-
-```bash
-docker compose up -d --build
-```
-
-4. Check health.
-
-```bash
+nano .env
+docker compose -f docker-compose.yml up -d --build
 docker compose ps
 curl http://127.0.0.1:8787/api/health
+curl http://127.0.0.1:8787/api/ready
 ```
 
-The Compose file binds the container to `127.0.0.1:${PORT}` so it is ready to sit behind Nginx or a server panel reverse proxy.
-It also joins the stable Docker network `xi-ai`; the optional Langflow template uses the same network.
+Before starting, set the only required value in `.env`:
 
-## Optional Langflow Workflows
+- `ADMIN_PASSWORD`: strong password for the private `/admin` entry.
 
-Langflow is intentionally a separate service. The main application does not expose the Langflow editor or store its API key in public browser data.
+The Compose file fixes the upstream gateway at `https://api.xi-ai.cn`, disables optional cloud knowledge and Langflow services, and binds the container to `127.0.0.1:8787` for a 1Panel or Nginx reverse proxy.
 
-1. Start the main app once so the `xi-ai` Docker network exists, or create it manually:
+The public browser sends only each user's API Key. The server uses `UPSTREAM_BASE_URL` for provider requests. Do not put a public user's API Key, shell token, or provider URL in `.env`.
 
-```bash
-docker network create xi-ai 2>/dev/null || true
-```
+## 1Panel Reverse Proxy
 
-2. Start the separate service from `deploy/langflow`:
+Create a website or reverse proxy in 1Panel with:
 
-```bash
-cp .env.example .env
-docker compose up -d
-```
+- Upstream address: `http://127.0.0.1:8787`
+- WebSocket: enabled
+- Streaming responses: buffering disabled when the panel exposes this option
 
-3. Open the private Langflow editor, create/import flows, and create a Langflow API key.
-4. Put that key in the main app environment as `LANGFLOW_API_KEY` and set `LANGFLOW_ENABLED=true`.
-5. Restart xi-ai-web, then open `/admin` and add each Flow ID under **工作流发布**.
-
-The default gateway endpoint is `/api/v2/workflows`. For a Langflow-compatible deployment with another path, set `LANGFLOW_WORKFLOW_PATH`; the path is sent to the configured Langflow service, while the public user only sees the published workflow name.
+Point the DNS record to the server and enable HTTPS. The minimal Compose file does not require a public-origin variable.
 
 ## Nginx
 
@@ -67,10 +40,10 @@ Use `nginx.conf` as a starting point:
 
 - replace `example.com`;
 - replace the TLS certificate paths;
-- keep `proxy_buffering off` for Chat streaming;
+- keep `proxy_buffering off` for chat streaming;
 - set `TRUST_PROXY_HOPS=1` when exactly one trusted reverse proxy sits in front of the app.
 
-## systemd
+## Systemd
 
 Use `xi-ai-web.service` for a non-Docker deployment. Expected layout:
 
@@ -91,7 +64,7 @@ The service runs as user/group `xi-ai-web` and writes only to `/opt/xi-ai-web/da
 After start:
 
 - `/api/health` returns `"ok": true`;
-- `/api/health` returns `"adminConfigured": true`;
-- `/admin` requires the configured Admin password;
+- `/api/ready` returns `"ready": true`;
+- `/admin` requires the configured admin password;
 - `/chat` opens the BYOK dialog in a fresh browser session;
-- Admin metadata export does not contain public BYOK API URLs or keys.
+- admin metadata export does not contain public BYOK API Keys.

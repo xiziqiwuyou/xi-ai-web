@@ -2,15 +2,17 @@ import { useEffect, useRef, useState } from "react";
 import {
   BrainCircuit,
   Boxes,
+  ChevronRight,
   DatabaseBackup,
   GitFork,
   Image as ImageIcon,
+  KeyRound,
   Languages,
   Menu,
   MessageSquare,
   Moon,
   Presentation,
-  ShieldCheck,
+  Server,
   Sparkles,
   Sun,
   Workflow,
@@ -22,10 +24,14 @@ import type { MenuItem, ModuleId } from "../types";
 type TopBarProps = {
   menuItems: MenuItem[];
   activeModule: ModuleId;
+  pendingModule: ModuleId | null;
   apiReady: boolean;
+  maskedApiKey: string;
   accessAddress: string;
   onModuleChange: (moduleId: ModuleId) => void;
+  onModuleIntent: (moduleId: ModuleId) => void;
   onOpenWorkspaceData: () => void;
+  onOpenApiConfig: () => void;
   onWorkspaceError: (message: string) => void;
 };
 
@@ -95,10 +101,14 @@ function initialDarkTheme() {
 function TopBar({
   menuItems,
   activeModule,
+  pendingModule,
   apiReady,
+  maskedApiKey,
   accessAddress,
   onModuleChange,
+  onModuleIntent,
   onOpenWorkspaceData,
+  onOpenApiConfig,
   onWorkspaceError
 }: TopBarProps) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -183,13 +193,20 @@ function TopBar({
         const meta = navigationMeta[item.id];
         if (!meta) return null;
         const Icon = meta.icon;
-        const active = item.id === activeModule;
+        const active = item.id === (pendingModule || activeModule);
+        const pending = item.id === pendingModule;
         return (
           <button
             key={item.id}
             type="button"
-            className={active ? "figma-nav-item active" : "figma-nav-item"}
+            className={active
+              ? pending ? "figma-nav-item active pending" : "figma-nav-item active"
+              : "figma-nav-item"}
             disabled={!item.enabled}
+            data-module-id={item.id}
+            onPointerEnter={() => onModuleIntent(item.id)}
+            onPointerDown={() => onModuleIntent(item.id)}
+            onFocus={() => onModuleIntent(item.id)}
             onClick={() => {
               const focusWorkspace = mobileNavOpen;
               onModuleChange(item.id);
@@ -241,6 +258,21 @@ function TopBar({
           <Brand />
         </div>
         {navigation("figma-navigation")}
+        <button
+          type="button"
+          className="figma-mobile-key-action"
+          onClick={() => {
+            setMobileNavOpen(false);
+            onOpenApiConfig();
+          }}
+          aria-label={`更换 API Key，当前 ${maskedApiKey}`}
+        >
+          <KeyRound size={16} />
+          <span>
+            <strong>更换 API Key</strong>
+            <small>{maskedApiKey}</small>
+          </span>
+        </button>
         <section className="figma-access-card" aria-label="访问状态">
           <div className="figma-access-topline">
             <span className={apiReady ? "figma-service-status ready" : "figma-service-status"}>
@@ -252,12 +284,33 @@ function TopBar({
               <ThemeButton dark={dark} onToggle={() => setDark((value) => !value)} />
             </span>
           </div>
-          <small>SECURE ACCESS</small>
-          <strong title={accessAddress}>{accessAddress}</strong>
-          <span className="figma-encrypted-status">
-            <ShieldCheck size={14} />
-            已加密访问
-          </span>
+          <div className="figma-access-details">
+            <div className="figma-access-detail figma-access-endpoint">
+              <span className="figma-access-detail-icon" aria-hidden="true">
+                <Server size={14} />
+              </span>
+              <span className="figma-access-detail-copy">
+                <small>服务地址</small>
+                <strong title={accessAddress}>{accessAddress}</strong>
+              </span>
+              <span className={apiReady ? "figma-access-detail-state ready" : "figma-access-detail-state"} aria-hidden="true" />
+            </div>
+            <button
+              type="button"
+              className="figma-access-detail figma-key-switch"
+              onClick={onOpenApiConfig}
+              aria-label={`更换 API Key，当前 ${maskedApiKey}`}
+            >
+              <span className="figma-access-detail-icon" aria-hidden="true">
+                <KeyRound size={14} />
+              </span>
+              <span className="figma-access-detail-copy">
+                <small>API Key</small>
+                <strong>{maskedApiKey}</strong>
+              </span>
+              <ChevronRight className="figma-access-detail-chevron" size={15} aria-hidden="true" />
+            </button>
+          </div>
         </section>
       </aside>
     </>

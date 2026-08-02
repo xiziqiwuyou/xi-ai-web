@@ -21,10 +21,9 @@ function sanitizeConnection(value: unknown): KnowledgeEmbeddingConnection | null
   const vendor = vendors.has(source.vendor as KnowledgeEmbeddingVendor)
     ? source.vendor as KnowledgeEmbeddingVendor
     : null;
-  const baseUrl = cleanText(source.baseUrl, 2048).replace(/\/+$/u, "");
   const apiKey = cleanText(source.apiKey, 4096);
-  if (!vendor || !/^https?:\/\//iu.test(baseUrl) || !apiKey) return null;
-  return { vendor, baseUrl, apiKey };
+  if (!vendor || !apiKey) return null;
+  return { vendor, apiKey };
 }
 
 export function sanitizeKnowledgeEmbeddingConnections(value: unknown): KnowledgeEmbeddingConnectionMap {
@@ -77,5 +76,5 @@ export function clearKnowledgeEmbeddingConnections() {
 export function isKnowledgeEmbeddingConnectionReady(
   connection: KnowledgeEmbeddingConnection | undefined
 ) {
-  return Boolean(connection && /^https?:\/\//iu.test(connection.baseUrl) && connection.apiKey);
+  return Boolean(connection?.apiKey?.trim());
 }

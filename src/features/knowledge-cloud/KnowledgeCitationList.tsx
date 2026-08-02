@@ -17,7 +17,13 @@ function locatorLabel(locator: Record<string, unknown>) {
 
 export default function KnowledgeCitationList({ citations = [] }: KnowledgeCitationListProps) {
   const [error, setError] = useState("");
-  if (!citations.length) return null;
+  const uniqueCitations = [...new Map(
+    citations.map((citation) => [
+      `${citation.knowledgeBaseId}:${citation.documentId}:${citation.chunkId}`,
+      citation
+    ])
+  ).values()];
+  if (!uniqueCitations.length) return null;
 
   const openSource = async (citation: KnowledgeCitation, disposition: "inline" | "attachment") => {
     setError("");
@@ -36,10 +42,10 @@ export default function KnowledgeCitationList({ citations = [] }: KnowledgeCitat
 
   return (
     <section className="knowledge-citation-list" aria-label="知识来源">
-      <header><strong>来源</strong><span>{citations.length}</span></header>
+      <header><strong>来源</strong><span>{uniqueCitations.length}</span></header>
       <div>
-        {citations.map((citation) => (
-          <article key={`${citation.id}-${citation.chunkId}`}>
+        {uniqueCitations.map((citation) => (
+          <article key={`${citation.knowledgeBaseId}-${citation.documentId}-${citation.chunkId}`}>
             <FileText size={14} aria-hidden="true" />
             <button type="button" onClick={() => void openSource(citation, "inline")}>
               <strong>[{citation.id}] {citation.documentName}</strong>

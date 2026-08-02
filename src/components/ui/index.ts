@@ -7,4 +7,4 @@ export {
   getFloatingVerticalPlacement
 } from "./floatingPlacement";
 export type { DialogProps } from "./Dialog";
-export type { FigmaMenuOption } from "./FigmaMenu";
+export type { FigmaMenuOption, FigmaMenuPlacement } from "./FigmaMenu";

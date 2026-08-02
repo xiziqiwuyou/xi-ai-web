@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -62,7 +63,7 @@ async function ensureAppServer() {
   const healthUrl = `${baseUrl}/api/health`;
   try {
     await waitForEndpoint(healthUrl, 1200, "Local app server");
-    return { close() {} };
+    return { async close() {} };
   } catch {
     // Start a disposable app server when the requested local port is free.
   }
@@ -74,9 +75,10 @@ async function ensureAppServer() {
     throw new Error(`Port ${appPort} is occupied, but ${healthUrl} is not healthy.`);
   }
 
+  const runtimeDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "xi-ai-web-ui-runtime-"));
   const child = spawn("node", ["server/index.mjs"], {
     cwd: rootDir,
-    env: { ...process.env, PORT: String(appPort) },
+    env: { ...process.env, PORT: String(appPort), DATA_DIR: runtimeDataDir },
     stdio: "pipe"
   });
   let output = "";
@@ -90,8 +92,16 @@ async function ensureAppServer() {
     throw new Error(`${error.message}\nServer output:\n${output.slice(-1200)}`);
   });
   return {
-    close() {
-      child.kill();
+    async close() {
+      if (child.exitCode === null) {
+        child.kill();
+        await Promise.race([
+          new Promise((resolve) => child.once("exit", resolve)),
+          delay(5000)
+        ]);
+        if (child.exitCode === null) child.kill("SIGKILL");
+      }
+      await fs.promises.rm(runtimeDataDir, { recursive: true, force: true });
     }
   };
 }
@@ -121,7 +131,10 @@ try {
 
   const topBar = readProjectFile("src/app/TopBar.tsx");
   const appShell = readProjectFile("src/app/AppShell.tsx");
-  const chatModule = readProjectFile("src/features/chat/ChatModule.tsx");
+  const chatModule = [
+    "src/features/chat/ChatModule.tsx",
+    "src/features/chat/ChatSessionBlock.tsx"
+  ].map(readProjectFile).join("\n");
   const shellCss = readProjectFile("src/styles/rednote-flat-v2.shell.css");
   const chatCss = readProjectFile("src/styles/rednote-flat-v2.chat.css");
   const responsiveCss = readProjectFile("src/styles/rednote-flat-v2.responsive.css");
@@ -180,5 +193,5 @@ try {
 
   console.log("Runtime UI checks passed");
 } finally {
-  appServer.close();
+  await appServer.close();
 }

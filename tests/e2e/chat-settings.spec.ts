@@ -2,13 +2,14 @@ import {
   expect,
   isMobileProject,
   publicDestinations,
-  searchServiceStorageKey,
   seedChatConversations,
   seedReadyProvider,
   test,
   visibleScrollOwners,
   waitForPublicModule
 } from "./support/app-fixture";
+import type { Locator } from "@playwright/test";
+import type { Conversation } from "../../src/types";
 
 test.beforeEach(async ({ page }) => {
   await seedReadyProvider(page);
@@ -17,24 +18,51 @@ test.beforeEach(async ({ page }) => {
 
 const chatSettingsStorageKey = "xi-ai-web-chat-session-settings";
 
-test("independent web search config works with a model that has no hosted-search capability", async ({ page, apiHarness }) => {
+async function chooseSettingsMenuOption(container: Locator, label: string, option: string) {
+  const trigger = container.getByRole("button", { name: label, exact: true });
+  await trigger.click();
+  const menu = container.getByRole("listbox", { name: label, exact: true });
+  await expect(menu).toBeVisible();
+  await menu.getByRole("option", { name: option, exact: true }).click();
+  await expect(menu).toBeHidden();
+  await expect(trigger).toBeFocused();
+  return trigger;
+}
+
+async function enableMaximumTokenLimit(dialog: Locator) {
+  await dialog.getByRole("button", { name: "最大 Token 数", exact: true }).click();
+  const confirmation = dialog.page().getByRole("alertdialog", { name: "最大 Token 数", exact: true });
+  await expect(confirmation).toBeVisible();
+  await expect(confirmation).toContainText("数值过大可能导致请求失败");
+  await confirmation.getByRole("button", { name: "继续开启", exact: true }).click();
+  await expect(dialog).toBeVisible();
+}
+
+test("Chat selects a search provider and reuses the current BYOK connection", async ({ page, apiHarness }) => {
   await page.goto("/chat");
   await waitForPublicModule(page, publicDestinations[0]);
   const session = page.locator(".figma-chat-session").first();
 
   await session.getByRole("button", { name: "选择对话模型", exact: true }).click();
   await session.getByRole("option", { name: /OpenAI Fast/ }).click();
-  const searchToggle = session.getByRole("button", { name: "网络搜索", exact: true });
-  await expect(searchToggle).toBeEnabled();
-  await searchToggle.click();
+  const searchMenu = session.getByRole("button", { name: "网络搜索", exact: true });
+  await expect(searchMenu).toBeEnabled();
+  await searchMenu.click();
 
-  const dialog = page.getByRole("dialog", { name: "联网搜索服务", exact: true });
-  await expect(dialog).toBeVisible();
-  await dialog.getByLabel("联网搜索 API Key", { exact: true }).fill("search-session-key");
-  await dialog.getByLabel("联网搜索结果数量", { exact: true }).fill("6");
-  await dialog.getByRole("button", { name: "保存搜索服务", exact: true }).click();
-  await expect(dialog).toBeHidden();
-  await expect(searchToggle).toHaveAttribute("aria-pressed", "true");
+  const providerList = session.getByRole("listbox", { name: "网络搜索", exact: true });
+  await expect(providerList).toBeVisible();
+  const providerOptions = providerList.getByRole("option");
+  await expect(providerOptions).toHaveText([
+    /智谱 GLM.*结构化搜索 API/,
+    /Kimi.*\$web_search/,
+    /关闭联网搜索/
+  ]);
+  const optionTops = await providerOptions.evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect().top));
+  expect(optionTops.every((top, index) => index === 0 || top > optionTops[index - 1])).toBe(true);
+  await providerList.getByRole("option", { name: /智谱 GLM/ }).click();
+  await expect(searchMenu).toContainText("网络搜索 · 智谱 GLM");
+  await expect(page.getByRole("dialog", { name: "联网搜索服务", exact: true })).toHaveCount(0);
+  await expect(session.getByRole("button", { name: "配置联网搜索服务", exact: true })).toHaveCount(0);
 
   await session.getByLabel("消息内容", { exact: true }).fill("检索并回答这个问题");
   await session.getByRole("button", { name: "发送", exact: true }).click();
@@ -44,17 +72,26 @@ test("independent web search config works with a model that has no hosted-search
     allowedTools: ["web_search"],
     searchService: {
       provider: "glm",
-      apiKey: "search-session-key",
-      count: 6
+      apiKey: "e2e-session-key",
+      count: 8
     }
   });
 
-  const storage = await page.evaluate((key) => ({
-    session: window.sessionStorage.getItem(key),
-    local: window.localStorage.getItem(key)
-  }), searchServiceStorageKey);
-  expect(storage.session).toContain("search-session-key");
-  expect(storage.local).toBeNull();
+  await expect(session.getByText("Deterministic assistant response.", { exact: true })).toBeVisible();
+  await searchMenu.click();
+  await providerList.getByRole("option", { name: /Kimi/ }).click();
+  await expect(searchMenu).toContainText("网络搜索 · Kimi");
+  await session.getByLabel("消息内容", { exact: true }).fill("切换 Kimi 再检索一次");
+  await session.getByRole("button", { name: "发送", exact: true }).click();
+  await expect.poll(() => apiHarness.chatRequests.length).toBe(2);
+  expect(apiHarness.chatRequests[1]).toMatchObject({
+    allowedTools: ["web_search"],
+    searchService: {
+      provider: "kimi",
+      apiKey: "e2e-session-key",
+      model: "kimi-k3"
+    }
+  });
 });
 
 test("Chat settings use the shared Figma dialog contract", async ({ page }, testInfo) => {
@@ -70,13 +107,51 @@ test("Chat settings use the shared Figma dialog contract", async ({ page }, test
   await expect(dialog).toHaveAttribute("data-scroll-owner", "dialog");
   await expect(dialog.getByRole("button", { name: "\u5173\u95ed\u4f1a\u8bdd\u8bbe\u7f6e", exact: true })).toBeFocused();
   expect(await visibleScrollOwners(page)).toHaveLength(1);
+  const menuStyleContract = await page.evaluate(() => {
+    const publicActive = document.querySelector<HTMLElement>(".figma-nav-item.active");
+    const settingsActive = document.querySelector<HTMLElement>(".figma-settings-tab.active");
+    const settingsIcon = settingsActive?.querySelector<HTMLElement>(".figma-settings-tab-icon");
+    const publicStyle = publicActive ? getComputedStyle(publicActive) : null;
+    const settingsStyle = settingsActive ? getComputedStyle(settingsActive) : null;
+    const iconStyle = settingsIcon ? getComputedStyle(settingsIcon) : null;
+    return {
+      public: publicStyle ? {
+        background: publicStyle.backgroundColor,
+        color: publicStyle.color,
+        radius: publicStyle.borderRadius,
+        shadow: publicStyle.boxShadow
+      } : null,
+      settings: settingsStyle ? {
+        background: settingsStyle.backgroundColor,
+        color: settingsStyle.color,
+        radius: settingsStyle.borderRadius,
+        shadow: settingsStyle.boxShadow
+      } : null,
+      icon: iconStyle ? {
+        background: iconStyle.backgroundColor,
+        borderWidth: iconStyle.borderTopWidth
+      } : null
+    };
+  });
+  expect(menuStyleContract.settings).toEqual(menuStyleContract.public);
+  expect(menuStyleContract.icon).toEqual({ background: "rgba(0, 0, 0, 0)", borderWidth: "0px" });
   const dialogBounds = await dialog.boundingBox();
   expect(dialogBounds).not.toBeNull();
   if (isMobileProject(testInfo.project.name)) {
     expect(dialogBounds!.width).toBeLessThanOrEqual(350);
   } else {
-    expect(dialogBounds!.width).toBeGreaterThanOrEqual(650);
-    expect(dialogBounds!.width).toBeLessThanOrEqual(672);
+    expect(dialogBounds!.width).toBeGreaterThanOrEqual(800);
+    expect(dialogBounds!.width).toBeLessThanOrEqual(860);
+  }
+
+  for (const sectionName of ["OpenAI 设置", "代码块", "外观设置"]) {
+    await dialog.getByRole("tab", { name: sectionName, exact: true }).click();
+    const nextBounds = await dialog.boundingBox();
+    const scrollTop = await dialog.evaluate((element) => element.scrollTop);
+    expect(nextBounds).not.toBeNull();
+    expect(Math.abs(nextBounds!.y - dialogBounds!.y)).toBeLessThanOrEqual(1);
+    expect(Math.abs(nextBounds!.height - dialogBounds!.height)).toBeLessThanOrEqual(1);
+    expect(scrollTop).toBe(0);
   }
 
   await page.keyboard.press("Escape");
@@ -91,6 +166,7 @@ test("dark Chat settings keep crisp typography and legible range controls", asyn
   await page.getByRole("button", { name: "\u4f1a\u8bdd\u8bbe\u7f6e", exact: true }).first().click();
   const dialog = page.getByRole("dialog", { name: "\u4f1a\u8bdd\u8bbe\u7f6e", exact: true });
   await expect(dialog).toBeVisible();
+  await dialog.getByRole("tab", { name: "模型设置", exact: true }).click();
 
   const temperature = dialog.getByRole("slider", { name: "\u6a21\u578b\u6e29\u5ea6 \u00b7 Temperature", exact: true });
   const topP = dialog.getByRole("slider", { name: "TOP-P", exact: true });
@@ -105,6 +181,7 @@ test("dark Chat settings keep crisp typography and legible range controls", asyn
     const range = element.querySelector<HTMLInputElement>('.figma-range-control input[type="range"]');
     const rangeTrack = element.querySelector<HTMLElement>(".figma-range-track");
     const rangeProgress = element.querySelector<HTMLElement>(".figma-range-track > i");
+    const rangeOutput = element.querySelector<HTMLOutputElement>(".figma-range-control output");
 
     const luminance = (hex: string) => {
       const normalized = hex.trim().replace("#", "");
@@ -142,6 +219,8 @@ test("dark Chat settings keep crisp typography and legible range controls", asyn
       rangeBoxShadow: rangeStyle?.boxShadow || "",
       trackBorderColor: rangeTrackStyle?.borderTopColor || "",
       trackFocusShadow: rangeTrackStyle?.boxShadow || "",
+      progressColor: rangeProgress ? getComputedStyle(rangeProgress).backgroundColor : "",
+      outputColor: rangeOutput ? getComputedStyle(rangeOutput).color : "",
       progressRatio: rangeBounds && progressBounds ? progressBounds.width / rangeBounds.width : 0,
       rangeTrackBorder: rootStyle.getPropertyValue("--xhs-range-track-border").trim(),
       mutedContrast: contrast(muted, surface),
@@ -152,15 +231,17 @@ test("dark Chat settings keep crisp typography and legible range controls", asyn
   expect(metrics.theme).toBe("dark");
   expect(metrics.bodyFont).toContain("Microsoft YaHei UI");
   expect(metrics.labelFont).toContain("Microsoft YaHei UI");
-  expect(metrics.labelSize).toBeGreaterThanOrEqual(10);
-  expect(metrics.helpSize).toBeGreaterThanOrEqual(10);
+  expect(metrics.labelSize).toBeGreaterThanOrEqual(13);
+  expect(metrics.helpSize).toBeGreaterThanOrEqual(12);
   expect(metrics.rangeHeight).toBe(isMobileProject(testInfo.project.name) ? 44 : 24);
   expect(metrics.rangePaddingLeft).toBe("0px");
   expect(metrics.rangePaddingRight).toBe("0px");
   expect(metrics.rangeBorderWidth).toBe("0px");
   expect(metrics.rangeBoxShadow).toBe("none");
-  expect(metrics.trackBorderColor).toBe("rgb(79, 141, 255)");
+  expect(metrics.trackBorderColor).not.toBe("rgb(79, 141, 255)");
   expect(metrics.trackFocusShadow).not.toBe("none");
+  expect(metrics.progressColor).not.toBe("rgb(79, 141, 255)");
+  expect(metrics.outputColor).not.toBe("rgb(79, 141, 255)");
   expect(metrics.progressRatio).toBeGreaterThan(0.65);
   expect(metrics.progressRatio).toBeLessThan(0.75);
   expect(metrics.rangeTrackBorder).toBe("#637493");
@@ -168,92 +249,175 @@ test("dark Chat settings keep crisp typography and legible range controls", asyn
   expect(metrics.primaryContrast).toBeGreaterThanOrEqual(4.5);
 });
 
-test("Chat settings expose the complete controls and preserve only saved changes", async ({ page }) => {
+test("Chat settings expose categorized controls and preserve only saved changes", async ({ page }) => {
   await page.goto("/chat");
   await waitForPublicModule(page, publicDestinations[0]);
 
-  const trigger = page.getByRole("button", { name: "\u4f1a\u8bdd\u8bbe\u7f6e", exact: true }).first();
-  const dialog = page.getByRole("dialog", { name: "\u4f1a\u8bdd\u8bbe\u7f6e", exact: true });
+  const trigger = page.getByRole("button", { name: "会话设置", exact: true }).first();
+  const dialog = page.getByRole("dialog", { name: "会话设置", exact: true });
   await trigger.click();
 
-  const avatarPresets = dialog.locator(".figma-avatar-presets > button");
-  const temperature = dialog.locator("label.figma-range-control").filter({ hasText: "Temperature" }).getByRole("slider");
-  const topP = dialog.locator("label.figma-range-control").filter({ hasText: "TOP-P" }).getByRole("slider");
-  const context = dialog.getByRole("combobox", { name: "\u4e0a\u4e0b\u6587\u6570", exact: true });
-  const maxTokens = dialog.getByRole("combobox", { name: "\u6700\u5927 Token \u6570", exact: true });
-  const stream = dialog.getByRole("button", { name: "\u6d41\u5f0f\u8f93\u51fa", exact: true });
-  const toolButtons = dialog.locator(".figma-tool-mode .figma-segmented > button");
+  const sectionNames = ["外观设置", "对话 Skill", "模型设置", "OpenAI 设置", "消息设置", "数学公式", "代码块", "输入设置"];
+  const tabs = dialog.getByRole("tab");
+  await expect(tabs).toHaveCount(8);
+  const appearanceTab = dialog.getByRole("tab", { name: "外观设置", exact: true });
+  await expect(appearanceTab).toHaveAttribute("aria-selected", "true");
+  await appearanceTab.focus();
+  await appearanceTab.press("End");
+  await expect(dialog.getByRole("tab", { name: "输入设置", exact: true })).toHaveAttribute("aria-selected", "true");
+  await dialog.getByRole("tab", { name: "输入设置", exact: true }).press("Home");
+  await expect(appearanceTab).toHaveAttribute("aria-selected", "true");
+  for (const sectionName of sectionNames) {
+    const tab = dialog.getByRole("tab", { name: sectionName, exact: true });
+    await tab.click();
+    await expect(tab).toHaveAttribute("aria-selected", "true");
+    await expect(dialog.getByRole("heading", { name: sectionName, exact: true })).toBeVisible();
+  }
 
-  await expect(avatarPresets).toHaveCount(4);
+  await expect(dialog.getByRole("button", { name: "显示预估 Token 数", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(dialog.getByRole("button", { name: "发送快捷键", exact: true })).toContainText("Enter");
+  await dialog.getByRole("tab", { name: "OpenAI 设置", exact: true }).click();
+  await expect(dialog.getByRole("button", { name: "OpenAI 详细程度", exact: true })).toContainText("默认");
+  await expect(dialog.getByRole("button", { name: "显示 OpenAI 用量", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await dialog.getByRole("tab", { name: "消息设置", exact: true }).click();
+  await expect(dialog.getByRole("button", { name: "显示用户提示词", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(dialog.getByRole("button", { name: "自动折叠思考内容", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await dialog.getByRole("tab", { name: "数学公式", exact: true }).click();
+  await expect(dialog.getByRole("button", { name: "渲染数学公式", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(dialog.getByRole("button", { name: "启用单美元符号公式", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await dialog.getByRole("tab", { name: "代码块", exact: true }).click();
+  await expect(dialog.getByRole("button", { name: "代码显示行号", exact: true })).toHaveAttribute("aria-pressed", "true");
+
+  await dialog.getByRole("tab", { name: "外观设置", exact: true }).click();
+  const avatarPresets = dialog.locator('[aria-label="AI 对话头像"] > button');
+  const personalAvatarPresets = dialog.locator('[aria-label="个人头像预设"] > button');
+  await expect(avatarPresets).toHaveCount(6);
+  await expect(personalAvatarPresets).toHaveCount(6);
+  const avatarPresetSizes = await avatarPresets.evaluateAll((elements) => elements.map((element) => {
+    const box = element.getBoundingClientRect();
+    return { width: box.width, height: box.height };
+  }));
+  expect(avatarPresetSizes.every(({ width, height }) => width === 56 && height === 56)).toBe(true);
   await expect(avatarPresets.nth(0)).toHaveAttribute("aria-pressed", "true");
-  await expect(dialog.getByRole("button", { name: "\u4e0a\u4f20\u4e2a\u4eba\u5934\u50cf", exact: true })).toHaveCount(2);
-  await expect(dialog.locator('input[type="file"][accept="image/png,image/jpeg"]')).toHaveCount(1);
-  await expect(dialog.getByRole("button", { name: "\u6c14\u6ce1\u5f0f", exact: true })).toHaveAttribute("aria-pressed", "true");
-  await expect(temperature).toHaveAttribute("min", "0");
-  await expect(temperature).toHaveAttribute("max", "1");
-  await expect(temperature).toHaveValue("0.7");
-  await expect(topP).toHaveAttribute("min", "0.1");
-  await expect(topP).toHaveAttribute("max", "1");
-  await expect(topP).toHaveValue("0.9");
-  await expect(context).toHaveValue("16");
-  await expect(maxTokens).toHaveValue("4096");
-  await expect(stream).toHaveAttribute("aria-pressed", "true");
-  await expect(toolButtons).toHaveText([
-    "\u81ea\u52a8",
-    "\u8be2\u95ee\u540e\u8c03\u7528",
-    "\u7981\u7528"
-  ]);
-
+  await expect(personalAvatarPresets.nth(5)).toHaveAttribute("aria-pressed", "true");
+  await expect(dialog.getByRole("button", { name: "上传个人头像", exact: true })).toHaveCount(2);
+  await expect(dialog.getByRole("button", { name: "气泡式", exact: true })).toHaveAttribute("aria-pressed", "true");
   await avatarPresets.nth(1).click();
-  await dialog.locator('input[type="file"]').setInputFiles({
-    name: "avatar.png",
-    mimeType: "image/png",
-    buffer: Buffer.from("deterministic-avatar")
-  });
-  await expect(dialog.getByAltText("\u4e2a\u4eba\u5934\u50cf\u9884\u89c8", { exact: true })).toBeVisible();
-  await expect(dialog.getByRole("button", { name: "\u79fb\u9664\u5934\u50cf", exact: true })).toBeVisible();
-  await dialog.getByRole("button", { name: "\u5217\u8868\u5f0f", exact: true }).click();
+  await personalAvatarPresets.nth(2).click();
+  await dialog.locator('input[type="file"]').setInputFiles({ name: "avatar.png", mimeType: "image/png", buffer: Buffer.from("deterministic-avatar") });
+  await expect(dialog.getByAltText("个人头像预览", { exact: true })).toBeVisible();
+  await dialog.getByRole("button", { name: "列表式", exact: true }).click();
+
+  await dialog.getByRole("tab", { name: "模型设置", exact: true }).click();
+  const temperature = dialog.getByRole("slider", { name: "模型温度 · Temperature", exact: true });
+  const topP = dialog.getByRole("slider", { name: "TOP-P", exact: true });
+  const contextWindow = dialog.getByRole("slider", { name: "模型上下文窗口", exact: true });
+  const contextMessageCount = dialog.getByRole("slider", { name: "引用历史消息", exact: true });
+  const maxTokens = dialog.getByRole("button", { name: "最大 Token 数", exact: true });
+  const stream = dialog.getByRole("button", { name: "流式输出", exact: true });
+  const toolMode = dialog.getByRole("button", { name: "工具调用方式", exact: true });
+  await expect(temperature).toHaveValue("0.7");
+  await expect(topP).toHaveValue("0.9");
+  await expect(contextWindow).toHaveAttribute("aria-valuetext", "16K tokens");
+  await expect(contextMessageCount).toHaveAttribute("aria-valuetext", "最近 16 条");
+  if ((page.viewportSize()?.width || 0) > 760) {
+    const contextTracks = dialog.locator([
+      ".figma-discrete-range:has(#figma-context-window-range) .figma-range-track",
+      ".figma-discrete-range:has(#figma-context-message-count-range) .figma-range-track"
+    ].join(", "));
+    const trackTops = await contextTracks.evaluateAll((elements) =>
+      elements.map((element) => element.getBoundingClientRect().top)
+    );
+    expect(trackTops).toHaveLength(2);
+    expect(Math.abs(trackTops[0] - trackTops[1])).toBeLessThanOrEqual(1);
+  }
+  await expect(maxTokens).toHaveAttribute("aria-pressed", "false");
+  await expect(dialog.getByRole("spinbutton", { name: "最大 Token 数值", exact: true })).toHaveCount(0);
+  await expect(toolMode).toContainText("使用函数调用");
+  await maxTokens.click();
+  const maxTokenConfirmation = page.getByRole("alertdialog", { name: "最大 Token 数", exact: true });
+  await expect(maxTokenConfirmation).toContainText("请根据所选模型的上下文和输出限制设置");
+  await maxTokenConfirmation.getByRole("button", { name: "取消", exact: true }).click();
+  await expect(dialog).toBeVisible();
+  await expect(maxTokens).toHaveAttribute("aria-pressed", "false");
   await temperature.fill("0.2");
   await topP.fill("0.4");
-  await context.selectOption("32");
-  await maxTokens.selectOption("8192");
+  await contextWindow.fill("2");
+  await contextMessageCount.fill("3");
+  await enableMaximumTokenLimit(dialog);
+  const maxTokenInput = dialog.getByRole("spinbutton", { name: "最大 Token 数值", exact: true });
+  await maxTokenInput.fill("32768");
+  const tokenInputBox = await maxTokenInput.boundingBox();
+  const tokenSettingBox = await dialog.locator(".figma-output-token-setting").boundingBox();
+  expect(tokenInputBox).not.toBeNull();
+  expect(tokenSettingBox).not.toBeNull();
+  const maximumInputRatio = (page.viewportSize()?.width || 0) > 760 ? 0.4 : 0.8;
+  expect(tokenInputBox!.width).toBeLessThan(tokenSettingBox!.width * maximumInputRatio);
   await stream.click();
-  await toolButtons.filter({ hasText: "\u7981\u7528" }).click();
-  await dialog.getByRole("button", { name: "\u53d6\u6d88", exact: true }).click();
-  await expect(dialog).toBeHidden();
+  await chooseSettingsMenuOption(dialog, "工具调用方式", "使用提示词");
+
+  await dialog.getByRole("tab", { name: "消息设置", exact: true }).click();
+  await dialog.getByRole("button", { name: "使用衬线字体", exact: true }).click();
+  await dialog.getByRole("button", { name: "显示消息大纲", exact: true }).click();
+  await dialog.getByRole("tab", { name: "输入设置", exact: true }).click();
+  await chooseSettingsMenuOption(dialog, "发送快捷键", "Ctrl + Enter");
+  await dialog.getByRole("button", { name: "取消", exact: true }).click();
 
   await trigger.click();
+  await expect(dialog.getByRole("tab", { name: "外观设置", exact: true })).toHaveAttribute("aria-selected", "true");
   await expect(avatarPresets.nth(0)).toHaveAttribute("aria-pressed", "true");
-  await expect(dialog.getByAltText("\u4e2a\u4eba\u5934\u50cf\u9884\u89c8", { exact: true })).toHaveCount(0);
-  await expect(dialog.getByRole("button", { name: "\u6c14\u6ce1\u5f0f", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(personalAvatarPresets.nth(5)).toHaveAttribute("aria-pressed", "true");
+  await expect(dialog.getByRole("button", { name: "气泡式", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await dialog.getByRole("tab", { name: "模型设置", exact: true }).click();
   await expect(temperature).toHaveValue("0.7");
   await expect(topP).toHaveValue("0.9");
-  await expect(context).toHaveValue("16");
-  await expect(maxTokens).toHaveValue("4096");
-  await expect(stream).toHaveAttribute("aria-pressed", "true");
-  await expect(toolButtons.filter({ hasText: "\u81ea\u52a8" })).toHaveAttribute("aria-pressed", "true");
+  await expect(contextWindow).toHaveAttribute("aria-valuetext", "16K tokens");
+  await expect(contextMessageCount).toHaveAttribute("aria-valuetext", "最近 16 条");
+  await expect(maxTokens).toHaveAttribute("aria-pressed", "false");
+  await expect(toolMode).toContainText("使用函数调用");
+  await dialog.getByRole("tab", { name: "消息设置", exact: true }).click();
+  await expect(dialog.getByRole("button", { name: "使用衬线字体", exact: true })).toHaveAttribute("aria-pressed", "false");
+  await dialog.getByRole("tab", { name: "输入设置", exact: true }).click();
+  await expect(dialog.getByRole("button", { name: "发送快捷键", exact: true })).toContainText("Enter");
 
+  await dialog.getByRole("tab", { name: "外观设置", exact: true }).click();
   await avatarPresets.nth(2).click();
-  await dialog.getByRole("button", { name: "\u5217\u8868\u5f0f", exact: true }).click();
+  await personalAvatarPresets.nth(1).click();
+  await dialog.getByRole("button", { name: "列表式", exact: true }).click();
+  await dialog.getByRole("tab", { name: "模型设置", exact: true }).click();
   await temperature.fill("0.3");
   await topP.fill("0.6");
-  await context.selectOption("128");
-  await maxTokens.selectOption("2048");
+  await contextWindow.fill("7");
+  await contextMessageCount.fill("4");
+  await enableMaximumTokenLimit(dialog);
+  await dialog.getByRole("spinbutton", { name: "最大 Token 数值", exact: true }).fill("65536");
   await stream.click();
-  await toolButtons.filter({ hasText: "\u8be2\u95ee\u540e\u8c03\u7528" }).click();
-  await dialog.getByRole("button", { name: "\u4fdd\u5b58\u8bbe\u7f6e", exact: true }).click();
-  await expect(dialog).toBeHidden();
+  await chooseSettingsMenuOption(dialog, "工具调用方式", "使用提示词");
+  await dialog.getByRole("tab", { name: "消息设置", exact: true }).click();
+  await dialog.getByRole("button", { name: "使用衬线字体", exact: true }).click();
+  await dialog.getByRole("button", { name: "显示消息大纲", exact: true }).click();
+  await dialog.getByRole("tab", { name: "输入设置", exact: true }).click();
+  await chooseSettingsMenuOption(dialog, "发送快捷键", "Ctrl + Enter");
+  await dialog.getByRole("button", { name: "保存设置", exact: true }).click();
   await expect(trigger).toBeFocused();
 
   await trigger.click();
+  await dialog.getByRole("tab", { name: "外观设置", exact: true }).click();
   await expect(avatarPresets.nth(2)).toHaveAttribute("aria-pressed", "true");
-  await expect(dialog.getByRole("button", { name: "\u5217\u8868\u5f0f", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(personalAvatarPresets.nth(1)).toHaveAttribute("aria-pressed", "true");
+  await expect(dialog.getByRole("button", { name: "列表式", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await dialog.getByRole("tab", { name: "模型设置", exact: true }).click();
   await expect(temperature).toHaveValue("0.3");
   await expect(topP).toHaveValue("0.6");
-  await expect(context).toHaveValue("128");
-  await expect(maxTokens).toHaveValue("2048");
-  await expect(stream).toHaveAttribute("aria-pressed", "false");
-  await expect(toolButtons.filter({ hasText: "\u8be2\u95ee\u540e\u8c03\u7528" })).toHaveAttribute("aria-pressed", "true");
+  await expect(contextWindow).toHaveAttribute("aria-valuetext", "1M tokens");
+  await expect(contextMessageCount).toHaveAttribute("aria-valuetext", "最近 64 条");
+  await expect(maxTokens).toHaveAttribute("aria-pressed", "true");
+  await expect(dialog.getByRole("spinbutton", { name: "最大 Token 数值", exact: true })).toHaveValue("65536");
+  await expect(toolMode).toContainText("使用提示词");
+  await dialog.getByRole("tab", { name: "消息设置", exact: true }).click();
+  await expect(dialog.getByRole("button", { name: "使用衬线字体", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await dialog.getByRole("tab", { name: "输入设置", exact: true }).click();
+  await expect(dialog.getByRole("button", { name: "发送快捷键", exact: true })).toContainText("Ctrl + Enter");
 });
 
 test("saved sampling settings are sent with the next Chat request", async ({ page, apiHarness }) => {
@@ -262,13 +426,15 @@ test("saved sampling settings are sent with the next Chat request", async ({ pag
 
   await page.getByRole("button", { name: "\u4f1a\u8bdd\u8bbe\u7f6e", exact: true }).first().click();
   const dialog = page.getByRole("dialog", { name: "\u4f1a\u8bdd\u8bbe\u7f6e", exact: true });
+  await dialog.getByRole("tab", { name: "模型设置", exact: true }).click();
   const temperature = dialog.getByRole("slider", { name: "\u6a21\u578b\u6e29\u5ea6 \u00b7 Temperature", exact: true });
   const topP = dialog.getByRole("slider", { name: "TOP-P", exact: true });
-  const maxTokens = dialog.getByRole("combobox", { name: "\u6700\u5927 Token \u6570", exact: true });
+  const maxTokens = dialog.getByRole("button", { name: "\u6700\u5927 Token \u6570", exact: true });
 
   await temperature.fill("0.4");
   await topP.fill("0.6");
-  await maxTokens.selectOption("8192");
+  await enableMaximumTokenLimit(dialog);
+  await dialog.getByRole("spinbutton", { name: "最大 Token 数值", exact: true }).fill("131072");
   await dialog.getByRole("button", { name: "\u4fdd\u5b58\u8bbe\u7f6e", exact: true }).click();
 
   const composer = page.getByRole("textbox", { name: "\u6d88\u606f\u5185\u5bb9", exact: true });
@@ -278,9 +444,91 @@ test("saved sampling settings are sent with the next Chat request", async ({ pag
   expect(apiHarness.chatRequests[0]).toMatchObject({
     temperature: 0.4,
     topP: 0.6,
-    maxTokens: 8192,
+    maxTokens: 131072,
     modelId: "test-chat"
   });
+  expect(apiHarness.chatRequests[0]).not.toHaveProperty("responseVerbosity");
+});
+
+test("default maximum output leaves the provider request unbounded", async ({ page, apiHarness }) => {
+  await page.goto("/chat");
+  await waitForPublicModule(page, publicDestinations[0]);
+
+  await page.getByRole("textbox", { name: "消息内容", exact: true }).fill("验证默认输出上限");
+  await page.getByRole("button", { name: "发送", exact: true }).click();
+  await expect.poll(() => apiHarness.chatRequests.length).toBe(1);
+  expect(apiHarness.chatRequests[0]).not.toHaveProperty("maxTokens");
+});
+
+test("context history count controls how many recent messages are sent", async ({ page, apiHarness }) => {
+  const conversation: Conversation = {
+    id: "history-count",
+    title: "历史消息条数",
+    assistantId: "test-assistant",
+    pinned: false,
+    messages: Array.from({ length: 10 }, (_, index) => ({
+      id: `history-${index + 1}`,
+      role: index % 2 === 0 ? "user" : "assistant",
+      content: `历史消息 ${index + 1}`,
+      status: "done",
+      createdAt: `2026-01-01T00:00:${String(index).padStart(2, "0")}.000Z`
+    })),
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:10.000Z"
+  };
+  await seedChatConversations(page, [conversation]);
+  await page.goto("/chat");
+  await waitForPublicModule(page, publicDestinations[0]);
+
+  await page.getByRole("button", { name: "会话设置", exact: true }).first().click();
+  const dialog = page.getByRole("dialog", { name: "会话设置", exact: true });
+  await dialog.getByRole("tab", { name: "模型设置", exact: true }).click();
+  await dialog.getByRole("slider", { name: "模型上下文窗口", exact: true }).fill("7");
+  await dialog.getByRole("slider", { name: "引用历史消息", exact: true }).fill("0");
+  await dialog.getByRole("button", { name: "保存设置", exact: true }).click();
+
+  await page.getByRole("textbox", { name: "消息内容", exact: true }).fill("验证历史消息条数");
+  await page.getByRole("button", { name: "发送", exact: true }).click();
+  await expect.poll(() => apiHarness.chatRequests.length).toBe(1);
+  expect(apiHarness.chatRequests[0].history?.map((message) => message.id)).toEqual([
+    "history-7",
+    "history-8",
+    "history-9",
+    "history-10"
+  ]);
+});
+
+test("context window token budget further limits the selected history", async ({ page, apiHarness }) => {
+  const conversation: Conversation = {
+    id: "history-budget",
+    title: "历史 Token 预算",
+    assistantId: "test-assistant",
+    pinned: false,
+    messages: Array.from({ length: 6 }, (_, index) => ({
+      id: `budget-${index + 1}`,
+      role: index % 2 === 0 ? "user" : "assistant",
+      content: String(index + 1).repeat(1600),
+      status: "done",
+      createdAt: `2026-01-01T00:00:${String(index).padStart(2, "0")}.000Z`
+    })),
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:06.000Z"
+  };
+  await seedChatConversations(page, [conversation]);
+  await page.goto("/chat");
+  await waitForPublicModule(page, publicDestinations[0]);
+
+  await page.getByRole("button", { name: "会话设置", exact: true }).first().click();
+  const dialog = page.getByRole("dialog", { name: "会话设置", exact: true });
+  await dialog.getByRole("tab", { name: "模型设置", exact: true }).click();
+  await dialog.getByRole("slider", { name: "模型上下文窗口", exact: true }).fill("0");
+  await dialog.getByRole("slider", { name: "引用历史消息", exact: true }).fill("7");
+  await dialog.getByRole("button", { name: "保存设置", exact: true }).click();
+
+  await page.getByRole("textbox", { name: "消息内容", exact: true }).fill("验证 Token 预算");
+  await page.getByRole("button", { name: "发送", exact: true }).click();
+  await expect.poll(() => apiHarness.chatRequests.length).toBe(1);
+  expect(apiHarness.chatRequests[0].history?.map((message) => message.id)).toEqual(["budget-5", "budget-6"]);
 });
 
 test("saved Chat settings are scoped to sessionStorage and survive reload", async ({ page }) => {
@@ -290,10 +538,15 @@ test("saved Chat settings are scoped to sessionStorage and survive reload", asyn
   await page.getByRole("button", { name: "\u4f1a\u8bdd\u8bbe\u7f6e", exact: true }).first().click();
   const dialog = page.getByRole("dialog", { name: "\u4f1a\u8bdd\u8bbe\u7f6e", exact: true });
   await dialog.getByRole("button", { name: "\u5217\u8868\u5f0f", exact: true }).click();
+  await dialog.getByRole("tab", { name: "模型设置", exact: true }).click();
   await dialog.getByRole("slider", { name: "\u6a21\u578b\u6e29\u5ea6 \u00b7 Temperature", exact: true }).fill("0.2");
   await dialog.getByRole("slider", { name: "TOP-P", exact: true }).fill("0.5");
-  await dialog.getByRole("combobox", { name: "\u4e0a\u4e0b\u6587\u6570", exact: true }).selectOption("128");
-  await dialog.getByRole("combobox", { name: "\u6700\u5927 Token \u6570", exact: true }).selectOption("8192");
+  await dialog.getByRole("slider", { name: "\u6a21\u578b\u4e0a\u4e0b\u6587\u7a97\u53e3", exact: true }).fill("7");
+  await dialog.getByRole("slider", { name: "\u5f15\u7528\u5386\u53f2\u6d88\u606f", exact: true }).fill("7");
+  await chooseSettingsMenuOption(dialog, "标题总结模型", "Test Chat");
+  await dialog.getByRole("slider", { name: "总结引用消息", exact: true }).fill("3");
+  await enableMaximumTokenLimit(dialog);
+  await dialog.getByRole("spinbutton", { name: "最大 Token 数值", exact: true }).fill("262144");
   await dialog.getByRole("button", { name: "\u6d41\u5f0f\u8f93\u51fa", exact: true }).click();
   await dialog.getByRole("button", { name: "\u4fdd\u5b58\u8bbe\u7f6e", exact: true }).click();
 
@@ -306,9 +559,21 @@ test("saved Chat settings are scoped to sessionStorage and survive reload", asyn
     messageStyle: "list",
     temperature: 0.2,
     topP: 0.5,
-    contextSize: "128",
-    maxTokens: "8192",
-    streamOutput: false
+    contextSize: "1024",
+    contextMessageCount: null,
+    maxTokensEnabled: true,
+    maxTokens: 262144,
+    titleSummaryEnabled: true,
+    titleSummaryModelId: "test-chat",
+    titleSummaryMessageCount: 8,
+    streamOutput: false,
+    toolInvocationMode: "function",
+    responseVerbosity: "default",
+    showUsage: true,
+    renderMath: true,
+    enableSingleDollarMath: true,
+    showTokenEstimate: true,
+    sendShortcut: "enter"
   });
 
   await page.reload();
@@ -316,11 +581,79 @@ test("saved Chat settings are scoped to sessionStorage and survive reload", asyn
   await page.getByRole("button", { name: "\u4f1a\u8bdd\u8bbe\u7f6e", exact: true }).first().click();
   const reloadedDialog = page.getByRole("dialog", { name: "\u4f1a\u8bdd\u8bbe\u7f6e", exact: true });
   await expect(reloadedDialog.getByRole("button", { name: "\u5217\u8868\u5f0f", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await reloadedDialog.getByRole("tab", { name: "模型设置", exact: true }).click();
   await expect(reloadedDialog.getByRole("slider", { name: "\u6a21\u578b\u6e29\u5ea6 \u00b7 Temperature", exact: true })).toHaveValue("0.2");
   await expect(reloadedDialog.getByRole("slider", { name: "TOP-P", exact: true })).toHaveValue("0.5");
-  await expect(reloadedDialog.getByRole("combobox", { name: "\u4e0a\u4e0b\u6587\u6570", exact: true })).toHaveValue("128");
-  await expect(reloadedDialog.getByRole("combobox", { name: "\u6700\u5927 Token \u6570", exact: true })).toHaveValue("8192");
+  await expect(reloadedDialog.getByRole("slider", { name: "\u6a21\u578b\u4e0a\u4e0b\u6587\u7a97\u53e3", exact: true })).toHaveAttribute("aria-valuetext", "1M tokens");
+  await expect(reloadedDialog.getByRole("slider", { name: "\u5f15\u7528\u5386\u53f2\u6d88\u606f", exact: true })).toHaveAttribute("aria-valuetext", "不限");
+  await expect(reloadedDialog.getByRole("button", { name: "标题总结模型", exact: true })).toContainText("Test Chat");
+  await expect(reloadedDialog.getByRole("slider", { name: "总结引用消息", exact: true })).toHaveAttribute("aria-valuetext", "最近 8 条");
+  await expect(reloadedDialog.getByRole("button", { name: "\u6700\u5927 Token \u6570", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(reloadedDialog.getByRole("spinbutton", { name: "最大 Token 数值", exact: true })).toHaveValue("262144");
   await expect(reloadedDialog.getByRole("button", { name: "\u6d41\u5f0f\u8f93\u51fa", exact: true })).toHaveAttribute("aria-pressed", "false");
+});
+
+test("Chat input settings control command menus, token estimates, long paste attachments, and send shortcut", async ({ page, apiHarness }) => {
+  await page.goto("/chat");
+  await waitForPublicModule(page, publicDestinations[0]);
+
+  await page.getByRole("button", { name: "会话设置", exact: true }).first().click();
+  const settings = page.getByRole("dialog", { name: "会话设置", exact: true });
+  await settings.getByRole("tab", { name: "输入设置", exact: true }).click();
+  await chooseSettingsMenuOption(settings, "发送快捷键", "Ctrl + Enter");
+  await settings.getByRole("button", { name: "长文本粘贴为文件", exact: true }).click();
+  await settings.getByRole("button", { name: "启用 / 和 $ 快捷菜单", exact: true }).click();
+  await settings.getByRole("button", { name: "保存设置", exact: true }).click();
+
+  const session = page.locator(".figma-chat-session").first();
+  const composer = session.getByLabel("消息内容", { exact: true });
+  await composer.fill("普通回车只换行");
+  await composer.press("Enter");
+  expect(apiHarness.chatRequests).toHaveLength(0);
+  await expect(composer).toHaveValue("普通回车只换行\n");
+  await composer.press("Control+Enter");
+  await expect.poll(() => apiHarness.chatRequests.length).toBe(1);
+
+  const pastedText = "长文本附件内容".repeat(320);
+  await composer.evaluate((element, value) => {
+    const event = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", {
+      value: { getData: (type: string) => type === "text/plain" ? value : "" }
+    });
+    element.dispatchEvent(event);
+  }, pastedText);
+  const attachmentTray = session.getByLabel("待发送附件", { exact: true });
+  await expect(attachmentTray).toBeVisible();
+  await expect(attachmentTray).toContainText("粘贴内容-");
+  await expect(composer).toHaveValue("");
+
+  await composer.fill("/");
+  await expect(session.getByRole("listbox")).toHaveCount(0);
+  await expect(session.getByText(/预估 .* Token/)).toBeVisible();
+  await composer.fill("");
+  await session.getByRole("button", { name: "发送", exact: true }).click();
+  await expect.poll(() => apiHarness.chatRequests.length).toBe(2);
+  expect(apiHarness.chatRequests[1]).toMatchObject({
+    content: "请分析我上传的文本附件。",
+    displayContent: "请分析我上传的文本附件。",
+    attachments: [{ kind: "text", text: pastedText }]
+  });
+});
+
+test("saved prompt tool mode is carried by the Chat request", async ({ page, apiHarness }) => {
+  await page.goto("/chat");
+  await waitForPublicModule(page, publicDestinations[0]);
+  await page.getByRole("button", { name: "会话设置", exact: true }).first().click();
+  const settings = page.getByRole("dialog", { name: "会话设置", exact: true });
+  await settings.getByRole("tab", { name: "模型设置", exact: true }).click();
+  await chooseSettingsMenuOption(settings, "工具调用方式", "使用提示词");
+  await settings.getByRole("button", { name: "保存设置", exact: true }).click();
+
+  const session = page.locator(".figma-chat-session").first();
+  await session.getByLabel("消息内容", { exact: true }).fill("验证提示词工具模式");
+  await session.getByRole("button", { name: "发送", exact: true }).click();
+  await expect.poll(() => apiHarness.chatRequests.length).toBe(1);
+  expect(apiHarness.chatRequests[0]).toMatchObject({ toolInvocationMode: "prompt" });
 });
 
 test("reasoning menu exposes six levels, keyboard selection, and the shared request value", async ({ page, apiHarness }) => {
@@ -392,9 +725,10 @@ test("image attachment limit persists in sessionStorage and supports multi-image
   const settingsTrigger = page.getByRole("button", { name: "会话设置", exact: true }).first();
   await settingsTrigger.click();
   const settings = page.getByRole("dialog", { name: "会话设置", exact: true });
-  const imageLimit = settings.getByRole("combobox", { name: "单次图片上限", exact: true });
-  await expect(imageLimit).toHaveValue("4");
-  await imageLimit.selectOption("2");
+  await settings.getByRole("tab", { name: "模型设置", exact: true }).click();
+  const imageLimit = settings.getByRole("button", { name: "单次图片上限", exact: true });
+  await expect(imageLimit).toContainText("4 张");
+  await chooseSettingsMenuOption(settings, "单次图片上限", "2 张");
   await settings.getByRole("button", { name: "保存设置", exact: true }).click();
 
   const stored = await page.evaluate((key) => JSON.parse(window.sessionStorage.getItem(key) || "{}"), chatSettingsStorageKey);
@@ -403,8 +737,10 @@ test("image attachment limit persists in sessionStorage and supports multi-image
   await page.reload();
   await waitForPublicModule(page, publicDestinations[0]);
   await settingsTrigger.click();
-  await expect(page.getByRole("dialog", { name: "会话设置", exact: true }).getByRole("combobox", { name: "单次图片上限", exact: true })).toHaveValue("2");
-  await page.getByRole("dialog", { name: "会话设置", exact: true }).getByRole("button", { name: "保存设置", exact: true }).click();
+  const reloadedSettings = page.getByRole("dialog", { name: "会话设置", exact: true });
+  await reloadedSettings.getByRole("tab", { name: "模型设置", exact: true }).click();
+  await expect(reloadedSettings.getByRole("button", { name: "单次图片上限", exact: true })).toContainText("2 张");
+  await reloadedSettings.getByRole("button", { name: "保存设置", exact: true }).click();
 
   const session = page.locator(".figma-chat-session").first();
   const input = session.locator('input[type="file"][multiple]');
@@ -413,15 +749,30 @@ test("image attachment limit persists in sessionStorage and supports multi-image
     { name: "one.png", mimeType: "image/png", buffer: Buffer.from("one") },
     { name: "two.png", mimeType: "image/png", buffer: Buffer.from("two") }
   ]);
-  await expect(session.locator('[data-testid="chat-image-attachment"]')).toHaveCount(2);
+  const attachmentTray = session.getByLabel("待发送附件", { exact: true });
+  const attachments = session.locator('[data-testid="chat-image-attachment"]');
+  await expect(attachments).toHaveCount(2);
   await expect(session.getByText("已选择 2 / 2", { exact: true })).toBeVisible();
+  const attachmentLayout = await attachmentTray.evaluate((element) => ({
+    outsideComposer: !element.closest(".figma-composer"),
+    followedByComposer: element.nextElementSibling?.classList.contains("figma-composer") || false
+  }));
+  expect(attachmentLayout).toEqual({ outsideComposer: true, followedByComposer: true });
+  const attachmentBoxes = await attachments.evaluateAll((elements) => elements.map((element) => {
+    const box = element.getBoundingClientRect();
+    return { width: box.width, height: box.height };
+  }));
+  expect(attachmentBoxes.every(({ width, height }) => width <= 150 && height <= 50)).toBe(true);
+  const composerBox = await session.locator(".figma-composer").boundingBox();
+  expect(composerBox?.height).toBeLessThanOrEqual(96);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
 
   await input.setInputFiles([{ name: "three.png", mimeType: "image/png", buffer: Buffer.from("three") }]);
-  await expect(session.locator('[data-testid="chat-image-attachment"]')).toHaveCount(2);
+  await expect(attachments).toHaveCount(2);
   await expect(session.getByRole("alert")).toContainText("最多上传 2 张图片");
 
   await session.getByRole("button", { name: "移除图片 one.png", exact: true }).click();
-  await expect(session.locator('[data-testid="chat-image-attachment"]')).toHaveCount(1);
+  await expect(attachments).toHaveCount(1);
   await expect(session.getByText("已选择 1 / 2", { exact: true })).toBeVisible();
 
   await session.getByLabel("消息内容", { exact: true }).fill("携带多图发送");

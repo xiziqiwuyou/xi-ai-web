@@ -45,7 +45,7 @@ export const moduleMeta: Record<ModuleId, ModuleMeta> = {
   chat: {
     label: "AI 对话",
     title: "AI 对话",
-    description: "选择模型和智能体，用自己的 API URL 和 Key 发起多轮对话。",
+    description: "选择模型和智能体，用自己的 API Key 发起多轮对话。",
     highlights: ["模型选择", "流式回复", "多模态附件"],
     icon: MessageCircle,
     group: "core",

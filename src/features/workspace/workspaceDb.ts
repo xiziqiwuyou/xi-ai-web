@@ -4,6 +4,7 @@ import type {
   AgentWorkflowDefinition,
   Conversation,
   GalleryItem,
+  ImageGenerationTimingRecord,
   KnowledgeDocument,
   MediaJob,
   UserAgentDefinition,
@@ -13,7 +14,7 @@ import type {
 } from "../../types";
 
 export const workspaceDbName = "xi-ai-web-workspace";
-export const workspaceDbVersion = 2;
+export const workspaceDbVersion = 3;
 
 export type WorkspaceMetaRecord = {
   key: string;
@@ -24,6 +25,7 @@ type WorkspaceStoreMap = {
   meta: WorkspaceMetaRecord;
   conversations: Conversation;
   galleryItems: GalleryItem;
+  imageGenerationHistory: ImageGenerationTimingRecord;
   knowledgeDocuments: KnowledgeDocument;
   mediaJobs: MediaJob;
   userAgents: UserAgentDefinition;
@@ -40,6 +42,7 @@ export type WorkspaceDataStoreName = Exclude<WorkspaceStoreName, "meta">;
 export const workspaceDataStoreNames: readonly WorkspaceDataStoreName[] = [
   "conversations",
   "galleryItems",
+  "imageGenerationHistory",
   "knowledgeDocuments",
   "mediaJobs",
   "userAgents",
@@ -54,6 +57,7 @@ const storeKeyPaths: Record<WorkspaceStoreName, "id" | "key"> = {
   meta: "key",
   conversations: "id",
   galleryItems: "id",
+  imageGenerationHistory: "id",
   knowledgeDocuments: "id",
   mediaJobs: "id",
   userAgents: "id",
@@ -264,6 +268,7 @@ export async function readWorkspaceSnapshot(): Promise<WorkspaceSnapshot> {
     tx.oncomplete = () => resolve({
       conversations: values.get("conversations") as Conversation[] || [],
       galleryItems: values.get("galleryItems") as GalleryItem[] || [],
+      imageGenerationHistory: values.get("imageGenerationHistory") as ImageGenerationTimingRecord[] || [],
       knowledgeDocuments: values.get("knowledgeDocuments") as KnowledgeDocument[] || [],
       mediaJobs: values.get("mediaJobs") as MediaJob[] || [],
       userAgents: values.get("userAgents") as UserAgentDefinition[] || [],

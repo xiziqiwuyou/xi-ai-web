@@ -940,10 +940,28 @@
   font-weight: 750;
 }
 
+.knowledge-dialog-field .figma-menu-label {
+  color: var(--xhs-ink);
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.knowledge-dialog-field .figma-menu-trigger {
+  min-height: 42px;
+  border-color: var(--xhs-line-strong);
+  border-radius: 11px;
+  background: var(--xhs-soft-2);
+}
+
+.knowledge-dialog-field .figma-menu-popover {
+  left: 0;
+  right: auto;
+  width: 100%;
+}
+
 .knowledge-dialog-form input,
 .knowledge-dialog-form textarea,
-.knowledge-dialog-form select,
-.knowledge-dialog-field select {
+.knowledge-dialog-form select {
   width: 100%;
   min-height: 42px;
   padding: 0 11px;
@@ -963,8 +981,7 @@
 
 .knowledge-dialog-form input:focus,
 .knowledge-dialog-form textarea:focus,
-.knowledge-dialog-form select:focus,
-.knowledge-dialog-field select:focus {
+.knowledge-dialog-form select:focus {
   border-color: var(--xhs-blue);
   box-shadow: var(--focus-ring);
 }

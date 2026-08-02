@@ -1,0 +1,4 @@
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Public Chat/Image verification and browser contracts"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Session-only BYOK and browser persistence boundaries"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Provider routing, request safety, and production checks"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"End-to-end payload and trust-boundary review"}

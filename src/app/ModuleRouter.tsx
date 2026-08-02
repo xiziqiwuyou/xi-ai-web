@@ -1,4 +1,10 @@
 import { lazy } from "react";
+import {
+  loadAutomationModule,
+  loadChatModule,
+  loadLangflowWorkflowModule,
+  loadStudioModule
+} from "./publicModuleLoader";
 import type {
   Assistant,
   AppPreset,
@@ -13,10 +19,10 @@ import type {
   UserProviderConfig
 } from "../types";
 
-const ChatModule = lazy(() => import("../features/chat/ChatModule"));
-const StudioModule = lazy(() => import("../features/studio/StudioModule"));
-const AutomationModule = lazy(() => import("../features/automation/AutomationModule"));
-const LangflowWorkflowModule = lazy(() => import("../features/automation/LangflowWorkflowModule"));
+const ChatModule = lazy(loadChatModule);
+const StudioModule = lazy(loadStudioModule);
+const AutomationModule = lazy(loadAutomationModule);
+const LangflowWorkflowModule = lazy(loadLangflowWorkflowModule);
 
 type ModuleRouterProps = {
   activeModule: ModuleId;
@@ -83,9 +89,7 @@ function ModuleRouter({
         modelCatalog={modelCatalog}
         toolSettings={toolSettings || []}
         userProvider={userProvider}
-        searchService={searchService}
         onUserProviderChange={onUserProviderChange}
-        onSearchServiceChange={onSearchServiceChange}
         onRequestApiConfig={onRequestApiConfig}
         onConversationsChange={onConversationsChange}
         onRefresh={onRefresh}

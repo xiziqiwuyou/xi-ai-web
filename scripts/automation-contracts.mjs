@@ -50,7 +50,7 @@ const providerRequests = [];
 const searchRequests = [];
 const provider = http.createServer(async (request, response) => {
   const body = JSON.parse(await collectBody(request));
-  if (request.url?.endsWith("/search/paas/v4/web_search")) {
+  if (request.url?.endsWith("/v1/paas/v4/web_search")) {
     searchRequests.push({ url: request.url, body, authorization: request.headers.authorization });
     response.writeHead(200, { "Content-Type": "application/json" });
     response.end(JSON.stringify({
@@ -110,6 +110,9 @@ const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "xi-ai-automation-contract
 const legacyCreatedAt = "2026-01-01T00:00:00.000Z";
 fs.writeFileSync(path.join(dataDir, "app-data.json"), JSON.stringify({
   version: 6,
+  settings: {
+    upstreamBaseUrl: `http://127.0.0.1:${providerPort}/v1`
+  },
   assistants: [{
     id: "legacy-general-assistant",
     name: "通用助手",
@@ -120,13 +123,14 @@ fs.writeFileSync(path.join(dataDir, "app-data.json"), JSON.stringify({
     updatedAt: legacyCreatedAt
   }]
 }));
-const app = spawn(process.execPath, ["server/index.mjs", "--production"], {
+const app = spawn(process.execPath, ["server/index.mjs"], {
   cwd: rootDir,
   env: {
     ...process.env,
     PORT: String(appPort),
     DATA_DIR: dataDir,
     ADMIN_PASSWORD: "automation-contract-admin",
+    ALLOW_LOCAL_UPSTREAM: "true",
     NODE_ENV: "test"
   },
   stdio: ["ignore", "pipe", "pipe"]
@@ -138,12 +142,12 @@ app.stderr.on("data", (chunk) => { appOutput += chunk.toString(); });
 
 const appBaseUrl = `http://127.0.0.1:${appPort}`;
 const connection = {
-  baseUrl: `http://127.0.0.1:${providerPort}/v1`,
+  baseUrl: "http://169.254.169.254/latest/meta-data",
   apiKey: "automation-contract-key"
 };
 const searchService = {
   provider: "glm",
-  baseUrl: `http://127.0.0.1:${providerPort}/search`,
+  baseUrl: "http://127.0.0.1:1/ignored-client-search-url",
   apiKey: "automation-search-contract-key",
   searchEngine: "search_std",
   count: 4,
@@ -187,13 +191,16 @@ try {
   assert.deepEqual(migratedLegacyAssistant.tags, ["问答", "规划", "执行"]);
   assert.equal(migratedLegacyAssistant.enabled, true);
   assert.equal(migratedLegacyAssistant.updatedAt, legacyCreatedAt, "normalization must preserve update timestamps");
-  assert.equal(JSON.parse(fs.readFileSync(path.join(dataDir, "app-data.json"), "utf8")).version, 9);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dataDir, "app-data.json"), "utf8")).version, 12);
   const migratedOpenAi = bootstrap.modelCatalog.find((model) => model.id === "openai-gpt-4-1-mini");
   const migratedKimi = bootstrap.modelCatalog.find((model) => model.id === "kimi-k3");
   const migratedQwenFlash = bootstrap.modelCatalog.find((model) => model.id === "qwen3-6-flash");
   assert(migratedOpenAi);
   assert(migratedKimi);
   assert(migratedQwenFlash);
+  assert.equal(migratedOpenAi.endpointProtocol, "openai-responses");
+  assert.equal(migratedKimi.endpointProtocol, "openai-chat");
+  assert.equal(migratedQwenFlash.endpointProtocol, "openai-chat");
   assert(migratedOpenAi.capabilities.includes("webSearch"));
   assert(migratedOpenAi.capabilities.includes("codeExecution"));
   assert(!migratedKimi.capabilities.includes("webSearch"));
@@ -345,6 +352,7 @@ try {
   assert.equal(independentAgent.raw.toolTrace.length, 1, "independent search must be visible in the request trace");
   assert.equal(independentAgent.raw.toolTrace[0].toolName, "web_search");
   assert.equal(searchRequests.length, 1);
+  assert.equal(searchRequests[0].url, "/v1/paas/v4/web_search");
   assert.equal(searchRequests[0].authorization, `Bearer ${searchService.apiKey}`);
   assert.equal(providerRequests.length, 4);
   assert.equal(providerRequests[3].url, "/v1/chat/completions");

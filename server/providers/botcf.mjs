@@ -5,6 +5,8 @@ import {
   fetchMultipartForm,
   providerUrl
 } from "./types.mjs";
+
+const IMAGE_RESPONSE_LIMIT_BYTES = 64 * 1024 * 1024;
 import { createOpenAICompatibleAdapter } from "./openai-compatible.mjs";
 
 function authHeaders(provider) {
@@ -88,7 +90,8 @@ async function generateViaImagesApi({
     return fetchJson(providerUrl(provider, "/images/generations"), {
       headers: authHeaders(provider),
       body: fields,
-      signal
+      signal,
+      maxResponseBytes: IMAGE_RESPONSE_LIMIT_BYTES
     });
   }
 
@@ -105,7 +108,8 @@ async function generateViaImagesApi({
         ...fields,
         images: urls.map((image_url) => ({ image_url }))
       },
-      signal
+      signal,
+      maxResponseBytes: IMAGE_RESPONSE_LIMIT_BYTES
     });
   }
   if (!files.length) throw new Error("BotCF image editing requires at least one reference image");
@@ -113,7 +117,8 @@ async function generateViaImagesApi({
     headers: authHeaders(provider),
     fields,
     files,
-    signal
+    signal,
+    maxResponseBytes: IMAGE_RESPONSE_LIMIT_BYTES
   });
 }
 
@@ -149,7 +154,8 @@ async function generateViaGeminiChat({
         ]
       }]
     },
-    signal
+    signal,
+    maxResponseBytes: IMAGE_RESPONSE_LIMIT_BYTES
   });
 }
 

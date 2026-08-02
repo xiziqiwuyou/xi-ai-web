@@ -6,8 +6,14 @@ import { createKimiAdapter } from "../server/providers/kimi.mjs";
 import { createOpenAIAdapter } from "../server/providers/openai.mjs";
 import { createOpenAICompatibleAdapter } from "../server/providers/openai-compatible.mjs";
 import { createQwenAdapter } from "../server/providers/qwen.mjs";
-import { defaultCapabilities } from "../server/providers/types.mjs";
-import { buildRuntimeProvider, findModelEntry } from "../server/registry/model-registry.mjs";
+import { createProviderAdapter } from "../server/providers/registry.mjs";
+import { defaultCapabilities, fetchJson, providerUrl } from "../server/providers/types.mjs";
+import {
+  buildRuntimeProvider,
+  defaultModelCatalog,
+  findModelEntry,
+  normalizeCatalogEntry
+} from "../server/registry/model-registry.mjs";
 
 const originalFetch = globalThis.fetch;
 const imageDataUrl = "data:image/png;base64,aW1hZ2U=";
@@ -217,7 +223,44 @@ async function testCatalogModelMapping() {
   assertEqual(entry.id, stableModelId, "Catalog resolution preserves the stable request ID");
   assertEqual(entry.label, shortDisplayLabel, "Catalog resolution preserves the frontend display label");
   assertEqual(entry.model, actualRequestModel, "Catalog resolution selects the actual provider model name");
+  assertEqual(entry.endpointProtocol, "openai-responses", "Legacy OpenAI catalog records default to Responses");
   assertEqual(findModelEntry(catalog, shortDisplayLabel), undefined, "Display labels must not resolve as request IDs");
+  assertEqual(
+    defaultModelCatalog().find((model) => model.id === "compatible-chat")?.contextWindowTokens,
+    1_047_576,
+    "Known default models expose their inferred context window"
+  );
+  assertEqual(
+    defaultModelCatalog().find((model) => model.id === "compatible-chat")?.maxInputCharacters,
+    100_000,
+    "Default models expose an independent maximum input character count"
+  );
+  assertEqual(
+    normalizeCatalogEntry({
+      id: "legacy-claude",
+      vendor: "anthropic",
+      model: "claude-legacy",
+      label: "Legacy Claude",
+      capabilities: ["chat"],
+      defaultFor: [],
+      enabled: true
+    }).contextWindowTokens,
+    200_000,
+    "Legacy catalog records receive a conservative vendor context window"
+  );
+  assertEqual(
+    normalizeCatalogEntry({
+      id: "legacy-input-limit",
+      vendor: "openai-compatible",
+      model: "legacy-input-limit",
+      label: "Legacy Input Limit",
+      capabilities: ["chat"],
+      defaultFor: [],
+      enabled: true
+    }).maxInputCharacters,
+    100_000,
+    "Legacy catalog records receive an independent input character limit"
+  );
 
   const runtimeProvider = buildRuntimeProvider(entry, {
     baseUrl: "https://catalog.contract.test/v1",
@@ -225,6 +268,7 @@ async function testCatalogModelMapping() {
   });
   assertEqual(runtimeProvider.name, shortDisplayLabel, "Runtime provider keeps the frontend display label");
   assertEqual(runtimeProvider.defaultModel, actualRequestModel, "Runtime provider defaults to the actual model name");
+  assertEqual(runtimeProvider.endpointProtocol, "openai-responses", "Runtime provider preserves the model endpoint protocol");
 
   const adapter = createOpenAIAdapter(runtimeProvider);
   await withMockFetch("catalog model mapping", [
@@ -243,9 +287,164 @@ async function testCatalogModelMapping() {
   });
 }
 
+async function testModelEndpointProtocolRouting() {
+  const chatCapabilities = ["chat", "vision", "toolCalling"];
+
+  const openAiChat = {
+    ...provider("openai", chatCapabilities, "https://routing.contract.test"),
+    endpointProtocol: "openai-chat"
+  };
+  await withMockFetch("OpenAI Chat protocol routing", [
+    (request) => {
+      assertEqual(request.url, "https://routing.contract.test/v1/chat/completions", "OpenAI Chat exact endpoint");
+      const body = parseJsonBody(request);
+      assert(Array.isArray(body.messages), "OpenAI Chat uses messages");
+      assertAbsent(body, "input", "OpenAI Chat must not use Responses input");
+      return jsonResponse({ choices: [{ message: { content: "chat routed" } }] });
+    }
+  ], async () => {
+    const text = await createProviderAdapter(openAiChat).completeText({
+      model: "gpt-chat-route",
+      messages: sampleMessages()
+    });
+    assertEqual(text, "chat routed", "OpenAI Chat response parser");
+  });
+
+  const openAiResponses = { ...openAiChat, endpointProtocol: "openai-responses" };
+  await withMockFetch("OpenAI Responses protocol routing", [
+    (request) => {
+      assertEqual(request.url, "https://routing.contract.test/v1/responses", "OpenAI Responses exact endpoint");
+      const body = parseJsonBody(request);
+      assert(Array.isArray(body.input), "OpenAI Responses uses input items");
+      assertAbsent(body, "messages", "OpenAI Responses must not use Chat messages");
+      return jsonResponse({ output_text: "responses routed" });
+    }
+  ], async () => {
+    const text = await createProviderAdapter(openAiResponses).completeText({
+      model: "gpt-responses-route",
+      messages: sampleMessages()
+    });
+    assertEqual(text, "responses routed", "OpenAI Responses parser");
+  });
+
+  const openAiImageWithStoredResponses = {
+    ...provider("openai", ["image", "imageEdit"], "https://routing.contract.test"),
+    endpointProtocol: "openai-responses"
+  };
+  await withMockFetch("Stored Chat protocol does not route OpenAI image generation", [
+    (request) => {
+      assertEqual(
+        request.url,
+        "https://routing.contract.test/v1/images/generations",
+        "OpenAI image generation keeps its dedicated endpoint"
+      );
+      const body = parseJsonBody(request);
+      assertEqual(body.model, "gpt-image-route", "OpenAI image route keeps the mapped model");
+      return jsonResponse({ data: [{ b64_json: "aW1hZ2U=" }] });
+    }
+  ], async () => {
+    await createProviderAdapter(openAiImageWithStoredResponses).generateImage({
+      model: "gpt-image-route",
+      prompt: "dedicated image endpoint",
+      mode: "generate",
+      count: 1
+    });
+  });
+
+  const anthropicMessages = { ...openAiChat, endpointProtocol: "anthropic-messages" };
+  await withMockFetch("Anthropic Messages protocol routing", [
+    (request) => {
+      assertEqual(request.url, "https://routing.contract.test/v1/messages", "Anthropic Messages exact endpoint");
+      assertEqual(headerValue(request.init.headers, "x-api-key"), anthropicMessages.apiKey, "Anthropic protocol auth header");
+      const body = parseJsonBody(request);
+      assert(Array.isArray(body.messages), "Anthropic protocol uses Messages content");
+      return jsonResponse({ content: [{ type: "text", text: "anthropic routed" }] });
+    }
+  ], async () => {
+    const text = await createProviderAdapter(anthropicMessages).completeText({
+      model: "claude-route",
+      messages: sampleMessages()
+    });
+    assertEqual(text, "anthropic routed", "Anthropic Messages parser");
+  });
+
+  const geminiGenerateContent = { ...openAiChat, endpointProtocol: "gemini-generate-content" };
+  await withMockFetch("Gemini generateContent protocol routing", [
+    (request) => {
+      assertEqual(
+        request.url,
+        "https://routing.contract.test/v1beta/models/gemini-route:generateContent",
+        "Gemini generateContent exact endpoint"
+      );
+      assertEqual(headerValue(request.init.headers, "x-goog-api-key"), geminiGenerateContent.apiKey, "Gemini protocol auth header");
+      const body = parseJsonBody(request);
+      assert(Array.isArray(body.contents), "Gemini protocol uses contents and parts");
+      return jsonResponse({ candidates: [{ content: { parts: [{ text: "gemini routed" }] } }] });
+    }
+  ], async () => {
+    const text = await createProviderAdapter(geminiGenerateContent).completeText({
+      model: "gemini-route",
+      messages: sampleMessages()
+    });
+    assertEqual(text, "gemini routed", "Gemini generateContent parser");
+  });
+
+  const kimiChat = {
+    ...provider("kimi", chatCapabilities, "https://routing.contract.test"),
+    endpointProtocol: "openai-chat"
+  };
+  await withMockFetch("Kimi model routed through OpenAI Chat", [
+    (request) => {
+      assertEqual(request.url, "https://routing.contract.test/v1/chat/completions", "Kimi exact Chat endpoint");
+      const body = parseJsonBody(request);
+      assertEqual(body.max_completion_tokens, 4096, "Kimi keeps its Chat parameter normalization");
+      assertAbsent(body, "max_tokens", "Kimi removes the generic max_tokens field");
+      assertAbsent(body, "temperature", "Kimi fixed sampling removes temperature");
+      return jsonResponse({ choices: [{ message: { content: "kimi routed" } }] });
+    }
+  ], async () => {
+    const text = await createProviderAdapter(kimiChat).completeText({
+      model: "kimi-k2.6",
+      messages: sampleMessages(),
+      temperature: 0.5,
+      maxTokens: 4096
+    });
+    assertEqual(text, "kimi routed", "Kimi Chat response parser");
+  });
+
+  const geminiVendorWithChat = {
+    ...provider("gemini", [...chatCapabilities, "image", "imageEdit"], "https://routing.contract.test"),
+    endpointProtocol: "openai-chat"
+  };
+  const composedAdapter = createProviderAdapter(geminiVendorWithChat);
+  await withMockFetch("Chat protocol does not replace Gemini media methods", [
+    (request) => {
+      assertEqual(request.url, "https://routing.contract.test/v1/chat/completions", "Gemini vendor chat override endpoint");
+      return jsonResponse({ choices: [{ message: { content: "gateway chat" } }] });
+    },
+    (request) => {
+      assertEqual(
+        request.url,
+        "https://routing.contract.test/v1beta/models/gemini-image-route:generateContent",
+        "Gemini media keeps its native endpoint"
+      );
+      return jsonResponse({ candidates: [{ content: { parts: [{ inlineData: { mimeType: "image/png", data: "aW1hZ2U=" } }] } }] });
+    }
+  ], async () => {
+    await composedAdapter.completeText({ model: "gemini-chat-route", messages: sampleMessages() });
+    await composedAdapter.generateImage({
+      model: "gemini-image-route",
+      prompt: "media routing",
+      mode: "generate",
+      count: 1
+    });
+  });
+}
+
 async function testOpenAIAdapter() {
   const openai = provider("openai", ["chat", "vision", "toolCalling", "webSearch", "codeExecution", "image", "imageEdit", "tts", "stt", "embedding"]);
   const adapter = createOpenAIAdapter(openai);
+  let observedOpenAIUsage = null;
 
   await withMockFetch("openai chat", [
     (request) => {
@@ -257,7 +456,11 @@ async function testOpenAIAdapter() {
       assertEqual(body.input[0].role, "user", "OpenAI input role");
       assertEqual(body.top_p, 0.8, "OpenAI chat top-p");
       assertEqual(body.max_output_tokens, 2048, "OpenAI chat maximum output tokens");
-      return jsonResponse({ output_text: "openai text" });
+      assertEqual(body.text.verbosity, "high", "OpenAI response verbosity");
+      return jsonResponse({
+        output_text: "openai text",
+        usage: { input_tokens: 120, output_tokens: 30, total_tokens: 150 }
+      });
     }
   ], async () => {
     const text = await adapter.completeText({
@@ -265,9 +468,32 @@ async function testOpenAIAdapter() {
       messages: sampleMessages(),
       temperature: 0.2,
       topP: 0.8,
-      maxTokens: 2048
+      maxTokens: 2048,
+      responseVerbosity: "high",
+      onUsage: (usage) => {
+        observedOpenAIUsage = usage;
+      }
     });
     assertEqual(text, "openai text", "OpenAI response text extraction");
+    assertEqual(JSON.stringify(observedOpenAIUsage), JSON.stringify({
+      inputTokens: 120,
+      outputTokens: 30,
+      totalTokens: 150
+    }), "OpenAI response usage projection");
+  });
+
+  await withMockFetch("openai default verbosity omission", [
+    (request) => {
+      const body = parseJsonBody(request);
+      assertAbsent(body, "text", "OpenAI default verbosity must preserve provider behavior by omission");
+      return jsonResponse({ output_text: "default verbosity" });
+    }
+  ], async () => {
+    await adapter.completeText({
+      model: "gpt-contract",
+      messages: sampleMessages(),
+      responseVerbosity: undefined
+    });
   });
 
   await assertReasoningMappings("openai reasoning", adapter, {
@@ -311,6 +537,7 @@ async function testOpenAIAdapter() {
     (request) => {
       const body = parseJsonBody(request);
       assertEqual(body.tools[0].type, "function", "OpenAI tool type");
+      assertEqual(body.tools[0].strict, true, "OpenAI tool schema is strict");
       return jsonResponse({
         id: "resp-1",
         output: [{ type: "function_call", call_id: "call-1", name: "lookup", arguments: "{\"query\":\"x\"}" }]
@@ -1257,8 +1484,110 @@ async function testDeepSeekAdapter() {
 }
 
 async function testFetchHelpers() {
-  const helperProvider = provider("openai-compatible", ["chat"], "https://helper.contract.test/v1");
+  assertEqual(
+    providerUrl({ kind: "openai", baseUrl: "https://api.xi-ai.cn" }, "/responses"),
+    "https://api.xi-ai.cn/v1/responses",
+    "OpenAI bare managed domain receives the v1 API prefix"
+  );
+  assertEqual(
+    providerUrl({ kind: "anthropic", baseUrl: "https://api.xi-ai.cn" }, "/messages"),
+    "https://api.xi-ai.cn/v1/messages",
+    "Anthropic bare managed domain receives the v1 API prefix"
+  );
+  assertEqual(
+    providerUrl({ kind: "gemini", baseUrl: "https://api.xi-ai.cn" }, "/models/gemini-test:generateContent"),
+    "https://api.xi-ai.cn/v1beta/models/gemini-test:generateContent",
+    "Gemini bare managed domain receives the v1beta API prefix"
+  );
+  assertEqual(
+    providerUrl({ kind: "gemini", baseUrl: "https://api.xi-ai.cn/v1" }, "/models/gemini-test:generateContent"),
+    "https://api.xi-ai.cn/v1beta/models/gemini-test:generateContent",
+    "Gemini routing replaces an incompatible v1 base suffix"
+  );
+  assertEqual(
+    providerUrl({ kind: "openai", baseUrl: "https://api.xi-ai.cn/v1beta" }, "/responses"),
+    "https://api.xi-ai.cn/v1/responses",
+    "OpenAI routing replaces an incompatible v1beta base suffix"
+  );
+  assertEqual(
+    providerUrl({ kind: "openai", baseUrl: "https://api.xi-ai.cn/v1" }, "/v1/chat/completions"),
+    "https://api.xi-ai.cn/v1/chat/completions",
+    "Explicit endpoint versions do not duplicate a base version suffix"
+  );
+  for (const kind of ["openai-compatible", "kimi", "deepseek", "qwen", "botcf"]) {
+    assertEqual(
+      providerUrl({ kind, baseUrl: "https://api.xi-ai.cn" }, "/chat/completions"),
+      "https://api.xi-ai.cn/v1/chat/completions",
+      `${kind} bare managed domain receives the v1 API prefix`
+    );
+  }
+  assertEqual(
+    providerUrl({ kind: "openai-compatible", baseUrl: "https://gateway.contract.test/custom/v1" }, "/chat/completions"),
+    "https://gateway.contract.test/custom/v1/chat/completions",
+    "Existing versioned custom provider paths are preserved"
+  );
+  assertEqual(
+    providerUrl({ kind: "openai-compatible", baseUrl: "https://gateway.contract.test/custom" }, "/v1/chat/completions"),
+    "https://gateway.contract.test/custom/v1/chat/completions",
+    "Explicit endpoint versions are not duplicated"
+  );
+
+  const helperProvider = provider("openai-compatible", ["chat", "tts"], "https://helper.contract.test");
   const adapter = createOpenAICompatibleAdapter(helperProvider);
+  await withMockFetch("bare provider endpoint", [
+    (request) => {
+      assertEqual(request.url, "https://helper.contract.test/v1/chat/completions", "Bare compatible endpoint path");
+      return new Response(JSON.stringify({ choices: [{ message: { content: "plain JSON compatibility" } }] }), {
+        headers: { "content-type": "text/plain" }
+      });
+    }
+  ], async () => {
+    const text = await adapter.completeText({ model: "helper-chat", messages: sampleMessages() });
+    assertEqual(text, "plain JSON compatibility", "Valid JSON remains compatible when an upstream omits its JSON content type");
+  });
+
+  await withMockFetch("html success rejection", [
+    () => new Response("<!doctype html><html><title>Gateway</title></html>", {
+      status: 200,
+      headers: { "content-type": "text/html; charset=utf-8" }
+    })
+  ], async () => {
+    await assertRejects(
+      () => adapter.completeText({ model: "helper-chat", messages: sampleMessages() }),
+      /HTML.*\/v1/u,
+      "Successful HTML landing pages must not become model text"
+    );
+  });
+
+  await withMockFetch("malformed JSON rejection", [
+    () => new Response("not-json", { status: 200, headers: { "content-type": "text/plain" } })
+  ], async () => {
+    await assertRejects(
+      () => adapter.completeText({ model: "helper-chat", messages: sampleMessages() }),
+      /无法解析的 JSON/u,
+      "Malformed non-HTML provider responses must fail"
+    );
+  });
+
+  for (const [label, contentType] of [
+    ["declared HTML", "Text/HTML; charset=utf-8"],
+    ["mislabeled HTML", "text/plain"],
+    ["unlabeled HTML", ""]
+  ]) {
+    await withMockFetch(`html asset rejection: ${label}`, [
+      () => new Response("<!doctype html><html><body>Landing page</body></html>", {
+        status: 200,
+        headers: contentType ? { "content-type": contentType } : undefined
+      })
+    ], async () => {
+      await assertRejects(
+        () => adapter.synthesizeSpeech({ model: "helper-tts", input: "hello", voice: "alloy" }),
+        /HTML 页面而不是媒体资源/u,
+        `${label} landing pages must not become binary assets`
+      );
+    });
+  }
+
   await withMockFetch("fetch error compact", [
     () => new Response("x".repeat(1200), { status: 502, headers: { "content-type": "text/plain" } })
   ], async () => {
@@ -1276,10 +1605,27 @@ async function testFetchHelpers() {
     }
     throw new Error("fetchJson error path should throw");
   });
+
+  await withMockFetch("bounded provider response", [
+    () => new Response(JSON.stringify({ data: "x".repeat(2_000) }), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    })
+  ], async () => {
+    await assertRejects(
+      () => fetchJson("https://helper.contract.test/v1/large", {
+        body: {},
+        maxResponseBytes: 1_000
+      }),
+      /exceeds 1 MB/u,
+      "Provider helpers must stop reading responses after the configured byte limit"
+    );
+  });
 }
 
 const tests = [
   ["Catalog model mapping contract", testCatalogModelMapping],
+  ["Model endpoint protocol routing", testModelEndpointProtocolRouting],
   ["OpenAI adapter contracts", testOpenAIAdapter],
   ["Claude adapter contracts", testAnthropicAdapter],
   ["Gemini adapter contracts", testGeminiAdapter],

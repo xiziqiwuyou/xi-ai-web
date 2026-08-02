@@ -1,4 +1,5 @@
 import { Cpu } from "lucide-react";
+import { FigmaMenu, type FigmaMenuOption } from "../ui";
 import { modelOptionLabel, modelsForCapability } from "./model-utils";
 import type { ModelCapability, ModelCatalogEntry } from "../../types";
 
@@ -24,30 +25,30 @@ function ModelPicker({
   const availableModels = modelsForCapability(models, capability);
   const empty = !availableModels.length;
   const helpId = `model-picker-${capability}-help`;
+  const options: FigmaMenuOption[] = availableModels.map((entry) => ({
+    value: entry.id,
+    label: modelOptionLabel(entry)
+  }));
   return (
-    <label className={`model-picker ${className}`.trim()}>
-      <Cpu size={16} />
-      {label ? <span>{label}</span> : null}
-      <select
-        aria-label={label || "选择模型"}
-        aria-describedby={empty ? helpId : undefined}
+    <div className={`model-picker ${className}`.trim()}>
+      <FigmaMenu
+        className="model-picker-menu"
+        label={label || "模型"}
+        ariaLabel={label || "选择模型"}
+        ariaDescribedBy={empty ? helpId : undefined}
         value={value || ""}
-        onChange={(event) => onChange(event.target.value)}
+        options={options}
+        onChange={onChange}
         disabled={disabled || empty}
-      >
-        {empty ? <option value="">暂无可用模型</option> : null}
-        {availableModels.map((entry) => (
-          <option key={entry.id} value={entry.id}>
-            {modelOptionLabel(entry)}
-          </option>
-        ))}
-      </select>
+        triggerIcon={<Cpu size={16} />}
+        triggerText={empty ? "暂无可用模型" : undefined}
+      />
       {empty ? (
         <small id={helpId} className="model-picker-empty">
           后台未启用支持该能力的模型
         </small>
       ) : null}
-    </label>
+    </div>
   );
 }
 

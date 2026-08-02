@@ -97,7 +97,7 @@ function MindmapModule({
     event.preventDefault();
     if (!canSubmit) {
       if (!ready) {
-        setNotice("请先填写 API URL 和 Key");
+      setNotice("请先填写 API Key");
         onRequestApiConfig();
       } else {
         setNotice("请补全主题，并选择可用模型");

@@ -19,6 +19,7 @@ import { createKnowledgeCitationService } from "./citations/service.mjs";
 import { createTencentCosObjectStore } from "./object-store/tencent-cos.mjs";
 import { verifyKnowledgeMigrations } from "./migrations/runner.mjs";
 import { createKnowledgeRepositories } from "./repositories/index.mjs";
+import { DEFAULT_UPSTREAM_BASE_URL } from "../upstream-security.mjs";
 
 function disabledRuntime() {
   return Object.freeze({
@@ -66,6 +67,7 @@ export async function initializeKnowledgeRuntime({
   citationServiceFactory = createKnowledgeCitationService,
   objectStoreFactory = createTencentCosObjectStore
 } = {}) {
+  const upstreamRef = { current: DEFAULT_UPSTREAM_BASE_URL };
   let config;
   try {
     config = configLoader(env);
@@ -133,7 +135,8 @@ export async function initializeKnowledgeRuntime({
       : null;
     const embeddingProvider = repositories.embeddings
       ? embeddingProviderFactory({
-          requestTimeoutMs: config.embedding?.requestTimeoutMs || 60_000
+          requestTimeoutMs: config.embedding?.requestTimeoutMs || 60_000,
+          upstreamRef
         })
       : null;
     const embeddings = embeddingProvider
@@ -183,6 +186,7 @@ export async function initializeKnowledgeRuntime({
       pool,
       schemaVersion: migrationState.applied.at(-1)?.version || 0,
       vectorVersion,
+      upstreamRef,
       close: () => closeKnowledgePool(pool)
     });
   } catch (error) {

@@ -53,4 +53,9 @@ assert(conversations.response.status === 410, "Legacy public conversation list r
 const conversationDetail = await request("/api/conversations/smoke");
 assert(conversationDetail.response.status === 410, "Legacy public conversation detail route must return 410");
 
+for (const retiredRoute of ["/api/bootstrap", "/api/auth/status", "/api/auth/login", "/api/auth/logout"]) {
+  const retired = await request(retiredRoute);
+  assert(retired.response.status === 404, `${retiredRoute} must remain removed`);
+}
+
 console.log(`Smoke passed for ${baseUrl}`);

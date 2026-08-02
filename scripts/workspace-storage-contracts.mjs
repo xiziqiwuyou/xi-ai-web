@@ -182,6 +182,7 @@ assert.equal(merged.conversations[0].title, "工作区测试");
 for (const storeName of [
   "conversations",
   "galleryItems",
+  "imageGenerationHistory",
   "knowledgeDocuments",
   "mediaJobs",
   "userAgents",
@@ -194,7 +195,7 @@ for (const storeName of [
   assert(databaseSource.includes(`"${storeName}"`), `workspace database missing ${storeName}`);
 }
 assert(databaseSource.includes('workspaceDbName = "xi-ai-web-workspace"'));
-assert(databaseSource.includes("workspaceDbVersion = 2"));
+assert(databaseSource.includes("workspaceDbVersion = 3"));
 assert(databaseSource.includes("replaceWorkspaceSnapshot"));
 assert(databaseSource.includes("commitLegacyWorkspaceMigration"));
 assert(databaseSource.includes("suspendWorkspaceWrites"));

@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import http from "node:http";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -8,10 +9,14 @@ import { fileURLToPath } from "node:url";
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const distIndex = path.join(rootDir, "dist", "index.html");
 const password = "release-check-password";
-const sessionSecret = "release-check-session-secret-with-enough-length";
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "cherry-release-check-"));
 const port = await findFreePort();
+const upstreamPort = await findFreePort();
 const baseUrl = `http://127.0.0.1:${port}`;
+const upstreamBaseUrl = `http://127.0.0.1:${upstreamPort}`;
+const testApiKey = "sk-release-check-not-a-real-key";
+const upstreamRequests = [];
+const onePixelPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nWQAAAAASUVORK5CYII=";
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -20,6 +25,81 @@ function assert(condition, message) {
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+async function stopChild(child) {
+  if (child.exitCode !== null) return;
+  child.kill();
+  await Promise.race([
+    new Promise((resolve) => child.once("exit", resolve)),
+    delay(5000)
+  ]);
+  if (child.exitCode === null) child.kill("SIGKILL");
+}
+
+async function stopServer(server) {
+  if (!server.listening) return;
+  await new Promise((resolve) => server.close(resolve));
+}
+
+async function readRequestJson(req) {
+  const chunks = [];
+  let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    assert(total <= 2 * 1024 * 1024, "Release-check upstream request exceeded 2 MB");
+    chunks.push(chunk);
+  }
+  const text = Buffer.concat(chunks).toString("utf8");
+  return text ? JSON.parse(text) : {};
+}
+
+function writeJson(res, value) {
+  res.writeHead(200, { "Content-Type": "application/json" });
+  res.end(JSON.stringify(value));
+}
+
+const upstreamServer = http.createServer(async (req, res) => {
+  try {
+    const body = await readRequestJson(req);
+    upstreamRequests.push({
+      method: req.method,
+      url: req.url,
+      authorization: req.headers.authorization,
+      body
+    });
+
+    if (req.url?.endsWith("/responses")) {
+      writeJson(res, {
+        id: "resp_release_check",
+        output: [{ type: "message", content: [{ type: "output_text", text: "release-chat-ok" }] }],
+        usage: { input_tokens: 3, output_tokens: 2, total_tokens: 5 }
+      });
+      return;
+    }
+    if (req.url?.endsWith("/chat/completions")) {
+      writeJson(res, {
+        choices: [{ message: { role: "assistant", content: "release-chat-ok" } }],
+        usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 }
+      });
+      return;
+    }
+    if (req.url?.endsWith("/images/generations")) {
+      writeJson(res, { data: [{ b64_json: onePixelPng }] });
+      return;
+    }
+
+    res.writeHead(404, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "unsupported release-check upstream route" }));
+  } catch (error) {
+    res.writeHead(500, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: String(error?.message || error) }));
+  }
+});
+
+await new Promise((resolve, reject) => {
+  upstreamServer.once("error", reject);
+  upstreamServer.listen(upstreamPort, "127.0.0.1", resolve);
+});
 
 async function findFreePort() {
   return new Promise((resolve, reject) => {
@@ -49,8 +129,8 @@ async function waitForHealth(child) {
   let lastText = "";
   while (Date.now() - started < 20000) {
     try {
-      const health = await getJson("/api/health");
-      if (health.ok) return;
+      const readiness = await getJson("/api/ready");
+      if (readiness.ready) return;
     } catch (error) {
       lastText = error.message;
     }
@@ -118,6 +198,13 @@ for (const forbidden of ["node:sqlite", "DatabaseSync", "STORAGE_DRIVER", "app-d
   assert(!serverSource.includes(forbidden), `Database-related server code is not allowed: ${forbidden}`);
 }
 
+const dockerfileSource = fs.readFileSync(path.join(rootDir, "Dockerfile"), "utf8");
+const composeSource = fs.readFileSync(path.join(rootDir, "deploy", "app", "docker-compose.yml"), "utf8");
+assert(/\bUSER\s+node\b/u.test(dockerfileSource), "Production image must run as the node user");
+for (const required of ["read_only: true", "cap_drop:", "no-new-privileges:true", "pids_limit:", "/api/ready"]) {
+  assert(composeSource.includes(required), `Compose runtime hardening is missing: ${required}`);
+}
+
 writeLegacyDataFixture();
 
 const child = spawn("node", ["server/index.mjs", "--production"], {
@@ -128,7 +215,11 @@ const child = spawn("node", ["server/index.mjs", "--production"], {
     PORT: String(port),
     DATA_DIR: dataDir,
     ADMIN_PASSWORD: password,
-    ADMIN_SESSION_SECRET: sessionSecret
+    UPSTREAM_BASE_URL: upstreamBaseUrl,
+    ALLOW_LOCAL_UPSTREAM: "true",
+    ALLOW_ADMIN_UPSTREAM_OVERRIDE: "false",
+    KNOWLEDGE_ENABLED: "false",
+    LANGFLOW_ENABLED: "false"
   },
   stdio: "pipe"
 });
@@ -165,6 +256,13 @@ try {
   const metadataBootstrap = await getJson("/api/admin/bootstrap", { headers: { Cookie: cookie } });
   assert(metadataBootstrap.settings?.siteName === "Release Check Legacy", "JSON metadata was not loaded");
 
+  const upstreamOverride = await request("/api/admin/settings", {
+    method: "PATCH",
+    headers: { Cookie: cookie, "Content-Type": "application/json" },
+    body: JSON.stringify({ upstreamBaseUrl: "https://override.example.test" })
+  });
+  assert(upstreamOverride.response.status === 400, "Production upstream lock must reject Admin overrides");
+
   const unsafe = await request("/api/admin/backups/bad.json/restore", {
     method: "POST",
     headers: { Cookie: cookie, "Content-Type": "application/json" },
@@ -198,16 +296,68 @@ try {
   assert(!publicJson.includes("backups"), "Public bootstrap leaked backups");
   assert(!publicJson.includes("checklist"), "Public bootstrap leaked ops checklist");
 
+  const chatModel = publicBootstrap.modelCatalog?.find(
+    (entry) => entry.enabled !== false && entry.vendor === "openai" && entry.capabilities?.includes("chat")
+  );
+  assert(chatModel?.id, "Release check requires an enabled OpenAI chat model");
+  const chat = await request("/api/chat/stream", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      modelId: chatModel.id,
+      connection: { apiKey: testApiKey, baseUrl: "http://169.254.169.254/latest/meta-data" },
+      content: "Reply with the release-check marker.",
+      displayContent: "Reply with the release-check marker.",
+      conversation: { id: "release-check-chat", title: "Release check", messages: [] },
+      includeUsage: true
+    })
+  });
+  assert(chat.response.ok, `Chat route failed: ${chat.response.status} ${chat.text.slice(0, 300)}`);
+  assert(chat.response.headers.get("content-type")?.includes("text/event-stream"), "Chat route did not return SSE");
+  assert(chat.text.includes("event: meta"), "Chat SSE did not include meta");
+  assert(chat.text.includes("release-chat-ok"), "Chat SSE did not include provider text");
+  assert(chat.text.includes("event: done"), "Chat SSE did not include done");
+
+  const imageModel = publicBootstrap.modelCatalog?.find(
+    (entry) => entry.enabled !== false && entry.vendor === "openai" && entry.capabilities?.includes("image")
+  );
+  assert(imageModel?.id, "Release check requires an enabled OpenAI image model");
+  const imageResult = await getJson("/api/generate/image", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      modelId: imageModel.id,
+      connection: { apiKey: testApiKey, baseUrl: "http://127.0.0.1:9" },
+      prompt: "A small red square on a white background",
+      options: { count: 1, quality: "low", outputFormat: "png" }
+    })
+  });
+  assert(imageResult.status === "completed", "Image route did not complete");
+  assert(imageResult.assets?.[0]?.url?.startsWith("data:image/png;base64,"), "Image route did not normalize an image asset");
+
+  const chatUpstream = upstreamRequests.find((item) => /\/(?:responses|chat\/completions)$/u.test(item.url || ""));
+  const imageUpstream = upstreamRequests.find((item) => item.url?.endsWith("/images/generations"));
+  assert(chatUpstream, "Chat did not reach the controlled upstream");
+  assert(imageUpstream, "Image generation did not reach the controlled upstream");
+  assert(chatUpstream.authorization === `Bearer ${testApiKey}`, "Chat did not forward the BYOK authorization header");
+  assert(imageUpstream.authorization === `Bearer ${testApiKey}`, "Image did not forward the BYOK authorization header");
+
   const listGone = await request("/api/conversations");
   const detailGone = await request("/api/conversations/release-check");
   assert(listGone.response.status === 410, "Legacy conversation list route must return 410");
   assert(detailGone.response.status === 410, "Legacy conversation detail route must return 410");
+
+  for (const retiredRoute of ["/api/bootstrap", "/api/auth/status", "/api/auth/login", "/api/auth/logout"]) {
+    const retired = await request(retiredRoute);
+    assert(retired.response.status === 404, `${retiredRoute} must remain removed`);
+  }
 
   console.log(`Release check passed for ${baseUrl}`);
 } catch (error) {
   console.error(output.slice(-1600));
   throw error;
 } finally {
-  child.kill();
+  await stopChild(child);
+  await stopServer(upstreamServer);
   await fs.promises.rm(dataDir, { recursive: true, force: true }).catch(() => {});
 }

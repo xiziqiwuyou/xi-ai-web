@@ -32,6 +32,7 @@ export type DialogProps = {
   closeOnEscape?: boolean;
   closeOnScrim?: boolean;
   initialFocusRef?: RefObject<HTMLElement | null>;
+  returnFocusRef?: RefObject<HTMLElement | null>;
   variant?: "dialog" | "sheet" | "side";
   className?: string;
 };
@@ -47,6 +48,7 @@ function Dialog({
   closeOnEscape = true,
   closeOnScrim = true,
   initialFocusRef,
+  returnFocusRef,
   variant = "dialog",
   className = ""
 }: DialogProps) {
@@ -67,9 +69,9 @@ function Dialog({
     const dialog = dialogRef.current;
     if (!dialog) return;
 
-    const restoreTarget = document.activeElement instanceof HTMLElement
-      ? document.activeElement
-      : null;
+    const restoreTarget = returnFocusRef?.current || (
+      document.activeElement instanceof HTMLElement ? document.activeElement : null
+    );
     const appRoot = document.getElementById("root");
     const rootWasInert = appRoot?.inert || false;
     const previousOverflow = document.body.style.overflow;
@@ -157,7 +159,7 @@ function Dialog({
         window.requestAnimationFrame(() => restoreTarget.focus({ preventScroll: true }));
       }
     };
-  }, [initialFocusRef, open]);
+  }, [initialFocusRef, open, returnFocusRef]);
 
   if (!open) return null;
 

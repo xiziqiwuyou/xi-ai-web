@@ -1,11 +1,107 @@
-function safeCalculatorEval(expression) {
+import { validateToolArguments } from "./prompt-runner.mjs";
+
+function tokenizeCalculatorExpression(expression) {
   const source = String(expression || "").trim();
   if (!source) throw new Error("Expression is required");
   if (source.length > 160) throw new Error("Expression is too long");
-  if (!/^[0-9+\-*/().%\s]+$/.test(source)) {
-    throw new Error("Expression may only contain numbers and arithmetic operators");
+
+  const tokens = [];
+  let index = 0;
+  while (index < source.length) {
+    const character = source[index];
+    if (/\s/u.test(character)) {
+      index += 1;
+      continue;
+    }
+    if (/[0-9.]/u.test(character)) {
+      const start = index;
+      let dots = 0;
+      while (index < source.length && /[0-9.]/u.test(source[index])) {
+        if (source[index] === ".") dots += 1;
+        index += 1;
+      }
+      const raw = source.slice(start, index);
+      if (dots > 1 || !/^(?:\d+(?:\.\d*)?|\.\d+)$/u.test(raw) || raw.length > 32) {
+        throw new Error("Invalid number in expression");
+      }
+      const value = Number(raw);
+      if (!Number.isFinite(value)) throw new Error("Number is out of range");
+      tokens.push({ type: "number", value });
+    } else if (/[+\-*/%()]/u.test(character)) {
+      tokens.push({ type: character, value: character });
+      index += 1;
+    } else {
+      throw new Error("Expression may only contain numbers and arithmetic operators");
+    }
+    if (tokens.length > 128) throw new Error("Expression has too many terms");
   }
-  return Function(`"use strict"; return (${source});`)();
+  tokens.push({ type: "eof", value: "" });
+  return tokens;
+}
+
+function safeCalculatorEval(expression) {
+  const tokens = tokenizeCalculatorExpression(expression);
+  let position = 0;
+  let depth = 0;
+
+  const peek = () => tokens[position];
+  const consume = (type) => {
+    if (peek().type !== type) throw new Error("Invalid arithmetic expression");
+    return tokens[position++];
+  };
+
+  const parsePrimary = () => {
+    if (peek().type === "number") return consume("number").value;
+    if (peek().type !== "(") throw new Error("Invalid arithmetic expression");
+    depth += 1;
+    if (depth > 32) throw new Error("Expression nesting is too deep");
+    consume("(");
+    const value = parseExpression();
+    consume(")");
+    depth -= 1;
+    return value;
+  };
+
+  const parseUnary = () => {
+    if (peek().type === "+") {
+      consume("+");
+      return parseUnary();
+    }
+    if (peek().type === "-") {
+      consume("-");
+      return -parseUnary();
+    }
+    return parsePrimary();
+  };
+
+  const parseTerm = () => {
+    let value = parseUnary();
+    while (["*", "/", "%"].includes(peek().type)) {
+      const operator = consume(peek().type).type;
+      const right = parseUnary();
+      if ((operator === "/" || operator === "%") && right === 0) {
+        throw new Error("Division by zero is not allowed");
+      }
+      value = operator === "*" ? value * right : operator === "/" ? value / right : value % right;
+      if (!Number.isFinite(value)) throw new Error("Result is out of range");
+    }
+    return value;
+  };
+
+  function parseExpression() {
+    let value = parseTerm();
+    while (["+", "-"].includes(peek().type)) {
+      const operator = consume(peek().type).type;
+      const right = parseTerm();
+      value = operator === "+" ? value + right : value - right;
+      if (!Number.isFinite(value)) throw new Error("Result is out of range");
+    }
+    return value;
+  }
+
+  const result = parseExpression();
+  if (peek().type !== "eof") throw new Error("Invalid arithmetic expression");
+  return result;
 }
 
 const functionVendors = ["openai", "anthropic", "gemini", "kimi", "deepseek", "qwen", "openai-compatible"];
@@ -177,7 +273,7 @@ export function availableTools(context = {}, settings = []) {
   );
 }
 
-export function resolveRequestedTools({ context = {}, settings = [], entry, requestedNames = [] }) {
+export function resolveRequestedTools({ context = {}, settings = [], entry, requestedNames = [], invocationMode = "function" }) {
   const normalized = normalizeToolSettings(settings);
   const settingsByName = new Map(normalized.map((tool) => [tool.name, tool]));
   const localTools = [];
@@ -199,11 +295,16 @@ export function resolveRequestedTools({ context = {}, settings = [], entry, requ
       searchTools.push(tool);
       return;
     }
+    if (invocationMode === "prompt" && tool.execution === "provider") {
+      unavailable.push({ name, reason: "厂商托管工具仅支持函数调用方式" });
+      return;
+    }
     if (!tool.supportedVendors.includes(entry?.vendor)) {
       unavailable.push({ name, reason: `不支持 ${entry?.vendor || "当前"} 厂商` });
       return;
     }
-    if (!entry?.capabilities?.includes(tool.requiredCapability)) {
+    const promptLocalTool = invocationMode === "prompt" && tool.execution === "local";
+    if (!promptLocalTool && !entry?.capabilities?.includes(tool.requiredCapability)) {
       unavailable.push({ name, reason: `模型未启用 ${tool.requiredCapability} 能力` });
       return;
     }
@@ -230,5 +331,7 @@ export async function runTool(toolCall, context = {}, settings = []) {
   const tools = availableTools(context, settings);
   const tool = tools.find((item) => item.name === toolCall.name);
   if (!tool) throw new Error(`Tool is not allowed: ${toolCall.name}`);
-  return tool.execute(toolCall.arguments || {}, context);
+  const argumentsValue = toolCall.arguments || {};
+  validateToolArguments(argumentsValue, tool.parameters);
+  return tool.execute(argumentsValue, context);
 }

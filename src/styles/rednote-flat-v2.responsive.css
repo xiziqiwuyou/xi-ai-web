@@ -114,6 +114,45 @@
     padding-right: 0;
   }
 
+  .figma-mobile-key-action {
+    display: grid;
+    width: 100%;
+    min-height: 56px;
+    grid-template-columns: 18px minmax(0, 1fr);
+    align-items: center;
+    gap: 12px;
+    margin-top: 8px;
+    padding: 8px 12px;
+    border: 1px solid var(--xhs-line);
+    border-radius: 14px;
+    background: var(--xhs-soft-3);
+    color: var(--xhs-muted);
+    text-align: left;
+  }
+
+  .figma-mobile-key-action > span {
+    display: grid;
+    min-width: 0;
+    gap: 2px;
+  }
+
+  .figma-mobile-key-action strong,
+  .figma-mobile-key-action small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .figma-mobile-key-action strong {
+    color: var(--xhs-ink);
+    font-size: 12px;
+  }
+
+  .figma-mobile-key-action small {
+    font-family: var(--font-mono);
+    font-size: 10px;
+  }
+
   .figma-nav-item {
     min-height: 56px;
   }
@@ -128,6 +167,18 @@
 
   .figma-workspace-canvas {
     min-height: calc(100dvh - 124px);
+  }
+
+  .figma-session-controls {
+    padding-bottom: calc(20px + env(safe-area-inset-bottom));
+  }
+
+  .figma-module-transition-copy {
+    margin-right: 2px;
+  }
+
+  .figma-module-transition-error {
+    align-items: flex-start;
   }
 
   .figma-public-footer {
@@ -218,6 +269,7 @@
 
   .figma-session-controls {
     padding: 12px;
+    padding-bottom: calc(12px + env(safe-area-inset-bottom));
   }
 
   .figma-composer {
@@ -257,7 +309,12 @@
   }
 
   .figma-session-settings {
-    padding: 18px;
+    padding: 0;
+  }
+
+  .ui-dialog.figma-session-settings {
+    height: calc(100dvh - 16px);
+    max-height: calc(100dvh - 16px);
   }
 
   .figma-settings-close {

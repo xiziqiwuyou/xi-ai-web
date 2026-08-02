@@ -1,6 +1,7 @@
 import type {
   Conversation,
   GalleryItem,
+  ImageGenerationTimingRecord,
   KnowledgeDocument,
   MediaJob,
   WorkspaceDataCounts,
@@ -12,6 +13,7 @@ import {
   mergeWorkspaceSnapshots,
   sanitizeWorkspaceConversation,
   sanitizeWorkspaceGalleryItem,
+  sanitizeImageGenerationTimingRecord,
   sanitizeWorkspaceKnowledgeDocument,
   sanitizeWorkspaceMediaJob,
   sanitizeWorkspaceSnapshot,
@@ -77,6 +79,28 @@ export async function loadWorkspaceGalleryItems(): Promise<GalleryItem[]> {
 export async function saveWorkspaceGalleryItems(items: GalleryItem[]) {
   await initializeWorkspace();
   await replaceAllWorkspaceRecords("galleryItems", sanitizeList(items, sanitizeWorkspaceGalleryItem));
+}
+
+export async function loadImageGenerationHistory(): Promise<ImageGenerationTimingRecord[]> {
+  try {
+    await initializeWorkspace();
+    return sanitizeList(
+      await getAllWorkspaceRecords("imageGenerationHistory"),
+      sanitizeImageGenerationTimingRecord
+    ).sort((left, right) => Date.parse(right.completedAt) - Date.parse(left.completedAt));
+  } catch {
+    return [];
+  }
+}
+
+export async function saveImageGenerationTiming(record: ImageGenerationTimingRecord) {
+  await initializeWorkspace();
+  const current = await loadImageGenerationHistory();
+  const next = [
+    sanitizeImageGenerationTimingRecord(record),
+    ...current.filter((item) => item.id !== record.id)
+  ].filter((item): item is ImageGenerationTimingRecord => Boolean(item)).slice(0, 60);
+  await replaceAllWorkspaceRecords("imageGenerationHistory", next);
 }
 
 export async function loadWorkspaceKnowledgeDocuments(): Promise<KnowledgeDocument[]> {
@@ -149,6 +173,7 @@ export async function getWorkspaceStorageSummary(): Promise<WorkspaceStorageSumm
       counts: workspaceDataCounts({
         conversations: readLegacyConversations(),
         galleryItems: readLegacyGalleryItems(),
+        imageGenerationHistory: [],
         knowledgeDocuments: await loadLegacyKnowledgeFallback(),
         mediaJobs: readLegacyMediaJobs(),
         userAgents: [],

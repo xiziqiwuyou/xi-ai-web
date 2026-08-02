@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { normalizeEndpointProtocol } from "../providers/types.mjs";
 
 export const vendorKinds = [
   "openai",
@@ -25,8 +26,7 @@ export const modelCapabilities = [
   "toolCalling",
   "webSearch",
   "urlContext",
-  "codeExecution",
-  "streaming"
+  "codeExecution"
 ];
 
 export const defaultForCapabilities = ["chat", "image", "tts", "stt", "video", "embedding"];
@@ -42,13 +42,46 @@ const vendorLabels = {
   "openai-compatible": "OpenAI Compatible"
 };
 
+const defaultVendors = vendorKinds.map((adapter, order) => ({
+  id: adapter,
+  label: vendorLabels[adapter],
+  adapter,
+  enabled: true,
+  order
+}));
+
+const defaultContextWindowTokens = 128_000;
+const defaultMaxInputCharacters = 100_000;
+
+function inferredContextWindowTokens(vendor, model) {
+  const normalized = String(model || "").toLowerCase();
+  if (/^gpt-4\.1(?:-|$)/.test(normalized)) return 1_047_576;
+  if (/^gemini-(?:2\.5|3)/.test(normalized)) return 1_048_576;
+  if (vendor === "anthropic") return 200_000;
+  if (vendor === "kimi") return 262_144;
+  if (vendor === "qwen") return 1_000_000;
+  return defaultContextWindowTokens;
+}
+
+function cleanContextWindowTokens(value, vendor, model) {
+  const parsed = Number(value);
+  if (Number.isFinite(parsed)) return Math.max(4_096, Math.min(2_000_000, Math.trunc(parsed)));
+  return inferredContextWindowTokens(vendor, model);
+}
+
+function cleanMaxInputCharacters(value) {
+  const parsed = Number(value);
+  if (Number.isFinite(parsed)) return Math.max(1_000, Math.min(2_000_000, Math.trunc(parsed)));
+  return defaultMaxInputCharacters;
+}
+
 const defaultCatalog = [
   {
     id: "compatible-chat",
     vendor: "openai-compatible",
     model: "gpt-4.1-mini",
     label: "Compatible Chat",
-    capabilities: ["chat", "vision", "streaming"],
+    capabilities: ["chat", "vision"],
     defaultFor: ["chat"],
     enabled: true
   },
@@ -57,7 +90,7 @@ const defaultCatalog = [
     vendor: "openai",
     model: "gpt-5.6-sol",
     label: "GPT-5.6 Sol",
-    capabilities: ["chat", "vision", "toolCalling", "streaming"],
+    capabilities: ["chat", "vision", "toolCalling"],
     defaultFor: [],
     enabled: true
   },
@@ -66,7 +99,7 @@ const defaultCatalog = [
     vendor: "openai",
     model: "gpt-5.6-terra",
     label: "GPT-5.6 Terra",
-    capabilities: ["chat", "vision", "toolCalling", "streaming"],
+    capabilities: ["chat", "vision", "toolCalling"],
     defaultFor: [],
     enabled: true
   },
@@ -75,7 +108,16 @@ const defaultCatalog = [
     vendor: "openai",
     model: "gpt-5.6-luna",
     label: "GPT-5.6 Luna",
-    capabilities: ["chat", "vision", "toolCalling", "streaming"],
+    capabilities: ["chat", "vision", "toolCalling"],
+    defaultFor: [],
+    enabled: true
+  },
+  {
+    id: "openai-gpt-5-4-mini",
+    vendor: "openai",
+    model: "gpt-5.4-mini",
+    label: "GPT-5.4 Mini",
+    capabilities: ["chat"],
     defaultFor: [],
     enabled: true
   },
@@ -84,7 +126,7 @@ const defaultCatalog = [
     vendor: "openai",
     model: "gpt-4.1-mini",
     label: "GPT-4.1 Mini",
-    capabilities: ["chat", "vision", "toolCalling", "streaming"],
+    capabilities: ["chat", "vision", "toolCalling"],
     defaultFor: [],
     enabled: true
   },
@@ -95,6 +137,15 @@ const defaultCatalog = [
     label: "GPT Image 2",
     capabilities: ["image", "imageEdit"],
     defaultFor: ["image"],
+    enabled: true
+  },
+  {
+    id: "openai-gpt-image-2-vip",
+    vendor: "openai",
+    model: "gpt-image-2-vip",
+    label: "GPT Image 2 VIP",
+    capabilities: ["image", "imageEdit"],
+    defaultFor: [],
     enabled: true
   },
   {
@@ -255,7 +306,7 @@ const defaultCatalog = [
     vendor: "anthropic",
     model: "claude-fable-5",
     label: "Claude Fable 5",
-    capabilities: ["chat", "vision", "toolCalling", "streaming"],
+    capabilities: ["chat", "vision", "toolCalling"],
     defaultFor: [],
     enabled: true
   },
@@ -264,7 +315,7 @@ const defaultCatalog = [
     vendor: "anthropic",
     model: "claude-sonnet-5",
     label: "Claude Sonnet 5",
-    capabilities: ["chat", "vision", "toolCalling", "streaming"],
+    capabilities: ["chat", "vision", "toolCalling"],
     defaultFor: [],
     enabled: true
   },
@@ -273,7 +324,7 @@ const defaultCatalog = [
     vendor: "anthropic",
     model: "claude-opus-4-8",
     label: "Claude Opus 4.8",
-    capabilities: ["chat", "vision", "toolCalling", "streaming"],
+    capabilities: ["chat", "vision", "toolCalling"],
     defaultFor: [],
     enabled: true
   },
@@ -282,7 +333,7 @@ const defaultCatalog = [
     vendor: "anthropic",
     model: "claude-opus-4-7",
     label: "Claude Opus 4.7",
-    capabilities: ["chat", "vision", "toolCalling", "streaming"],
+    capabilities: ["chat", "vision", "toolCalling"],
     defaultFor: [],
     enabled: true
   },
@@ -291,7 +342,7 @@ const defaultCatalog = [
     vendor: "anthropic",
     model: "claude-sonnet-4-6",
     label: "Claude Sonnet 4.6",
-    capabilities: ["chat", "vision", "toolCalling", "streaming"],
+    capabilities: ["chat", "vision", "toolCalling"],
     defaultFor: [],
     enabled: true
   },
@@ -300,7 +351,7 @@ const defaultCatalog = [
     vendor: "anthropic",
     model: "claude-haiku-4-5",
     label: "Claude Haiku 4.5",
-    capabilities: ["chat", "vision", "toolCalling", "streaming"],
+    capabilities: ["chat", "vision", "toolCalling"],
     defaultFor: [],
     enabled: true
   },
@@ -309,7 +360,7 @@ const defaultCatalog = [
     vendor: "gemini",
     model: "gemini-3.5-flash",
     label: "Gemini 3.5 Flash",
-    capabilities: ["chat", "vision", "toolCalling", "streaming"],
+    capabilities: ["chat", "vision", "toolCalling"],
     defaultFor: [],
     enabled: true
   },
@@ -318,7 +369,7 @@ const defaultCatalog = [
     vendor: "gemini",
     model: "gemini-3.1-pro-preview",
     label: "Gemini 3.1 Pro Preview",
-    capabilities: ["chat", "vision", "toolCalling", "streaming"],
+    capabilities: ["chat", "vision", "toolCalling"],
     defaultFor: [],
     enabled: true
   },
@@ -327,7 +378,7 @@ const defaultCatalog = [
     vendor: "gemini",
     model: "gemini-2.5-pro",
     label: "Gemini 2.5 Pro",
-    capabilities: ["chat", "vision", "toolCalling", "streaming"],
+    capabilities: ["chat", "vision", "toolCalling"],
     defaultFor: [],
     enabled: true
   },
@@ -336,7 +387,7 @@ const defaultCatalog = [
     vendor: "gemini",
     model: "gemini-2.5-flash",
     label: "Gemini 2.5 Flash",
-    capabilities: ["chat", "vision", "toolCalling", "streaming"],
+    capabilities: ["chat", "vision", "toolCalling"],
     defaultFor: [],
     enabled: true
   },
@@ -345,6 +396,15 @@ const defaultCatalog = [
     vendor: "gemini",
     model: "gemini-3.1-flash-image",
     label: "Gemini 3.1 Flash Image",
+    capabilities: ["image", "imageEdit", "vision"],
+    defaultFor: [],
+    enabled: true
+  },
+  {
+    id: "gemini-nano-banana-2",
+    vendor: "gemini",
+    model: "gemini-3.1-flash-image",
+    label: "Nano Banana 2",
     capabilities: ["image", "imageEdit", "vision"],
     defaultFor: [],
     enabled: true
@@ -399,7 +459,7 @@ const defaultCatalog = [
     vendor: "kimi",
     model: "kimi-k3",
     label: "Kimi K3",
-    capabilities: ["chat", "vision", "toolCalling", "streaming"],
+    capabilities: ["chat", "vision", "toolCalling"],
     defaultFor: [],
     enabled: true
   },
@@ -408,7 +468,7 @@ const defaultCatalog = [
     vendor: "kimi",
     model: "kimi-k2.7-code",
     label: "Kimi K2.7 Code",
-    capabilities: ["chat", "toolCalling", "streaming"],
+    capabilities: ["chat", "toolCalling"],
     defaultFor: [],
     enabled: true
   },
@@ -417,7 +477,7 @@ const defaultCatalog = [
     vendor: "kimi",
     model: "kimi-k2.7-code-highspeed",
     label: "Kimi K2.7 Code Highspeed",
-    capabilities: ["chat", "toolCalling", "streaming"],
+    capabilities: ["chat", "toolCalling"],
     defaultFor: [],
     enabled: true
   },
@@ -426,7 +486,7 @@ const defaultCatalog = [
     vendor: "kimi",
     model: "kimi-k2.6",
     label: "Kimi K2.6",
-    capabilities: ["chat", "vision", "toolCalling", "streaming"],
+    capabilities: ["chat", "vision", "toolCalling"],
     defaultFor: [],
     enabled: true
   },
@@ -435,7 +495,7 @@ const defaultCatalog = [
     vendor: "deepseek",
     model: "deepseek-v4-flash",
     label: "DeepSeek V4 Flash",
-    capabilities: ["chat", "toolCalling", "streaming"],
+    capabilities: ["chat", "toolCalling"],
     defaultFor: [],
     enabled: true
   },
@@ -444,7 +504,7 @@ const defaultCatalog = [
     vendor: "deepseek",
     model: "deepseek-v4-pro",
     label: "DeepSeek V4 Pro",
-    capabilities: ["chat", "toolCalling", "streaming"],
+    capabilities: ["chat", "toolCalling"],
     defaultFor: [],
     enabled: true
   },
@@ -453,7 +513,7 @@ const defaultCatalog = [
     vendor: "qwen",
     model: "qwen3.7-max",
     label: "Qwen 3.7 Max",
-    capabilities: ["chat", "toolCalling", "streaming"],
+    capabilities: ["chat", "toolCalling"],
     defaultFor: [],
     enabled: true
   },
@@ -462,7 +522,7 @@ const defaultCatalog = [
     vendor: "qwen",
     model: "qwen3.7-plus",
     label: "Qwen 3.7 Plus",
-    capabilities: ["chat", "vision", "toolCalling", "streaming"],
+    capabilities: ["chat", "vision", "toolCalling"],
     defaultFor: [],
     enabled: true
   },
@@ -471,7 +531,7 @@ const defaultCatalog = [
     vendor: "qwen",
     model: "qwen3.6-flash",
     label: "Qwen 3.6 Flash",
-    capabilities: ["chat", "vision", "toolCalling", "streaming"],
+    capabilities: ["chat", "vision", "toolCalling"],
     defaultFor: [],
     enabled: true
   },
@@ -480,7 +540,7 @@ const defaultCatalog = [
     vendor: "qwen",
     model: "qwen3-coder-plus",
     label: "Qwen 3 Coder Plus",
-    capabilities: ["chat", "toolCalling", "streaming"],
+    capabilities: ["chat", "toolCalling"],
     defaultFor: [],
     enabled: true
   },
@@ -489,7 +549,7 @@ const defaultCatalog = [
     vendor: "qwen",
     model: "qwen3.5-omni-plus",
     label: "Qwen 3.5 Omni Plus",
-    capabilities: ["chat", "vision", "toolCalling", "streaming"],
+    capabilities: ["chat", "vision", "toolCalling"],
     defaultFor: [],
     enabled: true
   },
@@ -553,9 +613,19 @@ function withShippedHostedCapabilities(entry) {
 }
 
 export function defaultModelCatalog() {
-  return defaultCatalog.map((entry) => {
+  return defaultCatalog.map((entry, order) => {
     const next = withShippedHostedCapabilities(entry);
-    return { ...next, capabilities: [...next.capabilities], defaultFor: [...entry.defaultFor] };
+    return {
+      ...next,
+      vendorId: entry.vendor,
+      vendorLabel: vendorLabel(entry.vendor),
+      endpointProtocol: normalizeEndpointProtocol(entry.endpointProtocol, entry.vendor),
+      order: cleanModelOrder(entry.order, order),
+      contextWindowTokens: cleanContextWindowTokens(entry.contextWindowTokens, entry.vendor, entry.model),
+      maxInputCharacters: cleanMaxInputCharacters(entry.maxInputCharacters),
+      capabilities: uniqueValues(next.capabilities, modelCapabilities),
+      defaultFor: [...entry.defaultFor]
+    };
   });
 }
 
@@ -569,6 +639,64 @@ function slug(value) {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 54);
+}
+
+function cleanVendorId(value, fallback = "") {
+  return slug(cleanText(value, fallback)).slice(0, 64);
+}
+
+function cleanVendorOrder(value, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(0, Math.min(10_000, Math.trunc(parsed))) : fallback;
+}
+
+function cleanModelOrder(value, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(0, Math.min(100_000, Math.trunc(parsed))) : fallback;
+}
+
+export function defaultModelVendors() {
+  return defaultVendors.map((entry) => ({ ...entry }));
+}
+
+export function normalizeModelVendorEntry(entry, fallback = {}) {
+  const source = entry && typeof entry === "object" ? entry : {};
+  const fallbackSource = fallback && typeof fallback === "object" ? fallback : {};
+  const adapter = normalizeVendorKind(source.adapter ?? fallbackSource.adapter);
+  const label = cleanText(
+    source.label ?? source.name ?? fallbackSource.label,
+    vendorLabel(adapter)
+  ).slice(0, 80);
+  const id = cleanVendorId(
+    source.id ?? fallbackSource.id,
+    adapter
+  ) || adapter;
+  return {
+    id,
+    label: label || vendorLabel(adapter),
+    adapter,
+    enabled: typeof source.enabled === "boolean"
+      ? source.enabled
+      : fallbackSource.enabled !== false,
+    order: cleanVendorOrder(source.order, cleanVendorOrder(fallbackSource.order))
+  };
+}
+
+export function normalizeModelVendors(value, fallback = defaultModelVendors()) {
+  const entries = Array.isArray(value) ? value : [];
+  const source = entries.length ? entries : fallback;
+  const seenIds = new Set();
+  return source.map((entry, order) => {
+    const normalized = normalizeModelVendorEntry(entry, { order });
+    let id = normalized.id;
+    let suffix = 2;
+    while (seenIds.has(id)) {
+      id = `${normalized.id.slice(0, 58)}-${suffix}`;
+      suffix += 1;
+    }
+    seenIds.add(id);
+    return { ...normalized, id };
+  }).sort((left, right) => left.order - right.order || left.label.localeCompare(right.label));
 }
 
 function uniqueValues(values, allowed) {
@@ -614,6 +742,7 @@ function mergeEntries(existing, next) {
   return {
     ...existing,
     ...next,
+    order: Math.min(cleanModelOrder(existing.order), cleanModelOrder(next.order)),
     label: existing.label || next.label,
     capabilities: capabilities.length ? capabilities : ["chat"],
     defaultFor,
@@ -623,13 +752,15 @@ function mergeEntries(existing, next) {
 
 function deriveId(entry) {
   const vendor = normalizeVendorKind(entry.vendor);
+  const vendorId = cleanVendorId(entry.vendorId, vendor) || vendor;
   const model = slug(entry.model || entry.label);
-  return model ? `${vendor}-${model}` : crypto.randomUUID();
+  return model ? `${vendorId}-${model}`.slice(0, 140) : crypto.randomUUID();
 }
 
 export function normalizeCatalogEntry(entry, fallback = {}) {
   const source = entry && typeof entry === "object" ? entry : {};
   const vendor = normalizeVendorKind(source.vendor ?? source.kind ?? fallback.vendor);
+  const vendorId = cleanVendorId(source.vendorId ?? fallback.vendorId, vendor) || vendor;
   const model = cleanText(source.model ?? source.defaultModel ?? fallback.model);
   const label = cleanText(source.label ?? source.name ?? fallback.label, model || vendorLabel(vendor));
   const capabilities = uniqueValues(
@@ -643,34 +774,66 @@ export function normalizeCatalogEntry(entry, fallback = {}) {
   });
 
   return {
-    id: cleanText(source.id ?? fallback.id, "") || deriveId({ vendor, model, label }),
+    id: cleanText(source.id ?? fallback.id, "") || deriveId({ vendorId, vendor, model, label }),
+    vendorId,
     vendor,
+    vendorLabel: vendorLabel(vendor),
+    endpointProtocol: normalizeEndpointProtocol(
+      source.endpointProtocol ?? fallback.endpointProtocol,
+      vendor
+    ),
+    order: cleanModelOrder(source.order, cleanModelOrder(fallback.order)),
     model,
     label,
     capabilities: capabilities.length ? capabilities : ["chat"],
     defaultFor,
     enabled: typeof source.enabled === "boolean" ? source.enabled : fallback.enabled ?? true,
+    contextWindowTokens: cleanContextWindowTokens(
+      source.contextWindowTokens ?? fallback.contextWindowTokens,
+      vendor,
+      model
+    ),
+    maxInputCharacters: cleanMaxInputCharacters(
+      source.maxInputCharacters ?? fallback.maxInputCharacters
+    ),
     mediaConfig: cleanMediaConfig(source.mediaConfig ?? fallback.mediaConfig)
   };
 }
 
-export function normalizeModelCatalog(value, fallback = defaultModelCatalog()) {
-  const entries = Array.isArray(value) ? value : [];
+export function normalizeModelCatalog(value, fallback = defaultModelCatalog(), modelVendors = []) {
+  const entries = Array.isArray(value) && value.length
+    ? value
+    : Array.isArray(fallback)
+      ? fallback
+      : [];
+  const vendorsById = new Map(
+    normalizeModelVendors(modelVendors, []).map((vendor) => [vendor.id, vendor])
+  );
   const seenIds = new Set();
   const seenModels = new Map();
   const normalized = entries
-    .map((entry) => normalizeCatalogEntry(entry))
+    .map((entry, order) => {
+      const normalizedEntry = normalizeCatalogEntry(entry, { order });
+      const vendor = vendorsById.get(normalizedEntry.vendorId);
+      return vendor
+        ? normalizeCatalogEntry({ ...normalizedEntry, vendor: vendor.adapter }, normalizedEntry)
+        : normalizedEntry;
+    })
     .filter((entry) => entry.model)
     .map((entry) => {
       let id = entry.id;
-      while (seenIds.has(id)) id = `${entry.id}-${seenIds.size + 1}`;
+      let suffix = seenIds.size + 1;
+      while (seenIds.has(id)) {
+        id = `${entry.id}-${suffix}`;
+        suffix += 1;
+      }
       seenIds.add(id);
       return { ...entry, id };
     });
 
   const deduped = [];
   for (const entry of normalized) {
-    const key = `${entry.vendor}:${entry.model}`;
+    const key = `${entry.vendorId}:${entry.model}`;
     const existingIndex = seenModels.get(key);
     if (typeof existingIndex === "number") {
       deduped[existingIndex] = mergeEntries(deduped[existingIndex], entry);
@@ -680,12 +843,60 @@ export function normalizeModelCatalog(value, fallback = defaultModelCatalog()) {
     deduped.push(entry);
   }
 
-  return deduped.length ? deduped : fallback;
+  return deduped
+    .sort((left, right) => left.order - right.order)
+    .map((entry, order) => ({ ...entry, order }));
+}
+
+function inferredVendorEntry(entry, order) {
+  const normalizedEntry = normalizeCatalogEntry(entry);
+  const isDefaultVendor = normalizedEntry.vendorId === normalizedEntry.vendor;
+  return normalizeModelVendorEntry({
+    id: normalizedEntry.vendorId,
+    label: isDefaultVendor
+      ? vendorLabel(normalizedEntry.vendor)
+      : `${vendorLabel(normalizedEntry.vendor)} (${normalizedEntry.vendorId})`,
+    adapter: normalizedEntry.vendor,
+    enabled: true,
+    order
+  });
+}
+
+export function reconcileModelRegistry(modelVendors, modelCatalog, fallbackCatalog = defaultModelCatalog()) {
+  const vendors = normalizeModelVendors(modelVendors, defaultModelVendors());
+  const vendorsById = new Map(vendors.map((vendor) => [vendor.id, vendor]));
+  const sourceCatalog = Array.isArray(modelCatalog) && modelCatalog.length
+    ? modelCatalog
+    : fallbackCatalog;
+
+  for (const sourceEntry of sourceCatalog) {
+    const normalizedEntry = normalizeCatalogEntry(sourceEntry);
+    if (vendorsById.has(normalizedEntry.vendorId)) continue;
+    const inferred = inferredVendorEntry(normalizedEntry, vendors.length);
+    vendors.push(inferred);
+    vendorsById.set(inferred.id, inferred);
+  }
+
+  const normalizedCatalog = normalizeModelCatalog(
+    sourceCatalog,
+    fallbackCatalog,
+    vendors
+  ).map((entry) => {
+    const vendor = vendorsById.get(entry.vendorId);
+    return vendor
+      ? { ...entry, vendor: vendor.adapter, vendorLabel: vendor.label }
+      : entry;
+  });
+
+  return {
+    modelVendors: vendors.sort((left, right) => left.order - right.order || left.label.localeCompare(right.label)),
+    modelCatalog: normalizedCatalog
+  };
 }
 
 function chatCapabilities(vendor, providerCapabilities = []) {
   const base = ["chat"];
-  ["vision", "toolCalling", "webSearch", "urlContext", "codeExecution", "streaming"].forEach((capability) => {
+  ["vision", "toolCalling", "webSearch", "urlContext", "codeExecution"].forEach((capability) => {
     if (providerCapabilities.includes(capability)) base.push(capability);
   });
   return [...new Set(base)];
@@ -717,6 +928,7 @@ function addLegacyEntry(entriesByKey, provider, capability, model, defaultFor = 
   const providerName = cleanText(provider.name, vendorLabel(vendor));
   entriesByKey.set(key, {
     id: `${slug(providerKey)}-${slug(cleanModel) || crypto.randomUUID()}`,
+    vendorId: vendor,
     vendor,
     model: cleanModel,
     label: `${providerName} / ${cleanModel}`,
@@ -752,8 +964,10 @@ export function catalogFromLegacyProviders(providers = []) {
   return normalizeModelCatalog([...defaultModelCatalog(), ...entriesByKey.values()], defaultModelCatalog());
 }
 
-export function publicModelCatalog(catalog = []) {
-  return normalizeModelCatalog(catalog, []).filter((entry) => entry.enabled);
+export function publicModelCatalog(catalog = [], modelVendors = []) {
+  return reconcileModelRegistry(modelVendors, catalog, [])
+    .modelCatalog
+    .filter((entry) => entry.enabled);
 }
 
 export function findModelEntry(catalog, modelId) {
@@ -766,6 +980,7 @@ export function buildRuntimeProvider(entry, connection) {
     id: entry.id,
     name: entry.label,
     kind: entry.vendor,
+    endpointProtocol: normalizeEndpointProtocol(entry.endpointProtocol, entry.vendor),
     baseUrl: cleanText(connection.baseUrl).replace(/\/+$/, ""),
     apiKey: cleanText(connection.apiKey),
     defaultModel: entry.model,

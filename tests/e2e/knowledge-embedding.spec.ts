@@ -162,7 +162,6 @@ test("knowledge embedding credentials stay in sessionStorage and resume pending 
   await expect(page.getByRole("button", { name: "继续索引" })).toBeDisabled();
 
   await page.getByRole("button", { name: "配置" }).first().click();
-  await page.getByRole("textbox", { name: "API URL" }).fill("https://api.openai.com/v1");
   await page.locator('.knowledge-cloud-connection-form input[type="password"]').fill("sk-browser-session-only");
   await page.getByRole("button", { name: "保存到本次会话" }).click();
 
@@ -183,7 +182,7 @@ test("knowledge embedding credentials stay in sessionStorage and resume pending 
   expect(fixture.outbound).toHaveLength(1);
   expect(fixture.outbound[0]).toMatchObject({
     embeddingProfileId: "openai-text-embedding-3-small",
-    connection: { baseUrl: "https://api.openai.com/v1", apiKey: "sk-browser-session-only" }
+    connection: { apiKey: "sk-browser-session-only" }
   });
 
   await page.reload();

@@ -1,4 +1,4 @@
-import type { ModelCapability, ModelCatalogEntry, ModelDefaultFor } from "../../types";
+import type { ModelCapability, ModelCatalogEntry } from "../../types";
 
 export const vendorLabels: Record<string, string> = {
   openai: "OpenAI",
@@ -15,13 +15,13 @@ export function compactModelLabel(entry?: ModelCatalogEntry) {
   if (!entry) return "";
   const label = entry.label || entry.model;
   const vendorLabel =
-    entry.vendor === "openai-compatible" ? "OpenAI Compatible" : vendorLabels[entry.vendor];
+    entry.vendorLabel || (entry.vendor === "openai-compatible" ? "OpenAI Compatible" : vendorLabels[entry.vendor]);
   const legacyPrefix = `${vendorLabel} / `;
   return label.startsWith(legacyPrefix) ? label.slice(legacyPrefix.length) : label;
 }
 
 export function modelOptionLabel(entry: ModelCatalogEntry) {
-  return `${vendorLabels[entry.vendor] || entry.vendor} · ${compactModelLabel(entry)}`;
+  return `${entry.vendorLabel || vendorLabels[entry.vendor] || entry.vendor} · ${compactModelLabel(entry)}`;
 }
 
 export function supportsCapability(entry: ModelCatalogEntry, capability: ModelCapability) {
@@ -31,8 +31,19 @@ export function supportsCapability(entry: ModelCatalogEntry, capability: ModelCa
   return entry.capabilities.includes(capability);
 }
 
+export function sortModelsByOrder(entries: ModelCatalogEntry[]) {
+  return entries
+    .map((entry, sourceIndex) => ({ entry, sourceIndex }))
+    .sort((left, right) => {
+      const leftOrder = Number.isFinite(left.entry.order) ? left.entry.order : Number.MAX_SAFE_INTEGER;
+      const rightOrder = Number.isFinite(right.entry.order) ? right.entry.order : Number.MAX_SAFE_INTEGER;
+      return leftOrder - rightOrder || left.sourceIndex - right.sourceIndex;
+    })
+    .map(({ entry }) => entry);
+}
+
 export function modelsForCapability(entries: ModelCatalogEntry[], capability: ModelCapability) {
-  return entries.filter((entry) => entry.enabled && supportsCapability(entry, capability));
+  return sortModelsByOrder(entries).filter((entry) => entry.enabled && supportsCapability(entry, capability));
 }
 
 export function findModelByRef(entries: ModelCatalogEntry[], ref?: string) {
@@ -41,18 +52,11 @@ export function findModelByRef(entries: ModelCatalogEntry[], ref?: string) {
   return entries.find((entry) => entry.id === value || entry.model === value);
 }
 
-export function isDefaultFor(entry: ModelCatalogEntry, capability: ModelCapability) {
-  return entry.defaultFor.includes(capability as ModelDefaultFor);
-}
-
 export function preferredModelFor(
   entries: ModelCatalogEntry[],
   capability: ModelCapability,
   preferredRef?: string
 ) {
-  return (
-    findModelByRef(entries, preferredRef) ||
-    entries.find((entry) => isDefaultFor(entry, capability)) ||
-    entries[0]
-  );
+  const availableModels = modelsForCapability(entries, capability);
+  return findModelByRef(availableModels, preferredRef) || availableModels[0];
 }

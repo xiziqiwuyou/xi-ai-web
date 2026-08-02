@@ -43,7 +43,7 @@ test("approved OpenAI and Qwen profiles lock protocol, dimensions and safe batch
   assert.equal(requireKnowledgeEmbeddingProfile("qwen-text-embedding-v4").maxInputTokens, 8192);
 });
 
-test("OpenAI embeddings use the documented endpoint, float encoding and fixed dimensions", async () => {
+test("OpenAI embeddings use the managed endpoint and ignore a legacy client base URL", async () => {
   const profile = requireKnowledgeEmbeddingProfile("openai-text-embedding-3-small");
   const calls = [];
   const provider = createKnowledgeEmbeddingProvider({
@@ -51,14 +51,15 @@ test("OpenAI embeddings use the documented endpoint, float encoding and fixed di
       calls.push({ url, options });
       return responseFor(profile);
     },
-    requestTimeoutMs: 5000
+    requestTimeoutMs: 5000,
+    upstreamRef: { current: "https://api.xi-ai.cn" }
   });
   const result = await provider.embed({
     profile,
-    connection: { baseUrl: "https://api.openai.com/v1/", apiKey: "sk-test-openai-value" },
+    connection: { baseUrl: "http://127.0.0.1/private", apiKey: "sk-test-openai-value" },
     input: ["hello"]
   });
-  assert.equal(calls[0].url, "https://api.openai.com/v1/embeddings");
+  assert.equal(calls[0].url, "https://api.xi-ai.cn/v1/embeddings");
   assert.equal(calls[0].options.headers.Authorization, "Bearer sk-test-openai-value");
   assert.deepEqual(JSON.parse(calls[0].options.body), {
     model: "text-embedding-3-small",

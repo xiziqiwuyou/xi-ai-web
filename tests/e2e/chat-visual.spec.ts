@@ -36,14 +36,14 @@ test("Chat renders the exact Figma stacked-session structure and copy", async ({
   await expect(activeSession.locator(".figma-session-toggle")).toHaveAttribute("aria-expanded", "true");
   await expect(activeSession.locator(".figma-message-history")).toBeVisible();
 
-  const toolLabels = await activeSession.locator(".figma-session-tools button:not(.figma-search-settings-action)").allTextContents();
+  const toolLabels = await activeSession.locator(".figma-session-tools > button, .figma-session-tools > .figma-menu > .figma-menu-trigger").allTextContents();
   expect(toolLabels.map((label) => label.replace(/\s+/g, " ").trim())).toEqual([
     "\u7f51\u7edc\u641c\u7d22",
     "\u56fe\u7247\u8f93\u5165",
     "\u601d\u7ef4\u94fe \u00b7 \u9ed8\u8ba4",
     "\u6e05\u9664\u6d88\u606f"
   ]);
-  await expect(activeSession.getByRole("button", { name: "配置联网搜索服务", exact: true })).toBeVisible();
+  await expect(activeSession.getByRole("button", { name: "配置联网搜索服务", exact: true })).toHaveCount(0);
   await expect(activeSession.getByRole("button", { name: "思维链长度", exact: true })).toContainText("思维链 · 默认");
 
   const composer = activeSession.locator(".figma-composer");
@@ -65,6 +65,99 @@ test("Chat renders the exact Figma stacked-session structure and copy", async ({
   await expect(activeSession.locator(".figma-generation-note")).toHaveText(
     "AI \u751f\u6210\u5185\u5bb9\u4ec5\u4f9b\u53c2\u8003\uff0c\u8bf7\u6838\u9a8c\u5173\u952e\u7ed3\u8bba\u3002"
   );
+});
+
+test("Chat workspace responds to the mouse wheel over message content", async ({ page }, testInfo) => {
+  test.skip(isMobileProject(testInfo.project.name), "Desktop wheel contract");
+
+  const workspace = page.locator(".figma-workspace");
+  const messageHistory = page.locator(".figma-message-history");
+  const messageBox = await messageHistory.boundingBox();
+  expect(messageBox).not.toBeNull();
+
+  await workspace.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  const before = await workspace.evaluate((element) => ({
+    scrollTop: element.scrollTop,
+    scrollHeight: element.scrollHeight,
+    clientHeight: element.clientHeight
+  }));
+  expect(before.scrollHeight).toBeGreaterThan(before.clientHeight);
+
+  await page.mouse.move(
+    (messageBox?.x || 0) + Math.min(160, (messageBox?.width || 0) / 2),
+    (messageBox?.y || 0) + Math.min(160, (messageBox?.height || 0) / 2)
+  );
+  await page.mouse.wheel(0, 320);
+
+  await expect.poll(() => workspace.evaluate((element) => element.scrollTop)).toBeGreaterThan(before.scrollTop);
+});
+
+test("expanded Chat composer stays inside desktop viewport bounds", async ({ page }, testInfo) => {
+  test.skip(isMobileProject(testInfo.project.name), "Desktop viewport containment contract");
+
+  for (const viewport of [
+    { width: 1440, height: 900 },
+    { width: 1280, height: 800 },
+    { width: 2048, height: 1030 }
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.goto("/chat");
+    await waitForPublicModule(page, publicDestinations[0]);
+
+    const geometry = await page.locator(".figma-chat-session:not(.collapsed)").evaluate((session) => {
+      const box = (selector: string) => {
+        const element = session.querySelector<HTMLElement>(selector);
+        if (!element) return null;
+        const rect = element.getBoundingClientRect();
+        return { top: rect.top, bottom: rect.bottom, height: rect.height };
+      };
+      const history = session.querySelector<HTMLElement>(".figma-message-history");
+      const sessionRect = session.getBoundingClientRect();
+      return {
+        viewportHeight: window.innerHeight,
+        session: { top: sessionRect.top, bottom: sessionRect.bottom, height: sessionRect.height },
+        history: box(".figma-message-history"),
+        composer: box(".figma-composer"),
+        note: box(".figma-generation-note"),
+        historyOverflowY: history ? getComputedStyle(history).overflowY : ""
+      };
+    });
+
+    expect(geometry.session).not.toBeNull();
+    expect(geometry.history).not.toBeNull();
+    expect(geometry.composer).not.toBeNull();
+    expect(geometry.note).not.toBeNull();
+    expect(geometry.composer!.bottom).toBeLessThanOrEqual(geometry.viewportHeight - 12);
+    expect(geometry.note!.bottom).toBeLessThanOrEqual(geometry.viewportHeight - 12);
+    expect(geometry.history!.height).toBeGreaterThanOrEqual(240);
+    expect(geometry.historyOverflowY).toBe("auto");
+  }
+});
+
+test("mobile Chat composer remains reachable without horizontal overflow", async ({ page }, testInfo) => {
+  test.skip(!isMobileProject(testInfo.project.name), "Mobile safe-area contract");
+
+  const workspace = page.locator(".figma-workspace");
+  const composer = page.locator(".figma-chat-session:not(.collapsed) .figma-composer");
+  await composer.scrollIntoViewIfNeeded();
+  const geometry = await composer.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    const controls = element.closest<HTMLElement>(".figma-session-controls");
+    return {
+      bottom: rect.bottom,
+      viewportHeight: window.innerHeight,
+      controlsPaddingBottom: controls ? Number.parseFloat(getComputedStyle(controls).paddingBottom) : 0,
+      documentWidth: document.documentElement.scrollWidth,
+      viewportWidth: window.innerWidth
+    };
+  });
+
+  expect(geometry.bottom).toBeLessThanOrEqual(geometry.viewportHeight);
+  expect(geometry.controlsPaddingBottom).toBeGreaterThanOrEqual(12);
+  expect(geometry.documentWidth).toBeLessThanOrEqual(geometry.viewportWidth + 1);
+  await expect(workspace).toHaveAttribute("data-scroll-owner", "public-workspace");
 });
 
 test("Chat widens messages while keeping the authored 896px composer track", async ({ page }, testInfo) => {
@@ -110,7 +203,8 @@ test("Chat widens messages while keeping the authored 896px composer track", asy
   expect(metrics.assistantBubble).not.toBeNull();
   expect(metrics.userAvatar).not.toBeNull();
   expect(metrics.userBubble).not.toBeNull();
-  expect(Math.abs(metrics.history!.height - (metrics.viewportHeight - 340))).toBeLessThanOrEqual(1);
+  expect(metrics.history!.height).toBeGreaterThanOrEqual(240);
+  expect(metrics.composer!.y + metrics.composer!.height).toBeLessThanOrEqual(metrics.viewportHeight - 12);
   expect(Math.abs(metrics.messageTrack!.width - Math.min(metrics.history!.width, 1024))).toBeLessThanOrEqual(1);
   expect(Math.abs(metrics.controlsTrack!.width - 896)).toBeLessThanOrEqual(1);
   expect(metrics.messageTrack!.width).toBeGreaterThan(metrics.controlsTrack!.width);

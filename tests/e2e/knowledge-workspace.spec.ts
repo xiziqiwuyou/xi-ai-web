@@ -326,14 +326,14 @@ test("knowledge workspace creates, uploads, indexes and starts a model rebuild",
   await expect(page.getByText("等待向量连接", { exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "配置" }).first().click();
-  await page.getByRole("textbox", { name: "API URL" }).fill("https://api.openai.com/v1");
   await page.locator('.knowledge-cloud-connection-form input[type="password"]').fill("sk-workspace-session-only");
   await page.getByRole("button", { name: "保存到本次会话" }).click();
   await page.getByRole("button", { name: "继续索引" }).click();
   await expect(page.getByText("可检索", { exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "切换向量模型" }).click();
-  await page.getByLabel("新向量模型").selectOption(profiles[1].id);
+  await page.getByRole("button", { name: "新向量模型", exact: true }).click();
+  await page.getByRole("listbox", { name: "新向量模型", exact: true }).getByRole("option", { name: new RegExp(profiles[1].label || profiles[1].actualModel) }).click();
   await page.getByRole("button", { name: "开始重建" }).click();
   await expect(page.getByText("新索引构建中", { exact: true })).toBeVisible();
   const reindexNotice = page.getByRole("status").filter({
@@ -361,7 +361,7 @@ test("failed local migration keeps the IndexedDB source and a resumable checkpoi
   await page.goto("/knowledge");
   await expect(page.getByRole("heading", { name: "Alice 的知识空间" })).toBeVisible();
   await expect.poll(() => page.evaluate(() => new Promise<boolean>((resolve, reject) => {
-    const request = indexedDB.open("xi-ai-web-workspace", 2);
+    const request = indexedDB.open("xi-ai-web-workspace", 3);
     request.onerror = () => reject(request.error);
     request.onsuccess = () => {
       const db = request.result;
@@ -373,7 +373,7 @@ test("failed local migration keeps the IndexedDB source and a resumable checkpoi
     };
   }))).toBe(true);
   await page.evaluate(() => new Promise<void>((resolve, reject) => {
-    const request = indexedDB.open("xi-ai-web-workspace", 2);
+    const request = indexedDB.open("xi-ai-web-workspace", 3);
     request.onerror = () => reject(request.error);
     request.onsuccess = () => {
       const db = request.result;

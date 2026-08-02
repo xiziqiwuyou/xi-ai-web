@@ -23,14 +23,15 @@ git diff --check
 - Required projects are `1440x900`, `1280x800`, `390x844`, and `375x812`.
 - Wait for `waitForPublicModule` before layout assertions. A correct shell title does not prove the lazy feature module has mounted.
 - Mobile checks assert one visible vertical scroll owner, no document overflow, and `44px` navigation/sheet targets.
-- BYOK tests assert `cherry-web-user-provider` is written only to `sessionStorage` and that the required modal cannot dismiss early.
+- BYOK tests assert `cherry-web-user-provider` is written only to `sessionStorage`, the required modal cannot dismiss early, desktop/mobile replacement controls reopen the same dialog, and the unmasked Key is absent from shell text and `localStorage` before and after replacement.
 - Workspace tests use real Chromium IndexedDB and assert legacy cleanup after commit, exported-secret absence, digest/count validation, duplicate rejection, atomic replace, theme restore, and one visible dialog scroll owner.
 - Command/workflow tests must assert `$` and `/` keyboard selection, Escape behavior, removable tags, one-shot app cleanup, the card catalog before canvas detail, and local template/knowledge output flowing into a later Agent request.
-- Provider-tool tests must assert a tool-bearing Skill sends the exact deduplicated `allowedTools`, a configured independent search remains available on a model without `webSearch`/`toolCalling`, missing search config fails before provider access, Agent-bound knowledge supplies context, and Workflow tool errors occur before any node reaches the provider.
+- Provider-tool tests must assert a tool-bearing Skill sends the exact deduplicated `allowedTools`, Chat's GLM/Kimi menu reuses the active BYOK connection on a model without `webSearch`/`toolCalling`, missing credentials fail before provider access, Agent-bound knowledge supplies context, and Workflow tool errors occur before any node reaches the provider.
+- Session-settings tests must cover all eight category tabs, one visible panel, keyboard category navigation, desktop side-menu geometry, mobile horizontal overflow, readable dark-theme labels, sanitized sessionStorage restoration, structural Cancel/Save behavior, both send shortcuts, command-menu disablement, long-paste text attachments, formula/code rendering, and prompt/function request projection. Prompt-tool contracts must reject Markdown envelopes, unknown tools, malformed JSON, schema violations, provider-hosted tools, and calls beyond the bounded round limit.
 - Agent tests must assert catalog-before-editor navigation, category/tag round trip, exact workflow references after deletion, and selected local knowledge reaching `contextChunks` plus request-scoped `knowledge_search`.
 - Assistant tests must assert backend-driven categories, starter prompt draft behavior, exactly one new conversation, unchanged old conversations, visible bound identity, exact outbound `assistantId`, consumed launch storage, and fail-closed invalid IDs on desktop and mobile.
-- Admin model tests must assert expandable group semantics, one mounted child section, grouped mobile destination values, independent display/request-name validation, short-label public rendering, stable outbound `modelId`, and mapped provider `model` dispatch.
-- Public navigation tests assert canonical routes, Back/Forward behavior, server order, and no `/admin` link.
+- Admin model tests must assert expandable group semantics, one mounted child section, grouped mobile destination values, independent display/request-name validation, short-label public rendering, stable outbound `modelId`, mapped provider `model` dispatch, direct current-vendor drag/move model ordering with atomic full-catalog persistence, vendor/model footer creation and guarded deletion, six-row bounded vendor/model scrollers, stable 7px idle/active scrollbar geometry, readable responsive capability labels, and the absence of duplicate vendor/mapping controls in the inspector.
+- Public navigation tests assert canonical routes, Back/Forward behavior, server order, no `/admin` link, pointer/keyboard intent preloading without route mutation, a gated cold import, stable shell geometry while pending, reduced-motion behavior, failed-import rollback/retry, and last-request-wins rapid navigation.
 
 Vite must ignore `**/reports/**`. Playwright writes traces and screenshots there; watching that directory reloads concurrent test pages and produces `ERR_ABORTED` or destroyed execution contexts.
 
@@ -134,7 +135,7 @@ saveMigrationCheckpoint({ localId, cloudDocumentId, state: stage });
 ## Forbidden Patterns
 
 - No `any`, suppressed TypeScript errors, debug logging, or ignored failed promises in changed code.
-- No API URL/key persistence in backend files, `localStorage`, query strings, logs, or analytics.
+- No API Key or Shell handoff JWT persistence in backend files, `localStorage`, query strings, logs, analytics, IndexedDB, or workspace exports.
 - No public Admin entry. `/admin` is address-only and isolated from public bootstrap.
 - No fake tabs, project-authored explanatory copy absent from Figma, nested styling cards, persistent glass effects, or gradients outside `.figma-brand-mark`, `.figma-ppt-stages`, and `.figma-map-canvas`.
 - No direct feature writes to localStorage for conversations, gallery, knowledge, media jobs, agent data, memories, or backup state; theme localStorage is only a first-paint mirror of the IndexedDB preference.
@@ -152,8 +153,9 @@ saveMigrationCheckpoint({ localId, cloudDocumentId, state: stage });
 - Mobile grid rows and safe-area padding are explicit.
 - Desktop `.figma-sidebar` is `224px` at `1024px`, `1280x800`, and `1440x900`; its eight-item navigation scrolls independently when height is constrained. `.figma-mobile-header` replaces it below `1024px` and the open menu exposes eight `44px` destinations in one vertical column.
 - Figma hero emphasis text must preserve both visual phrase grouping and the exact accessible heading name; assert computed `white-space: nowrap` and query the heading by its full name.
-- The public navigation order is exactly `AI 对话`, `图像生成`, `智能体`, `工作流`, `AI 一键 PPT`, `思维导图`, `助手库`, `翻译`; `Skill` remains Chat-local, and retired labels plus a public Admin/API action remain absent.
-- The required BYOK dialog exposes only URL, Key, visibility, and save controls while retaining the shared dialog and session-only storage contracts.
+- The public navigation order remains the eight bootstrap destinations; `Skill` stays Chat-local, retired labels and public Admin links remain absent, and the only persistent credential action is the masked session-Key replacement control outside destination navigation.
+- Chat viewport tests cover `1440x900`, `1280x800`, and `2048x1030`: the expanded composer and generation note remain at least `12px` inside the viewport while message history keeps `overflow-y: auto`. Mobile tests at `390x844` and `375x812` scroll the composer into view, assert safe-area-aware controls padding, one public-workspace scroll owner, and no horizontal overflow.
+- The required BYOK dialog exposes only Key, visibility, and save controls while retaining the shared dialog and session-only storage contracts. Shell type-3 E2E must cover successful exchange, failure fallback, malformed-token rejection, URL scrubbing, one request under StrictMode, and absence from persistent storage.
 - All changed accessible names match tests and visible intent.
 - Dark typography checks cover Chinese fallback stacks, a `10px` metadata floor, filled-primary text contrast, and the absence of compounded opacity on selected navigation copy.
 - Range-control checks inspect computed border, padding, shadow, desktop/mobile hit-area geometry, stable accessible names, visible progress, and a single focus treatment; source-token assertions alone cannot catch legacy cascade leakage.

@@ -181,8 +181,8 @@ test("agents persist stable cloud IDs, send request-only connections, and render
     moduleId: "agents",
     knowledgeBaseIds: readyKnowledgeBases.slice(0, 2).map((base) => base.id),
     embeddingConnections: {
-      openai: { baseUrl: "https://api.openai.example.test/v1", apiKey: "e2e-openai-embedding-key" },
-      qwen: { baseUrl: "https://dashscope.example.test/compatible-mode/v1", apiKey: "e2e-qwen-embedding-key" }
+      openai: { apiKey: "e2e-openai-embedding-key" },
+      qwen: { apiKey: "e2e-qwen-embedding-key" }
     }
   });
   expect(apiHarness.agentRequests.at(-1)?.contextChunks).toEqual([]);
@@ -217,7 +217,8 @@ test("workflow cloud references preflight globally before provider calls", async
   await workflowSelector.getByRole("checkbox", { name: new RegExp(readyKnowledgeBases[1].name) }).check();
   await page.keyboard.press("Escape");
   await module.getByRole("button", { name: "添加智能体节点", exact: true }).click();
-  await module.getByLabel("节点智能体", { exact: true }).selectOption("agent-execution-partner");
+  await module.getByRole("button", { name: "节点智能体", exact: true }).click();
+  await module.getByRole("listbox", { name: "节点智能体", exact: true }).getByRole("option", { name: "执行搭档", exact: true }).click();
   await module.getByRole("button", { name: "保存工作流", exact: true }).click();
   await expect(module.getByText("工作流已保存到当前浏览器。", { exact: true })).toBeVisible();
   const storedWorkflow = (await readWorkspaceRecords<AgentWorkflowDefinition>(page, "workflows"))
@@ -234,8 +235,8 @@ test("workflow cloud references preflight globally before provider calls", async
     query: "检查云端发布规范",
     knowledgeBaseIds: readyKnowledgeBases.slice(0, 3).map((base) => base.id),
     embeddingConnections: {
-      openai: { baseUrl: "https://api.openai.example.test/v1", apiKey: "e2e-openai-embedding-key" },
-      qwen: { baseUrl: "https://dashscope.example.test/compatible-mode/v1", apiKey: "e2e-qwen-embedding-key" }
+      openai: { apiKey: "e2e-openai-embedding-key" },
+      qwen: { apiKey: "e2e-qwen-embedding-key" }
     }
   });
   const workflowRequests = apiHarness.agentRequests.filter((request) => request.moduleId === "workflows");
@@ -243,7 +244,7 @@ test("workflow cloud references preflight globally before provider calls", async
   expect(workflowRequests[0]).toMatchObject({
     knowledgeBaseIds: [readyKnowledgeBases[2].id],
     embeddingConnections: {
-      openai: { baseUrl: "https://api.openai.example.test/v1", apiKey: "e2e-openai-embedding-key" }
+      openai: { apiKey: "e2e-openai-embedding-key" }
     }
   });
   expect(apiHarness.agentKnowledgeCsrfHeaders.at(-1)).toBe(knowledgeCsrfToken);
@@ -321,6 +322,7 @@ test("Chat manages a local Skill and triggers it only for the selected conversat
   await module.locator('button[aria-label="会话设置"]:visible').first().click();
   const settings = page.getByRole("dialog", { name: "会话设置", exact: true });
   await expect(settings).toBeVisible();
+  await settings.getByRole("tab", { name: "对话 Skill", exact: true }).click();
   const manageSkills = settings.getByRole("button", { name: "管理本地 Skill", exact: true });
   const manageSkillsBox = await manageSkills.boundingBox();
   expect(manageSkillsBox?.height).toBeGreaterThanOrEqual(isMobileProject(testInfo.project.name) ? 44 : 34);
@@ -329,9 +331,45 @@ test("Chat manages a local Skill and triggers it only for the selected conversat
   await expect(manager).toBeVisible();
   await expect(settings).toHaveCount(0);
   await expect(page.locator('[data-scroll-owner="dialog"]:visible')).toHaveCount(1);
+  const managerBox = await manager.boundingBox();
+  const viewport = page.viewportSize();
+  if (viewport && viewport.width >= 981) {
+    expect(managerBox?.width).toBeGreaterThanOrEqual(880);
+  }
+  const skillList = manager.locator(".figma-chat-skill-library > div");
+  await expect.poll(async () => skillList.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
   await manager.getByRole("button", { name: "新建 Skill", exact: true }).click();
-  await manager.getByLabel("名称", { exact: true }).fill("发布检查");
-  await manager.getByLabel("Skill 指令", { exact: true }).fill("检查版本、回滚、监控和负责人，并输出缺口列表。");
+  const skillName = manager.getByLabel("名称", { exact: true });
+  const skillInstructions = manager.getByLabel("Skill 指令", { exact: true });
+  await skillName.fill("发布检查");
+  await skillInstructions.fill("检查版本、回滚、监控和负责人，并输出缺口列表。");
+  await expect.poll(() => skillName.evaluate((element) => getComputedStyle(element).boxShadow)).toBe("none");
+  const idleSkillControlStyles = await skillName.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      backgroundImage: style.backgroundImage,
+      boxShadow: style.boxShadow,
+      borders: [style.borderTopColor, style.borderRightColor, style.borderBottomColor, style.borderLeftColor]
+    };
+  });
+  const focusedSkillControlStyles = await skillInstructions.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      backgroundImage: style.backgroundImage,
+      boxShadow: style.boxShadow,
+      outlineStyle: style.outlineStyle,
+      borders: [style.borderTopColor, style.borderRightColor, style.borderBottomColor, style.borderLeftColor]
+    };
+  });
+  expect(idleSkillControlStyles.backgroundImage).toBe("none");
+  expect(idleSkillControlStyles.boxShadow).toBe("none");
+  expect(new Set(idleSkillControlStyles.borders).size).toBe(1);
+  expect(focusedSkillControlStyles.backgroundImage).toBe("none");
+  expect(focusedSkillControlStyles.boxShadow).not.toBe("none");
+  expect(focusedSkillControlStyles.boxShadow).not.toContain("inset");
+  expect(focusedSkillControlStyles.outlineStyle).toBe("none");
+  expect(new Set(focusedSkillControlStyles.borders).size).toBe(1);
   await manager.getByRole("checkbox", { name: /联网搜索/ }).check();
   await manager.getByRole("button", { name: "保存 Skill", exact: true }).click();
   await expect(manager.getByText("Skill 已保存到当前浏览器。", { exact: true })).toBeVisible();
@@ -367,7 +405,7 @@ test("Chat manages a local Skill and triggers it only for the selected conversat
   expect(apiHarness.chatRequests.at(-1)?.allowedTools).toEqual(["web_search"]);
   expect(apiHarness.chatRequests.at(-1)?.searchService).toMatchObject({
     provider: "glm",
-    apiKey: "e2e-search-session-key"
+    apiKey: "e2e-session-key"
   });
 
   await module.locator('button[aria-label="新对话"]:visible').first().click();

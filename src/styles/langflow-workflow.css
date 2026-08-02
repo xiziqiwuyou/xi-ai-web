@@ -189,22 +189,22 @@
 .langflow-workflow-model {
   display: grid;
   flex: 0 0 220px;
+  min-width: 0;
   gap: 6px;
 }
 
-.langflow-workflow-model span {
+.langflow-workflow-model > .figma-menu-label {
   color: var(--xhs-muted);
   font-size: 10px;
 }
 
-.langflow-workflow-model select {
+.langflow-workflow-model .figma-menu-trigger {
   min-height: 38px;
-  padding: 0 10px;
-  border: 1px solid var(--xhs-line);
   border-radius: 11px;
-  background: var(--xhs-soft-3);
-  color: var(--xhs-ink);
-  font-size: 11px;
+}
+
+.langflow-workflow-model .figma-menu-popover {
+  width: max(100%, 260px);
 }
 
 .langflow-workflow-messages {

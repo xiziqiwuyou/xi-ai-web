@@ -102,7 +102,6 @@ export function knowledgeEmbeddingConnectionsForBases(
   vendors.forEach((vendor) => {
     const connection = saved[vendor];
     if (connection) connections[vendor] = {
-      baseUrl: connection.baseUrl,
       apiKey: connection.apiKey
     };
   });

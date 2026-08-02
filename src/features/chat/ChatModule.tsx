@@ -1,55 +1,55 @@
 import {
   useCallback,
   useEffect,
-  useId,
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
-  type ChangeEvent,
-  type KeyboardEvent,
-  type MouseEvent as ReactMouseEvent
+  type ChangeEvent
 } from "react";
 import {
-  BrainCircuit,
-  Bot,
-  Check,
-  ChevronDown,
-  ChevronUp,
-  Globe2,
-  Image as ImageIcon,
-  LayoutGrid,
   Plus,
-  Puzzle,
-  Send,
-  Settings2,
-  Square,
-  Trash2,
-  X
+  Settings2
 } from "lucide-react";
-import { ApiError, streamChat } from "../../api";
+import { ApiError, generateChatTitle, streamChat } from "../../api";
 import {
   ConfirmationDialog,
-  Dialog,
-  FigmaMenu,
-  getFloatingHorizontalOffset,
-  getFloatingVerticalPlacement
 } from "../../components/ui";
-import { createClientId } from "../../utils/clientId";
 import {
   compactModelLabel,
   modelsForCapability,
   preferredModelFor
 } from "../../components/workbench";
 import { createChatAttachment } from "./attachmentUtils";
-import ChatMessageContent from "./ChatMessageContent";
-import ChatCommandPalette, { type ChatCommandOption } from "./ChatCommandPalette";
-import { activeChatCommand, chatCommandMatches, removeChatCommand } from "./chatCommands";
+import {
+  boundedChatAttachments,
+  chatAttachmentsForRequest,
+  chatHistoryWithoutAttachments,
+  settleStreamingMessage
+} from "./chatAttachmentContext";
+import ChatSessionSettingsDialog from "./ChatSessionSettingsDialog";
+import {
+  attachmentsWithinImageLimit,
+  defaultSessionUi,
+  displayedSessionStack,
+  imageAttachmentCount,
+  sortSessionStack,
+  uniqueLocalMessageId,
+  ChatSessionBlock,
+  type SessionUiState
+} from "./ChatSessionBlock";
+import {
+  assistantAvatarPresets,
+  defaultChatSessionSettings,
+  loadChatSessionSettings,
+  personalAvatarPresets,
+  saveChatSessionSettings,
+  selectChatHistory,
+  type ChatSessionSettings
+} from "./chatSessionSettings";
 import ChatSkillManagerDialog from "../automation/ChatSkillManagerDialog";
 import { loadAutomationSkills, saveAgentSkills } from "../automation/automationRepository";
 import {
   skillCompatibility,
-  toolCompatibility,
   toolSetCompatibility
 } from "../automation/toolCompatibility";
 import {
@@ -65,13 +65,7 @@ import {
   saveLocalConversations,
 } from "./localConversationStore";
 import { isUserProviderReady, userConnectionPayload } from "../settings/userProviderConfig";
-import SearchServiceDialog from "../settings/SearchServiceDialog";
-import {
-  isSearchServiceReady,
-  searchServicePayload
-} from "../settings/searchServiceConfig";
-import CloudKnowledgeSelector from "../knowledge-cloud/CloudKnowledgeSelector";
-import KnowledgeCitationList from "../knowledge-cloud/KnowledgeCitationList";
+import { searchServiceForUserProvider } from "../settings/searchServiceConfig";
 import {
   knowledgeEmbeddingConnectionsForBases,
   knowledgeLogoutEvent,
@@ -91,11 +85,9 @@ import type {
   ConversationSummary,
   Message,
   ModelCatalogEntry,
-  KnowledgeBase,
   PromptPreset,
   PublicBootstrapPayload,
-  ReasoningEffort,
-  SearchServiceConfig,
+  SearchProviderKind,
   ToolSetting,
   UserProviderConfig
 } from "../../types";
@@ -109,189 +101,12 @@ type ChatModuleProps = {
   modelCatalog: ModelCatalogEntry[];
   toolSettings: ToolSetting[];
   userProvider: UserProviderConfig;
-  searchService: SearchServiceConfig;
   onUserProviderChange: (patch: Partial<UserProviderConfig>) => void;
-  onSearchServiceChange: (config: SearchServiceConfig) => void;
   onRequestApiConfig: () => void;
   onConversationsChange: (conversations: ConversationSummary[]) => void;
   onRefresh: () => Promise<PublicBootstrapPayload>;
 };
 
-type SessionUiState = {
-  collapsed: boolean;
-  draft: string;
-  modelId: string;
-  attachments: ChatAttachment[];
-  skillIds: string[];
-  appId: string;
-  search: boolean;
-  knowledgeBaseIds: string[];
-  reasoningEffort: ReasoningEffort;
-  notice: string;
-};
-
-type ModelVendorTab = "OpenAI" | "Claude" | "Gemini" | "Kimi" | "DeepSeek" | "通义千问";
-
-type SessionSettingsSnapshot = {
-  assistantAvatarId: string;
-  userAvatar: string | null;
-  messageStyle: "bubble" | "list";
-  temperature: number;
-  topP: number;
-  contextSize: string;
-  maxTokens: string;
-  streamOutput: boolean;
-  toolMode: string;
-  maxImageAttachments: ChatImageAttachmentLimit;
-  skillIds: string[];
-};
-
-type PersistedSessionSettings = Omit<SessionSettingsSnapshot, "skillIds">;
-
-const assistantAvatarPresets = [
-  { id: "akira", name: "霓虹主角", image: "/assets/figma/avatar-akira.jpg" },
-  { id: "mika", name: "蓝发旅人", image: "/assets/figma/avatar-mika.jpg" },
-  { id: "ren", name: "声波少年", image: "/assets/figma/avatar-ren.jpg" },
-  { id: "yuki", name: "靛蓝观察者", image: "/assets/figma/avatar-yuki.jpg" }
-] as const;
-
-const modelVendorTabs: ModelVendorTab[] = ["OpenAI", "Claude", "Gemini", "Kimi", "DeepSeek", "通义千问"];
-
-const chatSettingsStorageKey = "xi-ai-web-chat-session-settings";
-const chatContextSizeValues = ["4", "16", "32", "128"] as const;
-const chatMaxTokenValues = ["1024", "2048", "4096", "8192"] as const;
-const chatImageAttachmentLimitValues = [1, 2, 4, 6] as const;
-type ChatImageAttachmentLimit = typeof chatImageAttachmentLimitValues[number];
-const chatContextSizeOptions = chatContextSizeValues.map((value) => ({ value, label: `${value}K tokens` }));
-const chatMaxTokenOptions = [
-  { value: "1024", label: "1,024" },
-  { value: "2048", label: "2,048" },
-  { value: "4096", label: "4,096" },
-  { value: "8192", label: "8,192" }
-] as const;
-const chatToolModeOptions = ["\u81ea\u52a8", "\u8be2\u95ee\u540e\u8c03\u7528", "\u7981\u7528"] as const;
-const reasoningEffortValues = ["default", "off", "low", "medium", "high", "xhigh"] as const satisfies readonly ReasoningEffort[];
-const reasoningEffortOptions = [
-  { value: "default", label: "默认", detail: "依赖模型默认行为，不作额外配置" },
-  { value: "off", label: "关闭", detail: "禁用推理" },
-  { value: "low", label: "浅想", detail: "低强度推理" },
-  { value: "medium", label: "斟酌", detail: "中强度推理" },
-  { value: "high", label: "沉思", detail: "高强度推理" },
-  { value: "xhigh", label: "穷究", detail: "超高强度推理" }
-] as const;
-
-function clampSettingNumber(value: unknown, fallback: number, min: number, max: number) {
-  const number = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(number)) return fallback;
-  return Math.min(max, Math.max(min, number));
-}
-
-function cleanSettingChoice<T extends string | number>(value: unknown, choices: readonly T[], fallback: T) {
-  return choices.includes(value as T) ? value as T : fallback;
-}
-
-function loadPersistedSessionSettings(): PersistedSessionSettings | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = window.sessionStorage.getItem(chatSettingsStorageKey);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<PersistedSessionSettings>;
-    const avatarIds = assistantAvatarPresets.map((preset) => preset.id);
-    return {
-      assistantAvatarId: cleanSettingChoice(parsed.assistantAvatarId, avatarIds, "akira"),
-      userAvatar: typeof parsed.userAvatar === "string" && parsed.userAvatar.startsWith("data:image/")
-        ? parsed.userAvatar
-        : null,
-      messageStyle: cleanSettingChoice(parsed.messageStyle, ["bubble", "list"], "bubble"),
-      temperature: clampSettingNumber(parsed.temperature, 0.7, 0, 1),
-      topP: clampSettingNumber(parsed.topP, 0.9, 0.1, 1),
-      contextSize: cleanSettingChoice(parsed.contextSize, chatContextSizeValues, "16"),
-      maxTokens: cleanSettingChoice(parsed.maxTokens, chatMaxTokenValues, "4096"),
-      streamOutput: typeof parsed.streamOutput === "boolean" ? parsed.streamOutput : true,
-      toolMode: cleanSettingChoice(
-        parsed.toolMode,
-        chatToolModeOptions,
-        "\u81ea\u52a8"
-      ),
-      maxImageAttachments: cleanSettingChoice(
-        parsed.maxImageAttachments,
-        chatImageAttachmentLimitValues,
-        4
-      )
-    };
-  } catch {
-    window.sessionStorage.removeItem(chatSettingsStorageKey);
-    return null;
-  }
-}
-
-function savePersistedSessionSettings(settings: PersistedSessionSettings) {
-  if (typeof window === "undefined") return;
-  try {
-    window.sessionStorage.setItem(chatSettingsStorageKey, JSON.stringify(settings));
-  } catch {
-    // Session-only settings remain usable in memory when storage is unavailable.
-  }
-}
-
-function vendorTabForModel(model?: ModelCatalogEntry): ModelVendorTab {
-  if (model?.vendor === "openai" || model?.vendor === "openai-compatible") return "OpenAI";
-  if (model?.vendor === "anthropic") return "Claude";
-  if (model?.vendor === "gemini") return "Gemini";
-  if (model?.vendor === "kimi") return "Kimi";
-  if (model?.vendor === "deepseek") return "DeepSeek";
-  return "通义千问";
-}
-
-function modelCapabilityNote(model: ModelCatalogEntry) {
-  if (model.capabilities.includes("vision")) return "图像理解 · 多模态";
-  if (model.capabilities.includes("toolCalling")) return "代码与工具调用";
-  if (model.capabilities.includes("streaming")) return "深度推理 · 流式响应";
-  return "通用对话 · 稳定输出";
-}
-
-function moveRovingFocus(event: KeyboardEvent<HTMLElement>, selector: string) {
-  if (!["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
-  const items = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(selector));
-  if (!items.length) return;
-  event.preventDefault();
-  const currentIndex = items.findIndex((item) => item === document.activeElement);
-  const forward = event.key === "ArrowDown" || event.key === "ArrowRight";
-  const nextIndex = event.key === "Home"
-    ? 0
-    : event.key === "End"
-      ? items.length - 1
-      : forward
-        ? currentIndex < 0 || currentIndex === items.length - 1 ? 0 : currentIndex + 1
-        : currentIndex <= 0 ? items.length - 1 : currentIndex - 1;
-  items[nextIndex]?.focus();
-}
-
-function defaultSessionUi(collapsed: boolean, knowledgeBaseIds: string[] = []): SessionUiState {
-  return {
-    collapsed,
-    draft: "",
-    modelId: "",
-    attachments: [],
-    skillIds: [],
-    appId: "",
-    search: false,
-    knowledgeBaseIds: normalizeKnowledgeBaseIds(knowledgeBaseIds),
-    reasoningEffort: "default",
-    notice: ""
-  };
-}
-
-function sortSessionStack(conversations: Conversation[]) {
-  return [...conversations].sort(
-    (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-  );
-}
-
-function uniqueLocalMessageId(existing: Message[], candidate: string) {
-  if (!existing.some((message) => message.id === candidate)) return candidate;
-  return createClientId(candidate);
-}
 
 function ChatModule({
   enabled,
@@ -300,9 +115,7 @@ function ChatModule({
   modelCatalog,
   toolSettings,
   userProvider,
-  searchService,
   onUserProviderChange,
-  onSearchServiceChange,
   onRequestApiConfig,
   onConversationsChange,
   onRefresh
@@ -312,24 +125,14 @@ function ChatModule({
   const [conversationsHydrated, setConversationsHydrated] = useState(false);
   const [persistenceError, setPersistenceError] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [temperature, setTemperature] = useState(0.7);
-  const [topP, setTopP] = useState(0.9);
-  const [messageStyle, setMessageStyle] = useState<"bubble" | "list">("bubble");
-  const [contextSize, setContextSize] = useState("16");
-  const [maxTokens, setMaxTokens] = useState("4096");
-  const [streamOutput, setStreamOutput] = useState(true);
-  const [toolMode, setToolMode] = useState("自动");
-  const [maxImageAttachments, setMaxImageAttachments] = useState<ChatImageAttachmentLimit>(4);
+  const [chatSettings, setChatSettings] = useState<ChatSessionSettings>(loadChatSessionSettings);
+  const [settingsDraft, setSettingsDraft] = useState<ChatSessionSettings>(chatSettings);
   const [chatSkills, setChatSkills] = useState<AgentSkillDefinition[]>([]);
   const [settingsSkillIds, setSettingsSkillIds] = useState<string[]>([]);
   const [settingsConversationId, setSettingsConversationId] = useState("");
   const [skillsLoading, setSkillsLoading] = useState(true);
   const [skillManagerOpen, setSkillManagerOpen] = useState(false);
   const [returnFocusToSkillManager, setReturnFocusToSkillManager] = useState(false);
-  const [searchSettingsOpen, setSearchSettingsOpen] = useState(false);
-  const [pendingSearchConversationId, setPendingSearchConversationId] = useState("");
-  const [assistantAvatarId, setAssistantAvatarId] = useState("akira");
-  const [userAvatar, setUserAvatar] = useState<string | null>(null);
   const [defaultAssistantId, setDefaultAssistantId] = useState(assistants[0]?.id || "");
   const [streamingConversationId, setStreamingConversationId] = useState("");
   const [clearConversationId, setClearConversationId] = useState("");
@@ -339,29 +142,21 @@ function ChatModule({
   const pendingAssistantHandledRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
   const streamingMessageIdRef = useRef("");
-  const userAvatarInputRef = useRef<HTMLInputElement | null>(null);
-  const skillManagerTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const settingsSnapshotRef = useRef<SessionSettingsSnapshot | null>(null);
+  const titleSummariesInFlightRef = useRef(new Set<string>());
+
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   const chatModels = useMemo(() => modelsForCapability(modelCatalog, "chat"), [modelCatalog]);
+  const displayedConversations = useMemo(
+    () => displayedSessionStack(conversationList, sessionUi),
+    [conversationList, sessionUi]
+  );
   const connectionReady = isUserProviderReady(userProvider);
-  const searchReady = isSearchServiceReady(searchService);
-  const assistantAvatarUrl = assistantAvatarPresets.find((preset) => preset.id === assistantAvatarId)?.image || assistantAvatarPresets[0].image;
-
-  useEffect(() => {
-    const restored = loadPersistedSessionSettings();
-    if (!restored) return;
-    setAssistantAvatarId(restored.assistantAvatarId);
-    setUserAvatar(restored.userAvatar);
-    setMessageStyle(restored.messageStyle);
-    setTemperature(restored.temperature);
-    setTopP(restored.topP);
-    setContextSize(restored.contextSize);
-    setMaxTokens(restored.maxTokens);
-    setStreamOutput(restored.streamOutput);
-    setToolMode(restored.toolMode);
-    setMaxImageAttachments(restored.maxImageAttachments);
-  }, []);
+  const searchReady = connectionReady;
+  const assistantAvatarUrl = assistantAvatarPresets.find((preset) => preset.id === chatSettings.assistantAvatarId)?.image || assistantAvatarPresets[0].image;
+  const userAvatarUrl = chatSettings.userAvatar ||
+    personalAvatarPresets.find((preset) => preset.id === chatSettings.userAvatarPresetId)?.image ||
+    personalAvatarPresets[0].image;
 
   const commitConversations = useCallback(
     (updater: Conversation[] | ((current: Conversation[]) => Conversation[])) => {
@@ -546,13 +341,18 @@ function ChatModule({
   );
   const settingsModel = modelForSession(
     settingsConversationId ||
-      conversationList.find((conversation) => !sessionUi[conversation.id]?.collapsed)?.id ||
-      conversationList[0]?.id ||
+      displayedConversations.find((conversation) => !sessionUi[conversation.id]?.collapsed)?.id ||
+      displayedConversations[0]?.id ||
       ""
   );
 
   const handleStreamEvent = useCallback(
-    (conversationId: string, selectedModel: ModelCatalogEntry, event: ChatStreamEvent) => {
+    (
+      conversationId: string,
+      selectedModel: ModelCatalogEntry,
+      messageAttachments: ChatAttachment[],
+      event: ChatStreamEvent
+    ) => {
       if (event.type === "meta") {
         commitConversations((current) =>
           current.map((conversation) =>
@@ -561,7 +361,8 @@ function ChatModule({
               : (() => {
                   const userMessage = {
                     ...event.userMessage,
-                    id: uniqueLocalMessageId(conversation.messages, event.userMessage.id)
+                    id: uniqueLocalMessageId(conversation.messages, event.userMessage.id),
+                    attachments: messageAttachments.length ? messageAttachments : undefined
                   };
                   const assistantMessageId = uniqueLocalMessageId([...conversation.messages, userMessage], event.assistantMessageId);
                   streamingMessageIdRef.current = assistantMessageId;
@@ -586,7 +387,7 @@ function ChatModule({
       }
 
       if (event.type === "token") {
-        if (!streamOutput) return;
+        if (!chatSettings.streamOutput) return;
         const messageId = streamingMessageIdRef.current;
         if (!messageId) return;
         commitConversations((current) =>
@@ -625,7 +426,7 @@ function ChatModule({
         )
       );
     },
-    [commitConversations, patchSessionUi, streamOutput]
+    [chatSettings.streamOutput, commitConversations, patchSessionUi]
   );
 
   const sendMessage = async (conversation: Conversation) => {
@@ -637,7 +438,7 @@ function ChatModule({
       return;
     }
     if (!connectionReady) {
-      patchSessionUi(conversation.id, { notice: "请先填写 API URL 和 Key。" });
+      patchSessionUi(conversation.id, { notice: "请先填写 API Key。" });
       onRequestApiConfig();
       return;
     }
@@ -646,7 +447,7 @@ function ChatModule({
       patchSessionUi(conversation.id, { notice: "当前没有可用的对话模型。" });
       return;
     }
-    if (ui.attachments.length && !selectedModel.capabilities.includes("vision")) {
+    if (ui.attachments.some((attachment) => attachment.kind === "image") && !selectedModel.capabilities.includes("vision")) {
       patchSessionUi(conversation.id, { notice: "当前模型不支持图片输入。" });
       return;
     }
@@ -676,7 +477,10 @@ function ChatModule({
     }
     const selectedSkills = chatSkills.filter((skill) => (ui.skillIds || []).includes(skill.id));
     const selectedApp = appPresets.find((app) => app.enabled && app.id === ui.appId);
-    const compatibilityOptions = { searchReady };
+    const compatibilityOptions = {
+      searchReady,
+      invocationMode: chatSettings.toolInvocationMode
+    };
     const incompatibleSkill = selectedSkills.find((skill) => !skillCompatibility(skill, toolSettings, selectedModel, compatibilityOptions).compatible);
     if (incompatibleSkill) {
       const compatibility = skillCompatibility(incompatibleSkill, toolSettings, selectedModel, compatibilityOptions);
@@ -685,15 +489,20 @@ function ChatModule({
     }
     const allowedTools = [...new Set([
       ...selectedSkills.flatMap((skill) => skill.allowedTools),
-      ...(ui.search ? ["web_search"] : [])
+      ...(ui.searchProvider ? ["web_search"] : [])
     ])];
-    if (toolMode === "禁用" && allowedTools.length) {
-      patchSessionUi(conversation.id, { notice: "当前会话已禁用工具调用，请关闭相关 Skill 或切换工具调用方式。" });
-      return;
-    }
     const toolsCompatibility = toolSetCompatibility(allowedTools, toolSettings, selectedModel, compatibilityOptions);
     if (!toolsCompatibility.compatible) {
       patchSessionUi(conversation.id, { notice: toolsCompatibility.reason });
+      return;
+    }
+    const inferredSearchProvider: SearchProviderKind = selectedModel.vendor === "kimi" ? "kimi" : "glm";
+    const requestedSearchService = allowedTools.includes("web_search")
+      ? searchServiceForUserProvider(ui.searchProvider || inferredSearchProvider, userProvider)
+      : undefined;
+    if (allowedTools.includes("web_search") && !requestedSearchService) {
+      patchSessionUi(conversation.id, { notice: "当前 API Key 无法用于联网搜索，请先更新访问配置。" });
+      onRequestApiConfig();
       return;
     }
     const assistant = assistants.find((item) => item.id === conversation.assistantId && item.enabled !== false);
@@ -702,15 +511,17 @@ function ChatModule({
       return;
     }
 
-    const displayContent = rawContent || "请分析我上传的图片。";
+    const hasImageAttachment = ui.attachments.some((attachment) => attachment.kind === "image");
+    const hasTextAttachment = ui.attachments.some((attachment) => attachment.kind === "text");
+    const displayContent = rawContent || (hasImageAttachment && hasTextAttachment
+      ? "请分析我上传的附件。"
+      : hasTextAttachment
+        ? "请分析我上传的文本附件。"
+        : "请分析我上传的图片。");
     const appAwareContent = selectedApp
       ? `${selectedApp.prompt}\n\n用户输入：\n${displayContent}`
       : displayContent;
-    const content = toolMode === "禁用"
-      ? `请勿调用任何外部工具，直接基于当前上下文回答。\n\n${appAwareContent}`
-      : toolMode === "询问后调用"
-        ? `如需调用外部工具，请先说明原因并征得确认。\n\n${appAwareContent}`
-        : appAwareContent;
+    const content = appAwareContent;
     const requestConversation: Conversation = {
       ...conversation,
       title: conversation.messages.length ? conversation.title : makeConversationTitle(displayContent),
@@ -730,49 +541,68 @@ function ChatModule({
     setStreamingConversationId(conversation.id);
     const controller = new AbortController();
     abortRef.current = controller;
+    const selectedHistory = selectChatHistory(requestConversation.messages, chatSettings);
+    const attachmentLimits = {
+      imageLimit: chatSettings.maxImageAttachments,
+      includeImages: selectedModel.capabilities.includes("vision")
+    };
+    const messageAttachments = boundedChatAttachments(ui.attachments, attachmentLimits);
+    const requestAttachments = chatAttachmentsForRequest(selectedHistory, messageAttachments, attachmentLimits);
     try {
       await streamChat(
         {
           conversation: conversationSummary(requestConversation),
-          history: requestConversation.messages.slice(-Math.max(1, Number(contextSize) || 16)),
+          history: chatHistoryWithoutAttachments(selectedHistory),
           assistantId: assistant.id,
           modelId: selectedModel.id,
-          temperature,
-          topP,
+          temperature: chatSettings.temperature,
+          topP: chatSettings.topP,
           reasoningEffort: ui.reasoningEffort,
-          maxTokens: Math.max(1, Number(maxTokens) || 4096),
+          maxTokens: chatSettings.maxTokensEnabled ? chatSettings.maxTokens : undefined,
+          toolInvocationMode: chatSettings.toolInvocationMode,
+          responseVerbosity: chatSettings.responseVerbosity === "default" ? undefined : chatSettings.responseVerbosity,
+          includeUsage: chatSettings.showUsage,
           content,
           displayContent,
-          attachments: ui.attachments.slice(0, maxImageAttachments),
+          attachments: requestAttachments,
           skillInstructions: selectedSkills.map((skill) => `${skill.name}: ${skill.instructions}`),
           allowedTools,
-          searchService: allowedTools.includes("web_search")
-            ? searchServicePayload(searchService)
-            : undefined,
+          searchService: requestedSearchService,
           ...(knowledgeBaseIds.length ? { knowledgeBaseIds, embeddingConnections } : {}),
           connection: userConnectionPayload(userProvider)
         },
-        (event) => handleStreamEvent(conversation.id, selectedModel, event),
+        (event) => handleStreamEvent(conversation.id, selectedModel, messageAttachments, event),
         controller.signal,
         knowledgeBaseIds.length ? knowledgeCatalog.csrfToken : ""
       );
       patchSessionUi(conversation.id, { attachments: [] });
     } catch (error) {
-      if (!controller.signal.aborted) {
+      const aborted = controller.signal.aborted;
+      const messageId = abortRef.current === controller ? streamingMessageIdRef.current : "";
+      if (messageId) {
+        commitConversations((current) => settleStreamingMessage(
+          current,
+          conversation.id,
+          messageId,
+          aborted ? "stopped" : "error"
+        ));
+      }
+      if (!aborted) {
         const message = error instanceof ApiError || error instanceof Error ? error.message : "发送失败";
         patchSessionUi(conversation.id, { notice: message, draft: rawContent, appId: selectedApp?.id || "" });
       }
     } finally {
-      setStreamingConversationId("");
-      abortRef.current = null;
-      streamingMessageIdRef.current = "";
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+        streamingMessageIdRef.current = "";
+        setStreamingConversationId((current) => current === conversation.id ? "" : current);
+      }
       void onRefresh();
     }
   };
 
   const stopStreaming = () => {
     abortRef.current?.abort();
-    setStreamingConversationId("");
   };
 
   const clearMessages = (conversationId: string) => {
@@ -792,11 +622,11 @@ function ChatModule({
     event.target.value = "";
     if (!files.length) return;
 
-    const currentCount = sessionUi[conversationId]?.attachments.length || 0;
-    const availableSlots = Math.max(0, maxImageAttachments - currentCount);
+    const currentCount = imageAttachmentCount(sessionUi[conversationId]?.attachments || []);
+    const availableSlots = Math.max(0, chatSettings.maxImageAttachments - currentCount);
     if (!availableSlots) {
       patchSessionUi(conversationId, {
-        notice: `一次最多上传 ${maxImageAttachments} 张图片，请先移除已有图片。`
+        notice: `一次最多上传 ${chatSettings.maxImageAttachments} 张图片，请先移除已有图片。`
       });
       return;
     }
@@ -816,7 +646,7 @@ function ChatModule({
 
     setSessionUi((current) => {
       const ui = current[conversationId] || defaultSessionUi(false);
-      const remainingSlots = Math.max(0, maxImageAttachments - ui.attachments.length);
+      const remainingSlots = Math.max(0, chatSettings.maxImageAttachments - imageAttachmentCount(ui.attachments));
       const accepted = attachments.slice(0, remainingSlots);
       const overflowCount = Math.max(
         0,
@@ -824,7 +654,7 @@ function ChatModule({
       );
       const notices = [...errors];
       if (overflowCount) {
-        notices.push(`一次最多上传 ${maxImageAttachments} 张图片，超出的 ${overflowCount} 张未添加。`);
+        notices.push(`一次最多上传 ${chatSettings.maxImageAttachments} 张图片，超出的 ${overflowCount} 张未添加。`);
       }
       return {
         ...current,
@@ -837,53 +667,133 @@ function ChatModule({
     });
   };
 
+  const attachPastedText = async (conversationId: string, text: string) => {
+    try {
+      const attachment = await createChatAttachment(
+        new File([text], `粘贴内容-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.txt`, { type: "text/plain" }),
+        "text"
+      );
+      setSessionUi((current) => {
+        const ui = current[conversationId] || defaultSessionUi(false);
+        return {
+          ...current,
+          [conversationId]: {
+            ...ui,
+            attachments: [...ui.attachments, attachment],
+            notice: "长文本已转换为文本附件。"
+          }
+        };
+      });
+    } catch (error) {
+      patchSessionUi(conversationId, {
+        notice: error instanceof Error ? error.message : "无法创建文本附件。"
+      });
+    }
+  };
+
   const changeModel = (conversationId: string, modelId: string) => {
     patchSessionUi(conversationId, { modelId });
     onUserProviderChange({ lastModelId: modelId });
   };
 
+  const summarizeConversationTitle = async (conversation: Conversation) => {
+    if (!chatSettings.titleSummaryEnabled || !conversation.messages.length) return;
+    const summarizedAt = Date.parse(conversation.titleSummaryAt || "");
+    const updatedAt = Date.parse(conversation.updatedAt);
+    if (Number.isFinite(summarizedAt) && Number.isFinite(updatedAt) && summarizedAt >= updatedAt) return;
+    if (titleSummariesInFlightRef.current.has(conversation.id)) return;
+    const titleModel = chatModels.find((item) =>
+      item.id === chatSettings.titleSummaryModelId || item.model === chatSettings.titleSummaryModelId
+    );
+    if (!titleModel) {
+      patchSessionUi(conversation.id, {
+        notice: `标题总结模型 ${chatSettings.titleSummaryModelId} 尚未在后台启用，请在会话设置中更换。`
+      });
+      return;
+    }
+    if (!connectionReady) {
+      patchSessionUi(conversation.id, { notice: "请先填写 API Key，才能自动总结对话标题。" });
+      return;
+    }
+    const history = conversation.messages
+      .filter((message) => message.content.trim())
+      .slice(-chatSettings.titleSummaryMessageCount);
+    if (!history.length) return;
+    const sourceUpdatedAt = conversation.updatedAt;
+    titleSummariesInFlightRef.current.add(conversation.id);
+    try {
+      const result = await generateChatTitle({
+        connection: userConnectionPayload(userProvider),
+        modelId: titleModel.id,
+        history
+      });
+      commitConversations((current) => current.map((item) => item.id === conversation.id
+        ? { ...item, title: result.title, titleSummaryAt: sourceUpdatedAt }
+        : item));
+      patchSessionUi(conversation.id, { notice: "" });
+    } catch (error) {
+      patchSessionUi(conversation.id, {
+        notice: error instanceof Error ? `标题总结失败：${error.message}` : "标题总结失败，请稍后重试。"
+      });
+    } finally {
+      titleSummariesInFlightRef.current.delete(conversation.id);
+    }
+  };
+
+  const toggleConversation = (conversation: Conversation, ui: SessionUiState) => {
+    const collapsed = !ui.collapsed;
+    if (!collapsed) {
+      const automaticallyCollapsed = conversationList.filter((item) =>
+        item.id !== conversation.id && sessionUi[item.id] && !sessionUi[item.id].collapsed
+      );
+      const openedAt = Date.now();
+      setSessionUi((current) => ({
+        ...Object.fromEntries(Object.entries(current).map(([id, value]) => [
+          id,
+          id === conversation.id || value.collapsed ? value : { ...value, collapsed: true }
+        ])),
+        [conversation.id]: {
+          ...(current[conversation.id] || defaultSessionUi(false)),
+          collapsed: false,
+          openedAt
+        }
+      }));
+      automaticallyCollapsed.forEach((item) => {
+        if (streamingConversationId !== item.id) void summarizeConversationTitle(item);
+      });
+      return;
+    }
+    patchSessionUi(conversation.id, {
+      collapsed,
+      openedAt: ui.openedAt
+    });
+    if (collapsed && streamingConversationId !== conversation.id) {
+      void summarizeConversationTitle(conversation);
+    }
+  };
+
+  const toggleConversationPinned = (conversation: Conversation) => {
+    commitConversations((current) => current.map((item) => item.id === conversation.id
+      ? { ...item, pinned: !item.pinned }
+      : item));
+  };
+
   const openSettings = (conversationId?: string) => {
     const targetConversationId = conversationId ||
-      conversationList.find((conversation) => !sessionUi[conversation.id]?.collapsed)?.id ||
-      conversationList[0]?.id ||
+      displayedConversations.find((conversation) => !sessionUi[conversation.id]?.collapsed)?.id ||
+      displayedConversations[0]?.id ||
       "";
     const targetSkillIds = targetConversationId
       ? sessionUi[targetConversationId]?.skillIds || []
       : [];
     setSettingsConversationId(targetConversationId);
     setSettingsSkillIds([...targetSkillIds]);
-    settingsSnapshotRef.current = {
-      assistantAvatarId,
-      userAvatar,
-      messageStyle,
-      temperature,
-      topP,
-      contextSize,
-      maxTokens,
-      streamOutput,
-      toolMode,
-      maxImageAttachments,
-      skillIds: [...targetSkillIds]
-    };
+    setSettingsDraft(chatSettings);
     setSettingsOpen(true);
   };
 
   const cancelSettings = () => {
-    const snapshot = settingsSnapshotRef.current;
-    if (snapshot) {
-      setAssistantAvatarId(snapshot.assistantAvatarId);
-      setUserAvatar(snapshot.userAvatar);
-      setMessageStyle(snapshot.messageStyle);
-      setTemperature(snapshot.temperature);
-      setTopP(snapshot.topP);
-      setContextSize(snapshot.contextSize);
-      setMaxTokens(snapshot.maxTokens);
-      setStreamOutput(snapshot.streamOutput);
-      setToolMode(snapshot.toolMode);
-      setMaxImageAttachments(snapshot.maxImageAttachments);
-      setSettingsSkillIds(snapshot.skillIds);
-    }
-    settingsSnapshotRef.current = null;
+    setSettingsDraft(chatSettings);
     setSettingsConversationId("");
     setReturnFocusToSkillManager(false);
     setSettingsOpen(false);
@@ -895,44 +805,22 @@ function ChatModule({
     }
     setSessionUi((current) => Object.fromEntries(
       Object.entries(current).map(([conversationId, ui]) => {
-        if (ui.attachments.length <= maxImageAttachments) return [conversationId, ui];
+        if (imageAttachmentCount(ui.attachments) <= settingsDraft.maxImageAttachments) return [conversationId, ui];
         return [conversationId, {
           ...ui,
-          attachments: ui.attachments.slice(0, maxImageAttachments),
-          notice: `图片上限已调整为 ${maxImageAttachments} 张，超出的待发送图片已移除。`
+          attachments: attachmentsWithinImageLimit(ui.attachments, settingsDraft.maxImageAttachments),
+          notice: `图片上限已调整为 ${settingsDraft.maxImageAttachments} 张，超出的待发送图片已移除。`
         }];
       })
     ));
-    savePersistedSessionSettings({
-      assistantAvatarId,
-      userAvatar,
-      messageStyle,
-      temperature,
-      topP,
-      contextSize,
-      maxTokens,
-      streamOutput,
-      toolMode,
-      maxImageAttachments
-    });
-    settingsSnapshotRef.current = null;
+    setChatSettings(settingsDraft);
+    saveChatSessionSettings(settingsDraft);
     setSettingsConversationId("");
     setReturnFocusToSkillManager(false);
     setSettingsOpen(false);
   };
 
-  const uploadUserAvatar = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
-    const reader = new FileReader();
-    reader.addEventListener("load", () => {
-      if (typeof reader.result === "string") setUserAvatar(reader.result);
-    });
-    reader.readAsDataURL(file);
-  };
-
-  const topModel = conversationList[0] ? modelForSession(conversationList[0].id) : undefined;
+  const topModel = displayedConversations[0] ? modelForSession(displayedConversations[0].id) : undefined;
 
   return (
     <section className="figma-chat-view" data-testid="chat-module">
@@ -966,7 +854,7 @@ function ChatModule({
 
       <div className="figma-session-stack">
         {!conversationsHydrated ? <p className="figma-chat-storage-loading">正在读取本地对话…</p> : null}
-        {conversationList.map((conversation) => {
+        {displayedConversations.map((conversation) => {
           const ui = sessionUi[conversation.id] || defaultSessionUi(false);
           const selectedModel = modelForSession(conversation.id);
           const boundAssistant = assistants.find((assistant) => assistant.id === conversation.assistantId);
@@ -984,23 +872,23 @@ function ChatModule({
               apps={appPresets.filter((app) => app.enabled)}
               assistant={boundAssistant}
               selectedModel={selectedModel}
-              messageStyle={messageStyle}
+              settings={chatSettings}
               assistantAvatarUrl={assistantAvatarUrl}
-              userAvatarUrl={userAvatar}
-              maxImageAttachments={maxImageAttachments}
+              userAvatarUrl={userAvatarUrl}
               streaming={streamingConversationId === conversation.id}
               onCreateConversation={createConversation}
               onOpenSettings={() => openSettings(conversation.id)}
-              onToggle={() => patchSessionUi(conversation.id, { collapsed: !ui.collapsed })}
+              onToggle={() => toggleConversation(conversation, ui)}
+              onTogglePinned={() => toggleConversationPinned(conversation)}
               onDraftChange={(draft) => patchSessionUi(conversation.id, { draft })}
               onAddSkill={(skillId) => patchSessionUi(conversation.id, { skillIds: [...new Set([...(ui.skillIds || []), skillId])] })}
               onRemoveSkill={(skillId) => patchSessionUi(conversation.id, { skillIds: (ui.skillIds || []).filter((id) => id !== skillId) })}
               onSelectApp={(appId) => patchSessionUi(conversation.id, { appId })}
               onClearApp={() => patchSessionUi(conversation.id, { appId: "" })}
               onModelChange={(modelId) => changeModel(conversation.id, modelId)}
-              onSearchToggle={() => {
-                if (ui.search) {
-                  patchSessionUi(conversation.id, { search: false, notice: "" });
+              onSearchProviderChange={(searchProvider) => {
+                if (!searchProvider) {
+                  patchSessionUi(conversation.id, { searchProvider: "", notice: "" });
                   return;
                 }
                 const searchTool = toolSettings.find((tool) => tool.name === "web_search");
@@ -1008,16 +896,12 @@ function ChatModule({
                   patchSessionUi(conversation.id, { notice: searchTool ? "联网搜索已由后台关闭。" : "联网搜索工具不存在。" });
                   return;
                 }
-                if (!searchReady) {
-                  setPendingSearchConversationId(conversation.id);
-                  setSearchSettingsOpen(true);
+                if (!connectionReady) {
+                  patchSessionUi(conversation.id, { notice: "请先填写 API Key。" });
+                  onRequestApiConfig();
                   return;
                 }
-                patchSessionUi(conversation.id, { search: true, notice: "" });
-              }}
-              onOpenSearchSettings={() => {
-                setPendingSearchConversationId("");
-                setSearchSettingsOpen(true);
+                patchSessionUi(conversation.id, { searchProvider, notice: "" });
               }}
               onKnowledgeChange={(knowledgeBaseIds) => patchSessionUi(conversation.id, {
                 knowledgeBaseIds,
@@ -1028,6 +912,7 @@ function ChatModule({
                 notice: ""
               })}
               onImageInput={(event) => void attachImage(conversation.id, event)}
+              onLongPaste={(text) => void attachPastedText(conversation.id, text)}
               onRemoveImage={(attachmentId) => patchSessionUi(conversation.id, {
                 attachments: ui.attachments.filter((attachment) => attachment.id !== attachmentId),
                 notice: ""
@@ -1040,223 +925,25 @@ function ChatModule({
         })}
       </div>
 
-      <Dialog
+      <ChatSessionSettingsDialog
         open={settingsOpen && !skillManagerOpen}
-        labelledBy="figma-session-settings-title"
-        describedBy="figma-session-settings-description"
-        className="figma-session-settings"
-        initialFocusRef={returnFocusToSkillManager ? skillManagerTriggerRef : undefined}
-        onClose={cancelSettings}
-      >
-        <header>
-          <div>
-            <small>SESSION CONFIGURATION</small>
-            <h2 id="figma-session-settings-title">会话设置</h2>
-            <p id="figma-session-settings-description">调整模型的生成倾向和响应行为。</p>
-          </div>
-          <button type="button" className="figma-settings-close" onClick={cancelSettings} aria-label="关闭会话设置">
-            <X size={17} />
-          </button>
-        </header>
-
-        <section className="figma-settings-profile">
-          <div>
-            <strong>AI 对话头像</strong>
-            <p>选择在消息中显示的助手形象</p>
-            <div className="figma-avatar-presets" aria-label="AI 对话头像">
-              {assistantAvatarPresets.map((preset) => (
-                <button
-                  key={preset.id}
-                  type="button"
-                  className={assistantAvatarId === preset.id ? "active" : ""}
-                  onClick={() => setAssistantAvatarId(preset.id)}
-                  aria-pressed={assistantAvatarId === preset.id}
-                  title={preset.name}
-                >
-                  <img src={preset.image} alt={`${preset.name} 动漫风格 AI 头像预设`} />
-                  {assistantAvatarId === preset.id ? <span><Check size={10} /></span> : null}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div>
-            <strong>个人头像</strong>
-            <p>仅显示在你发送的对话消息中</p>
-            <div className="figma-personal-avatar">
-              <button type="button" onClick={() => userAvatarInputRef.current?.click()} aria-label="上传个人头像">
-                {userAvatar ? <img src={userAvatar} alt="个人头像预览" /> : <Plus size={16} />}
-              </button>
-              <div>
-                <button type="button" onClick={() => userAvatarInputRef.current?.click()}>上传个人头像</button>
-                <small>PNG、JPG，建议 1:1 比例</small>
-                {userAvatar ? <button type="button" className="remove" onClick={() => setUserAvatar(null)}>移除头像</button> : null}
-              </div>
-              <input ref={userAvatarInputRef} type="file" hidden accept="image/png,image/jpeg" onChange={uploadUserAvatar} />
-            </div>
-          </div>
-          <div>
-            <strong>对话列表方式</strong>
-            <p>选择聊天内容的视觉组织方式</p>
-            <div className="figma-segmented">
-              <button type="button" className={messageStyle === "bubble" ? "active" : ""} onClick={() => setMessageStyle("bubble")} aria-pressed={messageStyle === "bubble"}>气泡式</button>
-              <button type="button" className={messageStyle === "list" ? "active" : ""} onClick={() => setMessageStyle("list")} aria-pressed={messageStyle === "list"}>列表式</button>
-            </div>
-          </div>
-        </section>
-
-        <fieldset className="figma-chat-skill-selection">
-          <legend>对话 Skill</legend>
-          <div className="figma-chat-skill-selection-toolbar">
-            <button
-              ref={skillManagerTriggerRef}
-              type="button"
-              onClick={() => {
-                setReturnFocusToSkillManager(true);
-                setSkillManagerOpen(true);
-              }}
-              disabled={skillsLoading}
-            >
-              <Puzzle size={14} />
-              管理本地 Skill
-            </button>
-          </div>
-          <div className="figma-chat-skill-selection-list">
-            {skillsLoading ? <p>正在读取本地 Skill…</p> : chatSkills.length ? chatSkills.map((skill) => {
-              const compatibility = skillCompatibility(skill, toolSettings, settingsModel, { searchReady });
-              const checked = settingsSkillIds.includes(skill.id);
-              return (
-                <label key={skill.id} className={!compatibility.compatible ? "disabled" : ""}>
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    disabled={!compatibility.compatible && !checked}
-                    onChange={(event) => setSettingsSkillIds((current) => event.target.checked
-                      ? [...new Set([...current, skill.id])]
-                      : current.filter((id) => id !== skill.id))}
-                  />
-                  <span><strong>{skill.name}</strong><small>{compatibility.compatible ? skill.description || "对话指令" : compatibility.reason}</small></span>
-                </label>
-              );
-            }) : <p>暂无 Skill</p>}
-          </div>
-        </fieldset>
-
-        <section className="figma-settings-grid">
-          <label className="figma-range-control">
-            <span id="figma-temperature-label">模型温度 · Temperature</span>
-            <div
-              className="figma-range-track"
-              style={{ "--range-progress": `${temperature * 100}%` } as CSSProperties}
-            >
-              <i aria-hidden="true" />
-              <input
-                id="figma-temperature-range"
-                type="range"
-                min="0"
-                max="1"
-                step="0.1"
-                value={temperature}
-                aria-labelledby="figma-temperature-label"
-                aria-describedby="figma-temperature-low figma-temperature-high"
-                onChange={(event) => setTemperature(Number(event.target.value))}
-              />
-            </div>
-            <small>
-              <span id="figma-temperature-low">严谨</span>
-              <output htmlFor="figma-temperature-range">{temperature.toFixed(1)}</output>
-              <span id="figma-temperature-high">发散</span>
-            </small>
-          </label>
-          <label className="figma-range-control">
-            <span id="figma-top-p-label">TOP-P</span>
-            <div
-              className="figma-range-track"
-              style={{ "--range-progress": `${((topP - 0.1) / 0.9) * 100}%` } as CSSProperties}
-            >
-              <i aria-hidden="true" />
-              <input
-                id="figma-top-p-range"
-                type="range"
-                min="0.1"
-                max="1"
-                step="0.1"
-                value={topP}
-                aria-labelledby="figma-top-p-label"
-                aria-describedby="figma-top-p-low figma-top-p-high"
-                onChange={(event) => setTopP(Number(event.target.value))}
-              />
-            </div>
-            <small>
-              <span id="figma-top-p-low">聚焦</span>
-              <output htmlFor="figma-top-p-range">{topP.toFixed(1)}</output>
-              <span id="figma-top-p-high">多样</span>
-            </small>
-          </label>
-          <label>
-            <span>上下文数</span>
-            <select value={contextSize} onChange={(event) => setContextSize(event.target.value)}>
-              {chatContextSizeOptions.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <span>最大 Token 数</span>
-            <select value={maxTokens} onChange={(event) => setMaxTokens(event.target.value)}>
-              {chatMaxTokenOptions.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <span>单次图片上限</span>
-            <select
-              value={maxImageAttachments}
-              onChange={(event) => setMaxImageAttachments(cleanSettingChoice(
-                Number(event.target.value),
-                chatImageAttachmentLimitValues,
-                4
-              ))}
-            >
-              {chatImageAttachmentLimitValues.map((value) => (
-                <option key={value} value={value}>{value} 张</option>
-              ))}
-            </select>
-          </label>
-          <div className="figma-setting-toggle">
-            <span><strong>流式输出</strong><small>实时显示生成内容</small></span>
-            <button type="button" className={streamOutput ? "active" : ""} onClick={() => setStreamOutput((value) => !value)} aria-pressed={streamOutput} aria-label="流式输出"><i /></button>
-          </div>
-          <fieldset className="figma-tool-mode">
-            <legend>工具调用方式</legend>
-            <div className="figma-segmented">
-              {chatToolModeOptions.map((mode) => (
-                <button key={mode} type="button" className={toolMode === mode ? "active" : ""} onClick={() => setToolMode(mode)} aria-pressed={toolMode === mode}>{mode}</button>
-              ))}
-            </div>
-          </fieldset>
-        </section>
-
-        <footer>
-          <button type="button" onClick={cancelSettings}>取消</button>
-          <button type="button" className="primary" onClick={saveSettings}>保存设置</button>
-        </footer>
-      </Dialog>
-
-      <SearchServiceDialog
-        open={searchSettingsOpen}
-        config={searchService}
-        onSave={(nextConfig) => {
-          onSearchServiceChange(nextConfig);
-          if (pendingSearchConversationId) {
-            patchSessionUi(pendingSearchConversationId, { search: true, notice: "" });
-          }
-          setPendingSearchConversationId("");
+        settings={settingsDraft}
+        skills={chatSkills}
+        selectedSkillIds={settingsSkillIds}
+        skillsLoading={skillsLoading}
+        tools={toolSettings}
+        model={settingsModel}
+        models={chatModels}
+        searchReady={searchReady}
+        returnFocusToSkillManager={returnFocusToSkillManager}
+        onSettingsChange={(patch) => setSettingsDraft((current) => ({ ...current, ...patch }))}
+        onSelectedSkillIdsChange={setSettingsSkillIds}
+        onOpenSkillManager={() => {
+          setReturnFocusToSkillManager(true);
+          setSkillManagerOpen(true);
         }}
-        onClose={() => {
-          setSearchSettingsOpen(false);
-          setPendingSearchConversationId("");
-        }}
+        onCancel={cancelSettings}
+        onSave={saveSettings}
       />
 
       <ChatSkillManagerDialog
@@ -1284,697 +971,6 @@ function ChatModule({
         onConfirm={() => clearConversationId && clearMessages(clearConversationId)}
       />
     </section>
-  );
-}
-
-type ChatSessionBlockProps = {
-  conversation: Conversation;
-  ui: SessionUiState;
-  models: ModelCatalogEntry[];
-  skills: AgentSkillDefinition[];
-  tools: ToolSetting[];
-  searchReady: boolean;
-  knowledgeAuthenticated: boolean;
-  knowledgeBases: KnowledgeBase[];
-  apps: AppPreset[];
-  assistant?: Assistant;
-  selectedModel?: ModelCatalogEntry;
-  messageStyle: "bubble" | "list";
-  assistantAvatarUrl: string;
-  userAvatarUrl: string | null;
-  maxImageAttachments: ChatImageAttachmentLimit;
-  streaming: boolean;
-  onCreateConversation: () => Conversation | null;
-  onOpenSettings: () => void;
-  onToggle: () => void;
-  onDraftChange: (value: string) => void;
-  onAddSkill: (skillId: string) => void;
-  onRemoveSkill: (skillId: string) => void;
-  onSelectApp: (appId: string) => void;
-  onClearApp: () => void;
-  onModelChange: (modelId: string) => void;
-  onSearchToggle: () => void;
-  onOpenSearchSettings: () => void;
-  onKnowledgeChange: (knowledgeBaseIds: string[]) => void;
-  onReasoningEffortChange: (value: ReasoningEffort) => void;
-  onImageInput: (event: ChangeEvent<HTMLInputElement>) => void;
-  onRemoveImage: (attachmentId: string) => void;
-  onClear: () => void;
-  onSend: () => void;
-  onStop: () => void;
-};
-
-function ChatSessionBlock({
-  conversation,
-  ui,
-  models,
-  skills,
-  tools,
-  searchReady,
-  knowledgeAuthenticated,
-  knowledgeBases,
-  apps,
-  assistant,
-  selectedModel,
-  messageStyle,
-  assistantAvatarUrl,
-  userAvatarUrl,
-  maxImageAttachments,
-  streaming,
-  onCreateConversation,
-  onOpenSettings,
-  onToggle,
-  onDraftChange,
-  onAddSkill,
-  onRemoveSkill,
-  onSelectApp,
-  onClearApp,
-  onModelChange,
-  onSearchToggle,
-  onOpenSearchSettings,
-  onKnowledgeChange,
-  onReasoningEffortChange,
-  onImageInput,
-  onRemoveImage,
-  onClear,
-  onSend,
-  onStop
-}: ChatSessionBlockProps) {
-  const imageInputRef = useRef<HTMLInputElement | null>(null);
-  const bottomRef = useRef<HTMLDivElement | null>(null);
-  const modelPickerRef = useRef<HTMLDivElement | null>(null);
-  const modelTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const vendorListScrollTimerRef = useRef<number | null>(null);
-  const modelListScrollTimerRef = useRef<number | null>(null);
-  const [modelPickerOpen, setModelPickerOpen] = useState(false);
-  const [modelPickerPlacement, setModelPickerPlacement] = useState<"down" | "up">("down");
-  const [modelPickerOffset, setModelPickerOffset] = useState(0);
-  const [vendorListScrolling, setVendorListScrolling] = useState(false);
-  const [modelListScrolling, setModelListScrolling] = useState(false);
-  const modelPopoverId = useId();
-  const commandListId = useId();
-  const modelListId = `${modelPopoverId}-list`;
-  const modelValueDescriptionId = `${modelPopoverId}-value`;
-  const [activeModelVendor, setActiveModelVendor] = useState<ModelVendorTab>(() => vendorTabForModel(selectedModel));
-  const [commandActiveIndex, setCommandActiveIndex] = useState(0);
-  const [dismissedCommand, setDismissedCommand] = useState("");
-  const focusAfterVendorChangeRef = useRef<"list" | "tab">("list");
-  const vendorModels = useMemo(
-    () => models.filter((model) => vendorTabForModel(model) === activeModelVendor),
-    [activeModelVendor, models]
-  );
-  const selectedModelInVendor = vendorModels.some((model) => model.id === selectedModel?.id);
-  const command = activeChatCommand(ui.draft);
-  const searchTool = tools.find((tool) => tool.name === "web_search");
-  const searchCompatibility = toolCompatibility(searchTool, selectedModel, { searchReady });
-  const canConfigureSearch = Boolean(searchTool?.enabled && !searchReady);
-  const commandIdentity = command ? `${command.kind}:${command.start}:${command.token}` : "";
-  const commandOptions = useMemo<ChatCommandOption[]>(() => {
-    if (!command) return [];
-    if (command.kind === "app") {
-      return apps
-        .filter((app) => chatCommandMatches(command.query, app.name, app.description, app.category))
-        .map((app) => ({
-          id: app.id,
-          name: app.name,
-          description: app.category || app.description,
-          selected: ui.appId === app.id
-        }));
-    }
-    return skills
-      .filter((skill) => chatCommandMatches(command.query, skill.name, skill.description))
-      .map((skill) => {
-        const compatibility = skillCompatibility(skill, tools, selectedModel, { searchReady });
-        return {
-          id: skill.id,
-          name: skill.name,
-          description: compatibility.compatible ? skill.description || "对话 Skill" : compatibility.reason,
-          disabled: !compatibility.compatible,
-          selected: (ui.skillIds || []).includes(skill.id)
-        };
-      });
-  }, [apps, command, searchReady, selectedModel, skills, tools, ui.appId, ui.skillIds]);
-  const commandOpen = Boolean(command && commandIdentity !== dismissedCommand);
-  const visibleVendorModelCount = Math.min(3, vendorModels.length);
-  const displayMessages: Message[] = conversation.messages.length
-    ? conversation.messages
-    : [
-        {
-          id: `${conversation.id}-welcome`,
-          role: "assistant",
-          content: "你好，我是 **AiStudio** 助手。连接知识、想法与成果——现在想创作什么？",
-          createdAt: conversation.createdAt,
-          status: "done"
-        },
-        {
-          id: `${conversation.id}-sample-user`,
-          role: "user",
-          content: "帮我梳理一份关于生成式 AI 在企业落地的简短介绍。",
-          createdAt: conversation.createdAt,
-          status: "done"
-        },
-        {
-          id: `${conversation.id}-sample-answer`,
-          role: "assistant",
-          content: "当然可以。\n\n**生成式 AI 正在成为企业的创造力基础设施。**\n\n它将重复性知识工作转化为可编排的智能流程：从市场洞察、内容生产到客户支持。关键不在于替代人，而是让每一位员工都能以更短路径完成高价值决策。\n\n要不要我继续为这段内容生成一个 6 页的演示文稿？",
-          createdAt: conversation.createdAt,
-          status: "done"
-        }
-      ];
-  const lastMessage = [...displayMessages].reverse().find((message) => message.content);
-
-  useEffect(() => {
-    if (ui.collapsed) return;
-    bottomRef.current?.scrollIntoView({ block: "end" });
-  }, [displayMessages.length, streaming, ui.collapsed]);
-
-  useEffect(() => {
-    if (!modelPickerOpen) setActiveModelVendor(vendorTabForModel(selectedModel));
-  }, [modelPickerOpen, selectedModel]);
-
-  useEffect(() => {
-    if (!ui.collapsed) return;
-    setModelPickerOpen(false);
-  }, [ui.collapsed]);
-
-  useEffect(() => {
-    if (!modelPickerOpen) return;
-    const updatePlacement = () => {
-      const anchor = modelPickerRef.current;
-      const popover = anchor?.querySelector<HTMLElement>(".figma-model-popover");
-      if (!anchor || !popover) return;
-      setModelPickerPlacement(getFloatingVerticalPlacement(anchor, popover));
-      setModelPickerOffset(getFloatingHorizontalOffset(anchor, popover));
-    };
-    const closeOnOutside = (event: PointerEvent) => {
-      if (modelPickerRef.current?.contains(event.target as Node)) return;
-      setModelPickerOpen(false);
-      if (!(event.target instanceof HTMLElement) || !event.target.closest("a, button, input, select, textarea, [tabindex]:not([tabindex='-1'])")) {
-        requestAnimationFrame(() => modelTriggerRef.current?.focus());
-      }
-    };
-    const closeOnEscape = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      setModelPickerOpen(false);
-      modelTriggerRef.current?.focus();
-    };
-    const frame = requestAnimationFrame(updatePlacement);
-    window.addEventListener("resize", updatePlacement);
-    window.addEventListener("scroll", updatePlacement, true);
-    document.addEventListener("pointerdown", closeOnOutside);
-    document.addEventListener("keydown", closeOnEscape);
-    return () => {
-      cancelAnimationFrame(frame);
-      window.removeEventListener("resize", updatePlacement);
-      window.removeEventListener("scroll", updatePlacement, true);
-      document.removeEventListener("pointerdown", closeOnOutside);
-      document.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [modelPickerOpen]);
-
-  useEffect(() => {
-    if (modelPickerOpen) return;
-    setModelPickerOffset(0);
-    setVendorListScrolling(false);
-    setModelListScrolling(false);
-    if (vendorListScrollTimerRef.current !== null) {
-      window.clearTimeout(vendorListScrollTimerRef.current);
-      vendorListScrollTimerRef.current = null;
-    }
-    if (modelListScrollTimerRef.current !== null) {
-      window.clearTimeout(modelListScrollTimerRef.current);
-      modelListScrollTimerRef.current = null;
-    }
-  }, [modelPickerOpen]);
-
-  useEffect(() => () => {
-    if (vendorListScrollTimerRef.current !== null) {
-      window.clearTimeout(vendorListScrollTimerRef.current);
-    }
-    if (modelListScrollTimerRef.current !== null) {
-      window.clearTimeout(modelListScrollTimerRef.current);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!modelPickerOpen) return;
-    const frame = requestAnimationFrame(() => {
-      if (focusAfterVendorChangeRef.current === "tab") {
-        modelPickerRef.current
-          ?.querySelector<HTMLElement>(`[role="tab"][data-vendor="${activeModelVendor}"]`)
-          ?.focus();
-        focusAfterVendorChangeRef.current = "list";
-        return;
-      }
-      const list = modelPickerRef.current?.querySelector<HTMLElement>('[role="listbox"]');
-      const selectedOption = list?.querySelector<HTMLElement>('[role="option"][aria-selected="true"]');
-      const firstOption = list?.querySelector<HTMLElement>('[role="option"]:not(:disabled)');
-      (selectedOption || firstOption)?.focus();
-      focusAfterVendorChangeRef.current = "list";
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [activeModelVendor, modelPickerOpen]);
-
-  useEffect(() => {
-    setCommandActiveIndex(Math.max(0, commandOptions.findIndex((option) => !option.disabled)));
-  }, [commandIdentity, commandOptions.length]);
-
-  useEffect(() => {
-    if (!commandIdentity) setDismissedCommand("");
-  }, [commandIdentity]);
-
-  const selectCommandOption = (option: ChatCommandOption) => {
-    if (!command || option.disabled) return;
-    onDraftChange(removeChatCommand(ui.draft, command));
-    if (command.kind === "skill") onAddSkill(option.id);
-    else onSelectApp(option.id);
-    setDismissedCommand("");
-  };
-
-  const moveCommandSelection = (direction: 1 | -1) => {
-    const enabledIndices = commandOptions.flatMap((option, index) => option.disabled ? [] : [index]);
-    if (!enabledIndices.length) return;
-    const current = enabledIndices.indexOf(commandActiveIndex);
-    const next = current < 0
-      ? enabledIndices[0]
-      : enabledIndices[(current + direction + enabledIndices.length) % enabledIndices.length];
-    setCommandActiveIndex(next);
-  };
-
-  const handleComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (commandOpen) {
-      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-        event.preventDefault();
-        moveCommandSelection(event.key === "ArrowDown" ? 1 : -1);
-        return;
-      }
-      if (event.key === "Escape") {
-        event.preventDefault();
-        setDismissedCommand(commandIdentity);
-        return;
-      }
-      if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-        const option = commandOptions[commandActiveIndex];
-        if (option && !option.disabled) {
-          event.preventDefault();
-          selectCommandOption(option);
-          return;
-        }
-      }
-    }
-    if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
-    event.preventDefault();
-    onSend();
-  };
-
-  const handleModelListScroll = () => {
-    setModelListScrolling(true);
-    if (modelListScrollTimerRef.current !== null) {
-      window.clearTimeout(modelListScrollTimerRef.current);
-    }
-    modelListScrollTimerRef.current = window.setTimeout(() => {
-      setModelListScrolling(false);
-      modelListScrollTimerRef.current = null;
-    }, 650);
-  };
-
-  const handleVendorListScroll = () => {
-    setVendorListScrolling(true);
-    if (vendorListScrollTimerRef.current !== null) {
-      window.clearTimeout(vendorListScrollTimerRef.current);
-    }
-    vendorListScrollTimerRef.current = window.setTimeout(() => {
-      setVendorListScrolling(false);
-      vendorListScrollTimerRef.current = null;
-    }, 650);
-  };
-
-  const handleVendorKeyDown = (
-    event: KeyboardEvent<HTMLButtonElement>,
-    vendor: ModelVendorTab
-  ) => {
-    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
-    const currentIndex = modelVendorTabs.indexOf(vendor);
-    const nextIndex = event.key === "Home"
-      ? 0
-      : event.key === "End"
-        ? modelVendorTabs.length - 1
-        : event.key === "ArrowLeft"
-          ? currentIndex <= 0 ? modelVendorTabs.length - 1 : currentIndex - 1
-          : currentIndex >= modelVendorTabs.length - 1 ? 0 : currentIndex + 1;
-    event.preventDefault();
-    focusAfterVendorChangeRef.current = "tab";
-    setActiveModelVendor(modelVendorTabs[nextIndex]);
-  };
-
-  const handleSessionHeaderClick = (event: ReactMouseEvent<HTMLDivElement>) => {
-    if ((event.target as HTMLElement).closest("button")) return;
-    onToggle();
-  };
-
-  const handleSessionHeaderKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.target !== event.currentTarget || (event.key !== "Enter" && event.key !== " ")) return;
-    event.preventDefault();
-    onToggle();
-  };
-
-  return (
-    <article className={ui.collapsed ? "figma-chat-session collapsed" : "figma-chat-session"}>
-      <div
-        className="figma-session-header"
-        data-testid="session-header-toggle-area"
-        tabIndex={0}
-        aria-label={ui.collapsed ? "点击展开对话" : "点击折叠对话"}
-        onClick={handleSessionHeaderClick}
-        onKeyDown={handleSessionHeaderKeyDown}
-      >
-        <div className="figma-session-identity">
-          <div ref={modelPickerRef} className="figma-session-model" onClick={(event) => event.stopPropagation()}>
-          <span id={modelValueDescriptionId} className="figma-visually-hidden">
-            当前模型：{compactModelLabel(selectedModel) || "未选择"}
-          </span>
-          <button
-            ref={modelTriggerRef}
-            type="button"
-            className="figma-model-trigger"
-            aria-label="选择对话模型"
-            aria-haspopup="listbox"
-            aria-expanded={modelPickerOpen}
-            aria-controls={modelPopoverId}
-            aria-describedby={modelValueDescriptionId}
-            onClick={() => {
-              focusAfterVendorChangeRef.current = "list";
-              setModelPickerOpen((open) => !open);
-            }}
-          >
-            <i />
-            <span>{compactModelLabel(selectedModel) || "选择模型"}</span>
-            <ChevronDown size={12} />
-          </button>
-          {modelPickerOpen ? (
-            <div
-              id={modelPopoverId}
-              className="figma-model-popover"
-              data-placement={modelPickerPlacement}
-              style={modelPickerOffset ? { transform: `translateX(${modelPickerOffset}px)` } : undefined}
-              aria-label="对话模型菜单"
-              onBlur={(event) => {
-                const nextTarget = event.relatedTarget;
-                if (!(nextTarget instanceof Node) || !modelPickerRef.current?.contains(nextTarget)) {
-                  setModelPickerOpen(false);
-                }
-              }}
-            >
-              <div
-                className="figma-model-vendors"
-                role="tablist"
-                aria-label="模型厂商"
-                data-scroll-active={vendorListScrolling ? "true" : "false"}
-                onScroll={handleVendorListScroll}
-              >
-                <span className="figma-model-vendor-label">厂商</span>
-                {modelVendorTabs.map((vendor) => (
-                <button
-                  key={vendor}
-                  type="button"
-                  role="tab"
-                  aria-selected={activeModelVendor === vendor}
-                  aria-controls={modelListId}
-                  data-vendor={vendor}
-                  tabIndex={activeModelVendor === vendor ? 0 : -1}
-                  className={activeModelVendor === vendor ? "active" : ""}
-                  onClick={() => {
-                    focusAfterVendorChangeRef.current = "list";
-                    setActiveModelVendor(vendor);
-                  }}
-                  onKeyDown={(event) => handleVendorKeyDown(event, vendor)}
-                >
-                    {vendor}
-                  </button>
-                ))}
-              </div>
-              <div className="figma-model-popover-heading">
-                <strong>{activeModelVendor} · 模型</strong>
-                <span>{vendorModels.length ? `显示 ${visibleVendorModelCount} 个` : "暂无模型"}</span>
-              </div>
-              <div
-                className="figma-model-list"
-                id={modelListId}
-                role="listbox"
-                aria-label={`${activeModelVendor} 模型`}
-                data-scroll-active={modelListScrolling ? "true" : "false"}
-                onScroll={handleModelListScroll}
-                onKeyDown={(event) => moveRovingFocus(event, '[role="option"]:not(:disabled)')}
-              >
-                {vendorModels.length ? vendorModels.map((model) => (
-                  <button
-                    key={model.id}
-                    type="button"
-                    role="option"
-                    aria-selected={selectedModel?.id === model.id}
-                    tabIndex={selectedModel?.id === model.id || (!selectedModelInVendor && model === vendorModels[0]) ? 0 : -1}
-                    className={selectedModel?.id === model.id ? "active" : ""}
-                    onClick={() => {
-                      onModelChange(model.id);
-                      setModelPickerOpen(false);
-                      setModelPickerOffset(0);
-                      requestAnimationFrame(() => modelTriggerRef.current?.focus());
-                    }}
-                  >
-                    <span><strong>{compactModelLabel(model)}</strong><small>{modelCapabilityNote(model)}</small></span>
-                    {selectedModel?.id === model.id
-                      ? <Check size={14} aria-hidden="true" />
-                      : <span className="figma-model-option-mark" aria-hidden="true" />}
-                  </button>
-                )) : <p>暂无可用模型</p>}
-              </div>
-            </div>
-          ) : null}
-          </div>
-          <span
-            className={assistant ? "figma-session-assistant" : "figma-session-assistant missing"}
-            aria-label={`当前助手：${assistant?.name || "已失效"}`}
-            title={assistant?.name || "助手已失效"}
-          >
-            <Bot size={13} aria-hidden="true" />
-            <span>{assistant?.name || "助手已失效"}</span>
-          </span>
-        </div>
-        <div className="figma-session-mobile-actions">
-          <button
-            type="button"
-            className="figma-session-action-mobile"
-            onClick={onCreateConversation}
-            aria-label="新对话"
-            title="新对话"
-          >
-            <Plus size={14} />
-          </button>
-          <button
-            type="button"
-            className="figma-session-action-mobile"
-            onClick={onOpenSettings}
-            aria-label="会话设置"
-            title="会话设置"
-          >
-            <Settings2 size={14} />
-          </button>
-        </div>
-        <div className="figma-session-header-actions">
-          <button
-            type="button"
-            className="figma-session-toggle"
-            onClick={(event) => {
-              event.stopPropagation();
-              onToggle();
-            }}
-            aria-expanded={!ui.collapsed}
-            aria-label={ui.collapsed ? "点击展开" : "点击折叠"}
-          >
-            <span>{ui.collapsed ? "点击展开" : "点击折叠"}</span>
-            {ui.collapsed ? <ChevronDown size={12} /> : <ChevronUp size={12} />}
-          </button>
-        </div>
-      </div>
-
-      {ui.collapsed ? (
-        <button type="button" className="figma-session-preview" onClick={onToggle}>
-          <img src={assistantAvatarUrl} alt="" />
-          <span>
-            <strong>{conversation.title || selectedModel?.label || "新对话"}</strong>
-            <small>{lastMessage?.content.replace(/[*#`]/g, "").slice(0, 90)}</small>
-          </span>
-        </button>
-      ) : (
-        <>
-          <div className={messageStyle === "list" ? "figma-message-history list" : "figma-message-history"}>
-            <div className="figma-message-track">
-              {displayMessages.map((message) => (
-                <article key={message.id} className={`figma-message ${message.role}`}>
-                  {message.role === "assistant" ? (
-                    <img className="figma-message-avatar" src={assistantAvatarUrl} alt="AiStudio" />
-                  ) : null}
-                  <div className="figma-message-bubble">
-                    {message.content ? (
-                      <ChatMessageContent content={message.content} />
-                    ) : (
-                      <span className="figma-typing"><i /><i /><i /></span>
-                    )}
-                    <KnowledgeCitationList citations={message.knowledgeCitations} />
-                  </div>
-                  {message.role === "user" ? (
-                    userAvatarUrl
-                      ? <img className="figma-user-avatar image" src={userAvatarUrl} alt="个人头像" />
-                      : <span className="figma-user-avatar">我</span>
-                  ) : null}
-                </article>
-              ))}
-              <div ref={bottomRef} />
-            </div>
-          </div>
-
-          <div className="figma-session-controls">
-            <div className="figma-session-controls-track">
-              <div className="figma-session-tools">
-                <button
-                  type="button"
-                  className={ui.search ? "active" : ""}
-                  onClick={onSearchToggle}
-                  aria-pressed={ui.search}
-                  disabled={!searchCompatibility.compatible && !ui.search && !canConfigureSearch}
-                  title={searchCompatibility.compatible ? "网络搜索" : canConfigureSearch ? "配置联网搜索服务" : searchCompatibility.reason}
-                >
-                  <Globe2 size={14} />
-                  网络搜索
-                </button>
-                <button
-                  type="button"
-                  className="figma-search-settings-action"
-                  onClick={onOpenSearchSettings}
-                  aria-label="配置联网搜索服务"
-                  title="配置联网搜索服务"
-                >
-                  <Settings2 size={14} />
-                </button>
-                {knowledgeAuthenticated ? (
-                  <CloudKnowledgeSelector
-                    compact
-                    bases={knowledgeBases}
-                    selectedIds={ui.knowledgeBaseIds}
-                    onChange={onKnowledgeChange}
-                    disabled={streaming}
-                  />
-                ) : null}
-                <button
-                  type="button"
-                  onClick={() => imageInputRef.current?.click()}
-                  title={`图片输入，单次最多 ${maxImageAttachments} 张`}
-                >
-                  <ImageIcon size={14} />
-                  图片输入
-                </button>
-                <input
-                  ref={imageInputRef}
-                  type="file"
-                  hidden
-                  multiple
-                  accept="image/png,image/jpeg,image/webp,image/gif"
-                  onChange={onImageInput}
-                />
-                <FigmaMenu
-                  className="figma-reasoning-menu"
-                  label="思维链长度"
-                  triggerPrefix="思维链"
-                  value={ui.reasoningEffort}
-                  options={reasoningEffortOptions}
-                  onChange={(value) => onReasoningEffortChange(cleanSettingChoice(
-                    value,
-                    reasoningEffortValues,
-                    "default"
-                  ))}
-                  ariaLabel="思维链长度"
-                  triggerIcon={<BrainCircuit size={14} aria-hidden="true" />}
-                />
-                <button type="button" className="clear" onClick={onClear}>
-                  <Trash2 size={14} />
-                  清除消息
-                </button>
-              </div>
-
-              <div className="figma-composer">
-                {commandOpen && command ? (
-                  <ChatCommandPalette
-                    id={commandListId}
-                    kind={command.kind}
-                    query={command.query}
-                    options={commandOptions}
-                    activeIndex={commandActiveIndex}
-                    onHover={setCommandActiveIndex}
-                    onSelect={selectCommandOption}
-                  />
-                ) : null}
-                {ui.attachments.length ? (
-                  <div className="figma-image-attachments" aria-label="待发送图片">
-                    <div className="figma-image-attachments-summary">
-                      <span>已选择 {ui.attachments.length} / {maxImageAttachments}</span>
-                    </div>
-                    <div className="figma-image-attachments-list">
-                      {ui.attachments.map((attachment) => (
-                        <div key={attachment.id} className="figma-image-attachment" data-testid="chat-image-attachment">
-                          <img src={attachment.dataUrl} alt={attachment.name} />
-                          <span title={attachment.name}>{attachment.name}</span>
-                          <button
-                            type="button"
-                            onClick={() => onRemoveImage(attachment.id)}
-                            aria-label={`移除图片 ${attachment.name}`}
-                          >
-                            <X size={13} />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-                {(ui.skillIds.length || ui.appId) ? (
-                  <div className="figma-chat-command-tags" aria-label="已选择的对话能力">
-                    {ui.skillIds.map((skillId) => {
-                      const skill = skills.find((item) => item.id === skillId);
-                      return skill ? (
-                        <span key={skill.id}><Puzzle size={12} />${skill.name}<button type="button" onClick={() => onRemoveSkill(skill.id)} aria-label={`移除 Skill ${skill.name}`}><X size={11} /></button></span>
-                      ) : null;
-                    })}
-                    {ui.appId ? (() => {
-                      const app = apps.find((item) => item.id === ui.appId);
-                      return app ? <span className="app"><LayoutGrid size={12} />/{app.name}<button type="button" onClick={onClearApp} aria-label={`移除应用 ${app.name}`}><X size={11} /></button></span> : null;
-                    })() : null}
-                  </div>
-                ) : null}
-                {ui.notice ? <p className="figma-session-notice" role="alert">{ui.notice}</p> : null}
-                <textarea
-                  value={ui.draft}
-                  aria-label="消息内容"
-                  aria-controls={commandOpen ? commandListId : undefined}
-                  aria-activedescendant={commandOpen && commandOptions[commandActiveIndex] ? `${commandListId}-${commandOptions[commandActiveIndex].id}` : undefined}
-                  aria-autocomplete="list"
-                  onChange={(event) => onDraftChange(event.target.value)}
-                  onKeyDown={handleComposerKeyDown}
-                  placeholder="在此输入你想探讨的想法、分析的内容，或者向 AI 提问... (Shift + Enter 换行，Enter 发送)"
-                  rows={2}
-                />
-                <div className="figma-composer-footer">
-                  {streaming ? (
-                    <button type="button" className="figma-send-button" onClick={onStop} aria-label="停止生成"><Square size={16} /></button>
-                  ) : (
-                    <button type="button" className="figma-send-button" onClick={onSend} disabled={!ui.draft.trim() && !ui.attachments.length} aria-label="发送"><Send size={17} /></button>
-                  )}
-                </div>
-              </div>
-              <p className="figma-generation-note">AI 生成内容仅供参考，请核验关键结论。</p>
-            </div>
-          </div>
-        </>
-      )}
-    </article>
   );
 }
 

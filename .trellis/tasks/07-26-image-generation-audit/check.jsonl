@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Full frontend quality check"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Provider/server quality check"}
+{"file": ".trellis/tasks/07-26-image-generation-audit/research/provider-image-capability-matrix.md", "reason": "Review against provider evidence"}

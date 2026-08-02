@@ -137,10 +137,6 @@ function KnowledgeModule({
   const embeddingModels = useMemo(() => modelsForCapability(modelCatalog, "embedding"), [modelCatalog]);
   const selectedEmbeddingModel =
     embeddingModels.find((entry) => entry.id === draft.embeddingModelId) ||
-    embeddingModels.find(
-      (entry) => selectedModel && entry.vendor === selectedModel.vendor && entry.defaultFor.includes("embedding")
-    ) ||
-    embeddingModels.find((entry) => selectedModel && entry.vendor === selectedModel.vendor) ||
     preferredModelFor(embeddingModels, "embedding");
   const selectedChunks = useMemo(
     () => selectedChunksFrom(documents, selectedDocumentIds),
@@ -221,7 +217,7 @@ function KnowledgeModule({
 
     if (!canSubmit) {
       if (!ready) {
-        setNotice("请先填写 API URL 和 Key");
+        setNotice("请先填写 API Key");
         onRequestApiConfig();
         return;
       }

@@ -1,6 +1,6 @@
 # Deployment Checklist
 
-This checklist covers the no-account BYOK deployment path for xi-ai-web. It intentionally separates repository verification from live provider testing because live calls require operator-owned API URLs and keys.
+This checklist covers the no-account BYOK deployment path for xi-ai-web. It intentionally separates repository verification from live provider testing because live calls require an operator gateway and a user-supplied API Key.
 
 ## 1. Preflight
 
@@ -9,8 +9,9 @@ This checklist covers the no-account BYOK deployment path for xi-ai-web. It inte
 - Confirm the service will be served behind HTTPS for public access.
 - Keep `KNOWLEDGE_ENABLED=false` for the first rollout unless the cloud knowledge stack is already provisioned.
 - Keep `LANGFLOW_ENABLED=false` until the separate Langflow runtime has been secured and a published Flow has been tested.
-- Generate a strong `ADMIN_PASSWORD`.
-- Generate a long random `ADMIN_SESSION_SECRET`.
+- Generate a unique `ADMIN_PASSWORD` of at least 16 characters. The bundled
+  deployment derives a domain-separated session-signing secret from it; an
+  explicit `ADMIN_SESSION_SECRET` remains an optional advanced override.
 - Decide the reverse-proxy trust boundary:
   - direct access: `TRUST_PROXY_HOPS=0`;
   - one trusted Nginx, 1Panel, or CDN-to-origin proxy: `TRUST_PROXY_HOPS=1`;
@@ -53,7 +54,7 @@ PORT=8787
 DATA_DIR=/opt/xi-ai-web/data
 TRUST_PROXY_HOPS=1
 ADMIN_PASSWORD=replace-with-a-strong-password
-ADMIN_SESSION_SECRET=replace-with-a-long-random-secret
+UPSTREAM_BASE_URL=https://api.xi-ai.cn
 KNOWLEDGE_ENABLED=false
 LANGFLOW_ENABLED=false
 LANGFLOW_BASE_URL=http://langflow:7860
@@ -61,11 +62,14 @@ LANGFLOW_API_KEY=
 LANGFLOW_WORKFLOW_PATH=/api/v2/workflows
 ```
 
-Do not put public user API URLs or API keys into server environment variables. Public users provide those values through the BYOK modal in their browser session.
+Public users provide only an API Key through the BYOK modal. They cannot select
+an upstream URL. Production requests use the operator-controlled
+`UPSTREAM_BASE_URL`, which defaults to `https://api.xi-ai.cn` and is locked when
+the environment variable is explicitly supplied.
 
 Deployment templates:
 
-- Docker Compose: `deploy/app/compose.yaml`
+- Docker Compose: `deploy/app/docker-compose.yml`
 - Compose env sample: `deploy/app/.env.example`
 - Nginx reverse proxy: `deploy/app/nginx.conf`
 - systemd unit: `deploy/app/xi-ai-web.service`
@@ -81,11 +85,12 @@ npm start
 
 Then verify:
 
-- `GET /api/health` returns `"ok": true`.
-- `GET /api/health` reports `"adminConfigured": true`.
-- `GET /api/health` reports knowledge as disabled when `KNOWLEDGE_ENABLED=false`.
+- `GET /api/health` returns `"ok": true` as a process liveness check.
+- `GET /api/ready` returns HTTP 200 with `"ready": true` only when production
+  configuration and writable metadata storage are ready.
 - `/admin` requires the configured Admin password.
-- `/chat` opens the public workspace and shows the required BYOK dialog when URL/key are missing.
+- `/chat` opens the public workspace and shows the required BYOK dialog when the
+  API Key is missing.
 
 ## 5. Admin Metadata Setup
 
@@ -109,11 +114,12 @@ These checks do not require the server to store credentials:
 
 - Open a fresh browser session.
 - Open `/chat`.
-- Confirm the BYOK dialog cannot be dismissed while URL/key are missing.
-- Save a test API URL/key in the dialog.
-- Confirm the values exist only in `sessionStorage`.
+- Confirm the BYOK dialog cannot be dismissed while the API Key is missing.
+- Save a test API Key in the dialog.
+- Confirm the Key exists only in `sessionStorage` and no user-editable API URL is
+  present.
 - Reload the page and confirm the session remains usable.
-- Close the browser session and confirm a new session asks for URL/key again.
+- Close the browser session and confirm a new session asks for the API Key again.
 
 ## 7. Operator-Owned Live Provider Tests
 
@@ -143,8 +149,8 @@ When the separate Langflow service is enabled:
 
 ## 9. Data And Secret Review
 
-- Admin metadata export must not contain public BYOK API URLs or keys.
-- Workspace export must not contain public BYOK API URLs or keys.
+- Admin metadata export must not contain public BYOK API Keys.
+- Workspace export must not contain public BYOK API Keys.
 - Server logs must not contain API keys.
 - `DATA_DIR` should contain only Admin metadata, backups, and audit records for the main no-account workspace.
 - Browser-private conversations, gallery items, agents, Skills, and workflows remain in IndexedDB.
@@ -164,7 +170,7 @@ Rollback shape:
 2. Restore the previous artifact or Docker image.
 3. Keep the same `DATA_DIR` unless the rollback target explicitly requires a backup restore.
 4. Restart the service.
-5. Verify `/api/health`, `/admin`, and `/chat`.
+5. Verify `/api/health`, `/api/ready`, `/admin`, and `/chat`.
 
 ## 11. Optional Cloud Knowledge Gate
 

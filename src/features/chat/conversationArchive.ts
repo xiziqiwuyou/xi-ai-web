@@ -1,4 +1,5 @@
 import type { Conversation, Message } from "../../types";
+import { sanitizeWorkspaceMessage } from "../workspace/workspaceArchive";
 
 export const conversationExportSchema = "xi-ai-web.conversation-export";
 export const conversationExportVersion = 1;
@@ -40,24 +41,8 @@ function cleanText(value: unknown, maxLength: number) {
 }
 
 function sanitizeMessage(value: unknown): Message | null {
-  const source = value && typeof value === "object" ? (value as Partial<Message>) : null;
-  if (!source?.id || !source.role) return null;
-  if (source.role !== "user" && source.role !== "assistant") return null;
-  return {
-    id: cleanText(source.id, 120),
-    role: source.role,
-    content: cleanText(source.content, maxMessageLength),
-    model: cleanText(source.model, 180) || undefined,
-    providerId: cleanText(source.providerId, 180) || undefined,
-    status:
-      source.status === "streaming" ||
-      source.status === "done" ||
-      source.status === "error" ||
-      source.status === "stopped"
-        ? source.status
-        : undefined,
-    createdAt: cleanText(source.createdAt, 80) || new Date().toISOString()
-  };
+  const message = sanitizeWorkspaceMessage(value);
+  return message ? { ...message, content: cleanText(message.content, maxMessageLength) } : null;
 }
 
 export function sanitizeConversation(value: unknown): Conversation | null {
@@ -83,6 +68,7 @@ export function sanitizeConversation(value: unknown): Conversation | null {
       ?.content.replace(/\s+/g, " ")
       .slice(0, 120) || "",
     messages,
+    titleSummaryAt: cleanText(source.titleSummaryAt, 80) || undefined,
     createdAt,
     updatedAt: cleanText(source.updatedAt, 80) || createdAt
   };

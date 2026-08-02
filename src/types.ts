@@ -28,6 +28,7 @@ export type SiteSettings = {
   theme: "rednote";
   allowGuestChat: boolean;
   defaultModule: ModuleId;
+  upstreamBaseUrl: string;
 };
 
 export type LangflowStatus = {
@@ -86,21 +87,40 @@ export type ModelCapability =
   | "toolCalling"
   | "webSearch"
   | "urlContext"
-  | "codeExecution"
-  | "streaming";
+  | "codeExecution";
 
 export type ProviderCapability = ModelCapability;
 
 export type ModelDefaultFor = "chat" | "image" | "tts" | "stt" | "video" | "embedding";
 
+export type ModelEndpointProtocol =
+  | "openai-chat"
+  | "openai-responses"
+  | "anthropic-messages"
+  | "gemini-generate-content";
+
+export type ModelVendorEntry = {
+  id: string;
+  label: string;
+  adapter: ProviderKind;
+  enabled: boolean;
+  order: number;
+};
+
 export type ModelCatalogEntry = {
   id: string;
+  order: number;
+  vendorId: string;
   vendor: ProviderKind;
+  vendorLabel: string;
+  endpointProtocol: ModelEndpointProtocol;
   model: string;
   label: string;
   capabilities: ModelCapability[];
   defaultFor: ModelDefaultFor[];
   enabled: boolean;
+  contextWindowTokens?: number;
+  maxInputCharacters?: number;
   mediaConfig?: MediaEndpointConfig;
 };
 
@@ -133,9 +153,15 @@ export type Message = {
   id: string;
   role: "user" | "assistant";
   content: string;
+  attachments?: ChatAttachment[];
   model?: string;
   providerId?: string;
   knowledgeCitations?: KnowledgeCitation[];
+  usage?: {
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+  };
   status?: "streaming" | "done" | "error" | "stopped";
   createdAt: string;
 };
@@ -163,6 +189,7 @@ export type ConversationSummary = {
 
 export type Conversation = ConversationSummary & {
   messages: Message[];
+  titleSummaryAt?: string;
 };
 
 export type PublicBootstrapPayload = {
@@ -181,6 +208,7 @@ export type PublicBootstrapPayload = {
 export type AdminBootstrapPayload = {
   settings: SiteSettings;
   menuItems: MenuItem[];
+  modelVendors: ModelVendorEntry[];
   modelCatalog: ModelCatalogEntry[];
   assistants: Assistant[];
   appPresets: AppPreset[];
@@ -261,7 +289,7 @@ export type KnowledgeEmbeddingProgress = {
 
 export type KnowledgeEmbeddingConnection = {
   vendor: "openai" | "qwen";
-  baseUrl: string;
+  baseUrl?: string;
   apiKey: string;
 };
 
@@ -286,7 +314,7 @@ export type KnowledgeCitation = {
 export type KnowledgeRetrievalRequest = {
   knowledgeBaseIds: string[];
   embeddingConnections?: Partial<
-    Record<KnowledgeEmbeddingConnection["vendor"], Pick<KnowledgeEmbeddingConnection, "baseUrl" | "apiKey">>
+    Record<KnowledgeEmbeddingConnection["vendor"], Pick<KnowledgeEmbeddingConnection, "apiKey">>
   >;
   topK?: number;
 };
@@ -685,6 +713,7 @@ export type AdminOpsPayload = {
   counts: {
     menus: number;
     visibleMenus: number;
+    modelVendors: number;
     enabledModels: number;
     modelCatalog: number;
     assistants: number;
@@ -708,6 +737,19 @@ export type AdminOpsPayload = {
     covered: boolean;
     missing: ModelCapability[];
   }>;
+  modelInvocations: Array<{
+    modelId: string;
+    displayName: string;
+    requestModel: string;
+    vendor: string;
+    calls: number;
+    successCalls: number;
+    errorCalls: number;
+    cancelledCalls: number;
+    averageDurationMs: number;
+    totalDurationMs: number;
+    lastCalledAt: string;
+  }>;
   backups: AdminBackupItem[];
 };
 
@@ -715,7 +757,7 @@ export type AuthStatus = AdminStatus;
 export type BootstrapPayload = PublicBootstrapPayload;
 
 export type UserConnectionConfig = {
-  baseUrl: string;
+  baseUrl?: string;
   apiKey: string;
   lastModelId?: string;
 };
@@ -728,7 +770,7 @@ export type SearchEngine = "search_std" | "search_pro" | "search_pro_sogou" | "s
 
 export type SearchServiceConfig = {
   provider: SearchProviderKind;
-  baseUrl: string;
+  baseUrl?: string;
   apiKey: string;
   model: string;
   searchEngine: SearchEngine;
@@ -737,6 +779,10 @@ export type SearchServiceConfig = {
 };
 
 export type ReasoningEffort = "default" | "off" | "low" | "medium" | "high" | "xhigh";
+
+export type ToolInvocationMode = "prompt" | "function";
+
+export type OpenAIResponseVerbosity = "default" | "low" | "medium" | "high";
 
 export type ChatStreamPayload = {
   conversation?: ConversationSummary;
@@ -747,6 +793,9 @@ export type ChatStreamPayload = {
   temperature: number;
   topP?: number;
   reasoningEffort?: ReasoningEffort;
+  toolInvocationMode?: ToolInvocationMode;
+  responseVerbosity?: OpenAIResponseVerbosity;
+  includeUsage?: boolean;
   maxTokens?: number;
   content: string;
   displayContent?: string;
@@ -756,6 +805,16 @@ export type ChatStreamPayload = {
   searchService?: SearchServiceConfig;
   knowledgeBaseIds?: KnowledgeRetrievalRequest["knowledgeBaseIds"];
   embeddingConnections?: KnowledgeRetrievalRequest["embeddingConnections"];
+};
+
+export type ChatTitlePayload = {
+  connection: UserConnectionConfig;
+  modelId: string;
+  history: Message[];
+};
+
+export type ChatTitleResult = {
+  title: string;
 };
 
 export type GenerationModuleId =
@@ -775,6 +834,8 @@ export type ImageAspectRatio = "1:1" | "3:2" | "2:3" | "16:9" | "9:16";
 export type ImageResolution = "512px" | "1K" | "2K" | "4K";
 
 export type ImageOutputFormat = "png" | "jpeg" | "webp";
+
+export type ImageBackground = "auto" | "opaque" | "transparent";
 
 export type ImageInputPayload = {
   dataUrl: string;
@@ -801,6 +862,7 @@ export type GenerationPayload = {
     maskImage?: ImageInputPayload;
     outputFormat?: ImageOutputFormat;
     outputCompression?: number;
+    background?: ImageBackground;
     voice?: string;
     endpointPath?: string;
     temperature?: number;
@@ -860,6 +922,20 @@ export type GalleryItem = GenerationResult & {
   modelId: string;
   favorite?: boolean;
   tags?: string[];
+};
+
+export type ImageGenerationTimingRecord = {
+  id: string;
+  modelId: string;
+  mode: ImageGenerationMode;
+  resolution: ImageResolution;
+  aspectRatio: ImageAspectRatio;
+  count: number;
+  status: "completed" | "failed" | "cancelled";
+  startedAt: string;
+  completedAt: string;
+  updatedAt?: string;
+  durationMs: number;
 };
 
 export type MediaJobStatus = "submitted" | "processing" | "completed" | "failed";
@@ -1040,6 +1116,7 @@ export type WorkspaceBackupPolicy = {
 export type WorkspaceSnapshot = {
   conversations: Conversation[];
   galleryItems: GalleryItem[];
+  imageGenerationHistory: ImageGenerationTimingRecord[];
   knowledgeDocuments: KnowledgeDocument[];
   mediaJobs: MediaJob[];
   userAgents: UserAgentDefinition[];

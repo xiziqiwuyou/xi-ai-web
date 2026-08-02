@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
+import { defaultMenuItems } from "../server/data/defaults.mjs";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const archivePath = path.join(rootDir, "src/features/chat/conversationArchive.ts");
@@ -24,7 +25,16 @@ function moduleUrlFromSource(source, replacements = {}) {
 function importTsSource(source, replacements = {}) {
   return import(moduleUrlFromSource(source, replacements));
 }
-const archive = await importTsSource(archiveSource);
+const workspaceArchiveUrl = moduleUrlFromSource(
+  fs.readFileSync(path.join(rootDir, "src/features/workspace/workspaceArchive.ts"), "utf8")
+);
+const workspaceArchive = await import(workspaceArchiveUrl);
+const archive = await importTsSource(archiveSource, {
+  "../workspace/workspaceArchive": workspaceArchiveUrl
+});
+const attachmentContext = await importTsSource(
+  fs.readFileSync(path.join(rootDir, "src/features/chat/chatAttachmentContext.ts"), "utf8")
+);
 const masks = await importTsSource(fs.readFileSync(maskPath, "utf8"));
 const workflowComponentsUrl = moduleUrlFromSource(
   fs.readFileSync(path.join(rootDir, "src/features/automation/workflowComponents.ts"), "utf8")
@@ -64,6 +74,69 @@ const envelope = archive.createConversationExport([conversation], [
 assert.equal(envelope.schema, archive.conversationExportSchema);
 assert.equal(envelope.version, archive.conversationExportVersion);
 assert.equal(envelope.conversations.length, 1);
+
+const persistedMessage = workspaceArchive.sanitizeWorkspaceMessage({
+  id: "persisted-message",
+  role: "assistant",
+  content: "answer",
+  attachments: [{
+    id: "attachment-1",
+    kind: "text",
+    name: "notes.txt",
+    mimeType: "text/plain",
+    size: 5,
+    text: "line 1\nline 2"
+  }],
+  knowledgeCitations: [{
+    id: "citation-1",
+    knowledgeBaseId: "kb-1",
+    knowledgeBaseName: "KB",
+    documentId: "doc-1",
+    documentName: "Doc",
+    chunkId: "chunk-1",
+    chunkOrdinal: 0,
+    locator: { page: 1 },
+    score: 0.8,
+    mode: "vector",
+    source: { method: "GET", openPath: "/open", downloadPath: "/download" }
+  }],
+  usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+  createdAt: now
+});
+assert.equal(persistedMessage.attachments[0].text, "line 1\nline 2");
+assert.equal(persistedMessage.knowledgeCitations.length, 1);
+assert.equal(persistedMessage.usage.totalTokens, 15);
+
+const historicAttachment = {
+  id: "historic-image",
+  kind: "image",
+  name: "reference.png",
+  mimeType: "image/png",
+  size: 3,
+  dataUrl: "data:image/png;base64,AAAA"
+};
+assert.deepEqual(
+  attachmentContext.chatAttachmentsForRequest(
+    [{ ...conversation.messages[0], attachments: [historicAttachment] }],
+    [],
+    { imageLimit: 3, includeImages: true }
+  ).map((attachment) => attachment.id),
+  ["historic-image"],
+  "selected historical attachments must be replayed for follow-up requests"
+);
+assert.equal(
+  attachmentContext.settleStreamingMessage(
+    [{ ...conversation, messages: [{ ...conversation.messages[1], status: "streaming" }] }],
+    conversation.id,
+    conversation.messages[1].id,
+    "stopped"
+  )[0].messages[0].status,
+  "stopped"
+);
+
+const apiSource = fs.readFileSync(path.join(rootDir, "src/api.ts"), "utf8");
+assert(apiSource.includes("let receivedDone = false"), "Chat SSE must track its terminal done event");
+assert(apiSource.includes("if (!receivedDone)"), "Chat SSE must reject EOF before done");
 
 const serialized = JSON.stringify({
   ...envelope,
@@ -263,9 +336,26 @@ assert(topBar.includes('className="figma-mobile-header"'), "TopBar must mount .f
 assert(topBar.includes('"figma-sidebar mobile-open"'), "TopBar must expose the mobile .figma-sidebar state");
 assert(!topBar.includes("onRequestApiConfig"), "public shell must not mount a persistent API button");
 
-const chatModule = fs.readFileSync(path.join(rootDir, "src/features/chat/ChatModule.tsx"), "utf8");
-const studioModule = fs.readFileSync(path.join(rootDir, "src/features/studio/StudioModule.tsx"), "utf8");
-const automationModule = fs.readFileSync(path.join(rootDir, "src/features/automation/AutomationModule.tsx"), "utf8");
+const chatModule = [
+  "src/features/chat/ChatModule.tsx",
+  "src/features/chat/ChatSessionBlock.tsx"
+].map((relativePath) => fs.readFileSync(path.join(rootDir, relativePath), "utf8")).join("\n");
+const chatSettingsDialog = fs.readFileSync(path.join(rootDir, "src/features/chat/ChatSessionSettingsDialog.tsx"), "utf8");
+const studioModule = [
+  "src/features/studio/StudioModule.tsx",
+  "src/features/studio/studioShared.tsx",
+  "src/features/studio/ImageStudio.tsx",
+  "src/features/studio/PptStudio.tsx",
+  "src/features/studio/MindmapStudio.tsx",
+  "src/features/studio/AssistantsStudio.tsx",
+  "src/features/studio/TranslateStudio.tsx"
+].map((file) => fs.readFileSync(path.join(rootDir, file), "utf8")).join("\n");
+const automationModule = [
+  "src/features/automation/AutomationModule.tsx",
+  "src/features/automation/automationShared.tsx",
+  "src/features/automation/AgentsWorkspace.tsx",
+  "src/features/automation/WorkflowsWorkspace.tsx"
+].map((file) => fs.readFileSync(path.join(rootDir, file), "utf8")).join("\n");
 const assistantLaunch = fs.readFileSync(path.join(rootDir, "src/features/assistants/assistantLaunch.ts"), "utf8");
 for (const requiredClass of [
   "figma-workspace-heading",
@@ -289,7 +379,7 @@ assert(chatModule.includes("commitConversations((current) => [conversation, ...c
 assert(chatModule.includes("collapsed: true"), "new Chat sessions must fold older sessions");
 assert(chatModule.includes("[conversation.id]: defaultSessionUi(false)"), "new Chat sessions must start expanded");
 assert(chatModule.includes("ChatSkillManagerDialog"), "Chat must own the local Skill manager");
-assert(chatModule.includes("管理本地 Skill"), "Chat settings must retain local Skill management");
+assert(chatSettingsDialog.includes("管理本地 Skill"), "Chat settings must retain local Skill management");
 assert(!chatModule.includes('figma-heading-action-label">Skill'), "Chat heading must not promote Skill management");
 assert(chatModule.includes("skillInstructions: selectedSkills.map"), "Chat must send resolved Skill instructions with its request");
 assert(chatModule.includes("ChatCommandPalette"), "Chat must expose the inline command palette");
@@ -297,6 +387,10 @@ assert(chatModule.includes("activeChatCommand"), "Chat must resolve $ and / comm
 assert(chatModule.includes("selectedApp.prompt"), "Chat must compose the selected application prompt only for the outbound request");
 assert(chatModule.includes("reasoningEffort: ui.reasoningEffort"), "Chat must send the shared reasoning effort value");
 assert(chatModule.includes('className="figma-reasoning-menu"'), "Chat must expose the reasoning menu in the composer toolbar");
+assert(chatModule.includes("figma-search-provider-menu"), "Chat must expose a vertical search-provider menu");
+assert(chatModule.includes("searchServiceForUserProvider"), "Chat search must derive its request config from the active BYOK connection");
+assert(!chatModule.includes("SearchServiceDialog"), "Chat must not expose a separate search-credential dialog");
+assert(!chatModule.includes("figma-search-settings-action"), "Chat must not expose a separate search settings icon");
 assert(chatModule.includes("ConfirmationDialog"), "Chat clear messages must use shared destructive confirmation");
 assert(chatModule.includes("maxImageAttachments"), "Chat settings must own the session image limit");
 assert(chatModule.includes("multiple"), "Chat image input must accept multiple files");
@@ -318,10 +412,8 @@ for (const retiredToken of ["conversation-rail", "thread-main", "composer-status
 const server = fs.readFileSync(path.join(rootDir, "server/index.mjs"), "utf8");
 const indexHtml = fs.readFileSync(path.join(rootDir, "index.html"), "utf8");
 const mainTsx = fs.readFileSync(path.join(rootDir, "src/main.tsx"), "utf8");
-const defaultMenuBlock = server.match(/function defaultMenuItems\(\)[\s\S]*?\n}/)?.[0] || "";
 assert.deepEqual(
-  [...defaultMenuBlock.matchAll(/\{\s*id:\s*"([^"]+)",\s*label:\s*"([^"]+)"/g)]
-    .map((match) => [match[1], match[2]]),
+  defaultMenuItems().map((item) => [item.id, item.label]),
   [
     ["chat", "AI \u5bf9\u8bdd"],
     ["image", "\u56fe\u50cf\u751f\u6210"],
@@ -340,7 +432,7 @@ assert(!server.includes("/api/conversations/share"), "must not add public share 
 assert(server.includes("displayContent"), "chat stream must separate model content from displayed user content");
 assert(server.includes("reasoningEffortAllowlist"), "server must normalize reasoning effort through an allowlist");
 assert(server.includes("reasoningEffort"), "server must forward reasoning effort to provider adapters");
-assert(server.includes("value.slice(0, 6)"), "server must retain the six-image hard limit");
+assert(server.includes("imageCount > 6") && server.includes("value.slice(0, 10)"), "server must retain the six-image hard limit while allowing bounded text attachments");
 assert(indexHtml.includes("/manifest.webmanifest"), "PWA manifest must be linked");
 assert(mainTsx.includes("serviceWorker.register"), "PWA service worker must be registered in production");
 assert(fs.existsSync(path.join(rootDir, "public/sw.js")), "service worker file must exist");

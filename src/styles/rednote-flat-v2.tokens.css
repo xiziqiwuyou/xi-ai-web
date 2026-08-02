@@ -37,7 +37,8 @@
   --xhs-ink: #10203d;
   --xhs-muted: #65738d;
   --xhs-faint: #8290a8;
-  --xhs-red: #2368e8;
+  --xhs-primary: #2368e8;
+  --xhs-red: var(--xhs-primary);
   --xhs-red-hover: #1859cc;
   --xhs-red-deep: #174ca8;
   --xhs-red-border: #b9d0fb;
@@ -87,7 +88,8 @@
   --xhs-ink: #edf3ff;
   --xhs-muted: #93a3bf;
   --xhs-faint: #7887a3;
-  --xhs-red: #4f8dff;
+  --xhs-primary: #4f8dff;
+  --xhs-red: var(--xhs-primary);
   --xhs-red-hover: #72a4ff;
   --xhs-red-deep: #82acff;
   --xhs-red-border: #294f8f;
@@ -136,18 +138,35 @@ textarea {
   letter-spacing: 0;
 }
 
+input,
+select,
+textarea {
+  border-color: var(--xhs-line);
+  background-color: var(--xhs-surface);
+  background-image: none;
+  box-shadow: none;
+  outline: 0;
+}
+
 button {
   touch-action: manipulation;
 }
 
 button:focus-visible,
 a:focus-visible,
-input:focus-visible,
-select:focus-visible,
-textarea:focus-visible,
 [tabindex]:focus-visible {
   outline: 2px solid var(--xhs-blue);
   outline-offset: 2px;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--xhs-blue);
+  background-color: var(--xhs-surface);
+  background-image: none;
+  box-shadow: var(--focus-ring);
+  outline: 0;
 }
 
 ::selection {

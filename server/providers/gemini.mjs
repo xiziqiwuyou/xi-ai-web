@@ -8,6 +8,8 @@ import {
   stringifyToolOutput
 } from "./types.mjs";
 
+const IMAGE_RESPONSE_LIMIT_BYTES = 64 * 1024 * 1024;
+
 function authHeaders(provider) {
   return provider.apiKey ? { "x-goog-api-key": provider.apiKey } : {};
 }
@@ -223,7 +225,7 @@ function normalizedImageCount(count) {
 }
 
 function normalizedImageSize(model, imageSize) {
-  if (!/^gemini-3(?:\.|-)/i.test(model)) return undefined;
+  if (!/^gemini-3(?:\.|-)/i.test(model) && !/^nano-banana-2(?:$|-)/i.test(model)) return undefined;
   return ["512px", "1K", "2K", "4K"].includes(imageSize) ? imageSize : "1K";
 }
 
@@ -266,7 +268,8 @@ async function generateImage({
         }
       }
     },
-    signal
+    signal,
+    maxResponseBytes: IMAGE_RESPONSE_LIMIT_BYTES
   });
 
   const responses = await Promise.all(Array.from({ length: normalizedImageCount(count) }, request));

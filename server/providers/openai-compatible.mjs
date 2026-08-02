@@ -6,10 +6,13 @@ import {
   fetchJson,
   hasImageContent,
   normalizeTools,
-  parseToolArguments,
+  parseProviderJsonText,
+  parseStrictToolArguments,
   providerUrl,
   stringifyToolOutput
 } from "./types.mjs";
+
+const IMAGE_RESPONSE_LIMIT_BYTES = 64 * 1024 * 1024;
 
 function authHeaders(provider) {
   return provider.apiKey ? { Authorization: `Bearer ${provider.apiKey}` } : {};
@@ -88,7 +91,8 @@ function chatRequestBody(
 async function streamChat({ provider, model, messages, temperature, topP, reasoningEffort, maxTokens, signal, onToken, normalizeChatBody }) {
   assertCapability(provider, "chat");
   if (hasImageContent(messages)) assertCapability(provider, "vision");
-  const response = await fetch(providerUrl(provider, "/chat/completions"), {
+  const endpoint = providerUrl(provider, "/chat/completions");
+  const response = await fetch(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders(provider) },
     body: JSON.stringify(chatRequestBody({ model, messages, temperature, topP, reasoningEffort, maxTokens, stream: true }, normalizeChatBody)),
@@ -104,7 +108,7 @@ async function streamChat({ provider, model, messages, temperature, topP, reason
   const contentType = response.headers.get("content-type") || "";
   if (!contentType.includes("text/event-stream")) {
     const text = await response.text();
-    const parsed = JSON.parse(text);
+    const parsed = parseProviderJsonText(text, { contentType, url: endpoint });
     const content = extractOpenAICompatibleText(parsed);
     if (content) onToken(content);
     return;
@@ -185,7 +189,7 @@ async function completeWithTools({
       const argumentsJson = toolCall.function?.arguments || toolCall.arguments;
       const result = await runTool({
         name,
-        arguments: parseToolArguments(argumentsJson),
+        arguments: parseStrictToolArguments(argumentsJson),
         raw: toolCall
       });
       nextMessages.push({
@@ -240,7 +244,8 @@ async function generateImage({
       output_format: outputFormat,
       output_compression: outputFormat === "jpeg" || outputFormat === "webp" ? outputCompression : undefined
     },
-    signal
+    signal,
+    maxResponseBytes: IMAGE_RESPONSE_LIMIT_BYTES
   });
 }
 

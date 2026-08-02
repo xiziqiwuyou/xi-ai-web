@@ -29,14 +29,22 @@ function normalizeQwenChatBody(body, { model, reasoningEffort }) {
   return normalizeQwenThinking(body, { reasoningEffort });
 }
 
-export function createQwenAdapter(provider) {
-  const compatible = createOpenAICompatibleAdapter(provider, {
+export function createQwenChatAdapter(provider) {
+  return createOpenAICompatibleAdapter(provider, {
     kind: "qwen",
     normalizeChatBody: normalizeQwenChatBody
   });
-  const responses = createOpenAIAdapter(provider, {
+}
+
+export function createQwenResponsesAdapter(provider) {
+  return createOpenAIAdapter(provider, {
     normalizeResponseBody: normalizeQwenThinking
   });
+}
+
+export function createQwenAdapter(provider) {
+  const compatible = createQwenChatAdapter(provider);
+  const responses = createQwenResponsesAdapter(provider);
   return {
     ...compatible,
     kind: "qwen",

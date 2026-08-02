@@ -35,10 +35,9 @@ const vendorCapabilityHints: Record<ModelCatalogEntry["vendor"], ModelCapability
     "fileSearch",
     "toolCalling",
     "webSearch",
-    "codeExecution",
-    "streaming"
+    "codeExecution"
   ],
-  anthropic: ["chat", "vision", "toolCalling", "webSearch", "urlContext", "codeExecution", "streaming"],
+  anthropic: ["chat", "vision", "toolCalling", "webSearch", "urlContext", "codeExecution"],
   gemini: [
     "chat",
     "vision",
@@ -52,12 +51,11 @@ const vendorCapabilityHints: Record<ModelCatalogEntry["vendor"], ModelCapability
     "toolCalling",
     "webSearch",
     "urlContext",
-    "codeExecution",
-    "streaming"
+    "codeExecution"
   ],
-  kimi: ["chat", "vision", "toolCalling", "streaming"],
-  deepseek: ["chat", "toolCalling", "streaming"],
-  qwen: ["chat", "vision", "audio", "embedding", "toolCalling", "webSearch", "codeExecution", "streaming"],
+  kimi: ["chat", "vision", "toolCalling"],
+  deepseek: ["chat", "toolCalling"],
+  qwen: ["chat", "vision", "audio", "embedding", "toolCalling", "webSearch", "codeExecution"],
   botcf: ["image", "imageEdit"],
   "openai-compatible": [
     "chat",
@@ -68,8 +66,7 @@ const vendorCapabilityHints: Record<ModelCatalogEntry["vendor"], ModelCapability
     "audio",
     "embedding",
     "video",
-    "toolCalling",
-    "streaming"
+    "toolCalling"
   ]
 };
 

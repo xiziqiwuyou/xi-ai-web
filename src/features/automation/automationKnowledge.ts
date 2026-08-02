@@ -146,9 +146,10 @@ export function knowledgeCitationsFromResult(result: GenerationResult | null | u
   const raw = recordFrom(result?.raw);
   const values = raw?.knowledgeCitations;
   if (!Array.isArray(values)) return [];
-  return values
+  const citations = values
     .map(knowledgeCitationFrom)
     .filter((citation): citation is KnowledgeCitation => citation !== null);
+  return mergeKnowledgeCitations(citations);
 }
 
 export function withKnowledgeCitations(

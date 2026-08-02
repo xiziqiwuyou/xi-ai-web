@@ -94,7 +94,7 @@ function AppsModule({
     event.preventDefault();
     if (!selectedApp) return;
     if (!ready) {
-      setError("请先填写 API URL 和 Key");
+      setError("请先填写 API Key");
       onRequestApiConfig();
       return;
     }

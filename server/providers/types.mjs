@@ -9,6 +9,24 @@ export const providerKinds = new Set([
   "openai-compatible"
 ]);
 
+export const endpointProtocols = new Set([
+  "openai-chat",
+  "openai-responses",
+  "anthropic-messages",
+  "gemini-generate-content"
+]);
+
+const defaultEndpointProtocols = {
+  openai: "openai-responses",
+  anthropic: "anthropic-messages",
+  gemini: "gemini-generate-content",
+  kimi: "openai-chat",
+  deepseek: "openai-chat",
+  qwen: "openai-chat",
+  botcf: "openai-chat",
+  "openai-compatible": "openai-chat"
+};
+
 export const providerCapabilities = {
   openai: [
     "chat",
@@ -21,10 +39,9 @@ export const providerCapabilities = {
     "fileSearch",
     "toolCalling",
     "webSearch",
-    "codeExecution",
-    "streaming"
+    "codeExecution"
   ],
-  anthropic: ["chat", "vision", "toolCalling", "webSearch", "urlContext", "codeExecution", "streaming"],
+  anthropic: ["chat", "vision", "toolCalling", "webSearch", "urlContext", "codeExecution"],
   gemini: [
     "chat",
     "vision",
@@ -37,14 +54,13 @@ export const providerCapabilities = {
     "toolCalling",
     "webSearch",
     "urlContext",
-    "codeExecution",
-    "streaming"
+    "codeExecution"
   ],
-  kimi: ["chat", "vision", "toolCalling", "streaming"],
-  deepseek: ["chat", "toolCalling", "streaming"],
-  qwen: ["chat", "vision", "audio", "embedding", "toolCalling", "webSearch", "codeExecution", "streaming"],
+  kimi: ["chat", "vision", "toolCalling"],
+  deepseek: ["chat", "toolCalling"],
+  qwen: ["chat", "vision", "audio", "embedding", "toolCalling", "webSearch", "codeExecution"],
   botcf: ["image", "imageEdit"],
-  "openai-compatible": ["chat", "image", "tts", "stt", "embedding", "video", "toolCalling", "streaming"]
+  "openai-compatible": ["chat", "image", "tts", "stt", "embedding", "video", "toolCalling"]
 };
 
 export const providerDefaults = {
@@ -130,6 +146,14 @@ export function normalizeProviderKind(kind) {
   return providerKinds.has(kind) ? kind : "openai-compatible";
 }
 
+export function defaultEndpointProtocol(kind) {
+  return defaultEndpointProtocols[normalizeProviderKind(kind)];
+}
+
+export function normalizeEndpointProtocol(value, kind) {
+  return endpointProtocols.has(value) ? value : defaultEndpointProtocol(kind);
+}
+
 export function defaultCapabilities(kind) {
   return providerCapabilities[normalizeProviderKind(kind)] || providerCapabilities["openai-compatible"];
 }
@@ -152,9 +176,24 @@ export function assertCapability(provider, capability) {
 }
 
 export function providerUrl(provider, endpointPath) {
+  const baseUrl = String(provider?.baseUrl || "").trim().replace(/\/+$/u, "");
+  const parsedBase = new URL(baseUrl);
+  const basePath = parsedBase.pathname.replace(/\/+$/u, "");
   const pathPart = String(endpointPath || "").trim();
   const normalizedPath = pathPart.startsWith("/") ? pathPart : `/${pathPart}`;
-  return `${provider.baseUrl}${normalizedPath}`;
+  const versionPattern = /\/v\d+(?:(?:alpha|beta)\d*)?$/iu;
+  const baseVersion = basePath.match(versionPattern)?.[0] || "";
+  const baseHasVersion = Boolean(baseVersion);
+  const endpointHasVersion = /^\/v\d+(?:(?:alpha|beta)\d*)?(?:\/|$)/iu.test(normalizedPath);
+  const targetVersion = /^\/models\/[^/]+:/u.test(normalizedPath) ? "/v1beta" : "/v1";
+
+  if (endpointHasVersion) {
+    const unversionedBase = baseHasVersion ? baseUrl.slice(0, -baseVersion.length) : baseUrl;
+    return `${unversionedBase}${normalizedPath}`;
+  }
+  if (!baseHasVersion) return `${baseUrl}${targetVersion}${normalizedPath}`;
+  if (baseVersion.toLowerCase() === targetVersion) return `${baseUrl}${normalizedPath}`;
+  return `${baseUrl.slice(0, -baseVersion.length)}${targetVersion}${normalizedPath}`;
 }
 
 export function compactText(value, max = 700) {
@@ -162,24 +201,76 @@ export function compactText(value, max = 700) {
   return text.length > max ? `${text.slice(0, max)}...` : text;
 }
 
-export async function fetchJson(url, { headers, body, signal }) {
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...(headers || {}) },
-    body: JSON.stringify(body),
-    redirect: "error",
-    signal
-  });
-  const contentType = response.headers.get("content-type") || "";
-  const raw = await response.text();
-  if (!response.ok) {
-    throw new Error(`模型服务返回 ${response.status}: ${compactText(raw)}`);
-  }
-  if (!contentType.includes("json")) return { text: raw };
-  return raw ? JSON.parse(raw) : {};
+export function isHtmlDocument(value, contentType = "") {
+  const mediaType = String(contentType || "").toLowerCase();
+  const prefix = String(value ?? "").trimStart().slice(0, 512);
+  return (
+    mediaType.includes("text/html") ||
+    mediaType.includes("application/xhtml+xml") ||
+    /^<!doctype\s+html\b/iu.test(prefix) ||
+    /^<html(?:\s|>)/iu.test(prefix)
+  );
 }
 
-export async function fetchAsset(url, { headers, body, signal }) {
+function providerResponseLabel(url) {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    return "上游模型 API";
+  }
+}
+
+export function parseProviderJsonText(raw, { contentType = "", url = "" } = {}) {
+  const text = String(raw ?? "").trim();
+  if (isHtmlDocument(text, contentType)) {
+    throw new Error(
+      `模型服务返回了 HTML 页面而不是 JSON（${providerResponseLabel(url)}）。请检查后台统一上游 API 域名及反向代理是否支持对应的 /v1 或 /v1beta 端点`
+    );
+  }
+  if (!text) throw new Error("模型服务返回了空响应");
+  try {
+    return JSON.parse(text);
+  } catch {
+    const mediaType = String(contentType || "").split(";", 1)[0].trim() || "unknown";
+    throw new Error(`模型服务返回了无法解析的 JSON（Content-Type: ${mediaType}）`);
+  }
+}
+
+function normalizedResponseLimit(value, fallback) {
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) return fallback;
+  return Math.min(parsed, 128 * 1024 * 1024);
+}
+
+async function readResponseBuffer(response, maxResponseBytes) {
+  const limit = normalizedResponseLimit(maxResponseBytes, 8 * 1024 * 1024);
+  const declaredLength = Number(response.headers.get("content-length") || 0);
+  if (Number.isFinite(declaredLength) && declaredLength > limit) {
+    throw new Error(`Model service response exceeds ${Math.ceil(limit / 1024 / 1024)} MB`);
+  }
+  const reader = response.body?.getReader();
+  if (!reader) return Buffer.alloc(0);
+  const chunks = [];
+  let total = 0;
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > limit) {
+      await reader.cancel().catch(() => undefined);
+      throw new Error(`Model service response exceeds ${Math.ceil(limit / 1024 / 1024)} MB`);
+    }
+    chunks.push(Buffer.from(value));
+  }
+  return Buffer.concat(chunks, total);
+}
+
+async function readResponseText(response, maxResponseBytes) {
+  return (await readResponseBuffer(response, maxResponseBytes)).toString("utf8");
+}
+
+export async function fetchJson(url, { headers, body, signal, maxResponseBytes }) {
   const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...(headers || {}) },
@@ -188,27 +279,55 @@ export async function fetchAsset(url, { headers, body, signal }) {
     signal
   });
   const contentType = response.headers.get("content-type") || "";
+  const raw = await readResponseText(response, maxResponseBytes);
   if (!response.ok) {
-    const errorText = await response.text();
+    if (isHtmlDocument(raw, contentType)) {
+      throw new Error(`模型服务返回 ${response.status} HTML 页面，请检查上游 API 端点配置`);
+    }
+    throw new Error(`模型服务返回 ${response.status}: ${compactText(raw)}`);
+  }
+  return parseProviderJsonText(raw, { contentType, url });
+}
+
+export async function fetchAsset(url, { headers, body, signal, maxResponseBytes = 64 * 1024 * 1024 }) {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(headers || {}) },
+    body: JSON.stringify(body),
+    redirect: "error",
+    signal
+  });
+  const contentType = response.headers.get("content-type") || "";
+  const normalizedContentType = contentType.toLowerCase();
+  if (!response.ok) {
+    const errorText = await readResponseText(response, 1024 * 1024);
     throw new Error(`模型服务返回 ${response.status}: ${compactText(errorText)}`);
   }
-  if (contentType.includes("json")) return response.json();
-  const buffer = Buffer.from(await response.arrayBuffer());
+  if (normalizedContentType.includes("json")) {
+    const raw = await readResponseText(response, maxResponseBytes);
+    return parseProviderJsonText(raw, { contentType, url });
+  }
+  const buffer = await readResponseBuffer(response, maxResponseBytes);
+  const responsePrefix = buffer.subarray(0, 512).toString("utf8");
+  if (isHtmlDocument(responsePrefix, contentType)) {
+    throw new Error(`模型服务返回了 HTML 页面而不是媒体资源（${providerResponseLabel(url)}）`);
+  }
   return {
     dataUrl: `data:${contentType || "application/octet-stream"};base64,${buffer.toString("base64")}`
   };
 }
 
-export async function fetchMultipartJson(url, { headers, fields, file, signal }) {
+export async function fetchMultipartJson(url, { headers, fields, file, signal, maxResponseBytes }) {
   return fetchMultipartForm(url, {
     headers,
     fields,
     files: file ? [file] : [],
-    signal
+    signal,
+    maxResponseBytes
   });
 }
 
-export async function fetchMultipartForm(url, { headers, fields, files, signal }) {
+export async function fetchMultipartForm(url, { headers, fields, files, signal, maxResponseBytes = 64 * 1024 * 1024 }) {
   const form = new FormData();
   Object.entries(fields || {}).forEach(([key, value]) => {
     if (value !== undefined && value !== null) form.append(key, String(value));
@@ -228,13 +347,12 @@ export async function fetchMultipartForm(url, { headers, fields, files, signal }
     redirect: "error",
     signal
   });
-  const raw = await response.text();
+  const raw = await readResponseText(response, maxResponseBytes);
   if (!response.ok) {
     throw new Error(`模型服务返回 ${response.status}: ${compactText(raw)}`);
   }
   const contentType = response.headers.get("content-type") || "";
-  if (!contentType.includes("json")) return { text: raw };
-  return raw ? JSON.parse(raw) : {};
+  return parseProviderJsonText(raw, { contentType, url });
 }
 
 export function extractOpenAICompatibleText(json) {
@@ -255,6 +373,21 @@ export function parseToolArguments(value) {
   } catch {
     return { input: String(value) };
   }
+}
+
+export function parseStrictToolArguments(value) {
+  if (!value) return {};
+  if (typeof value === "object" && !Array.isArray(value)) return value;
+  let parsed;
+  try {
+    parsed = JSON.parse(String(value));
+  } catch {
+    throw new Error("Tool arguments must be valid JSON");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Tool arguments must be a JSON object");
+  }
+  return parsed;
 }
 
 export function stringifyToolOutput(value) {

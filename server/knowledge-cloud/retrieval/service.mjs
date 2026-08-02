@@ -203,7 +203,7 @@ function groupBases(bases) {
 function addConnection(map, key, value) {
   if (!key || !value || typeof value !== "object" || Array.isArray(value)) return;
   const source = value.connection && typeof value.connection === "object" ? value.connection : value;
-  map.set(String(key), { baseUrl: source.baseUrl, apiKey: source.apiKey });
+  map.set(String(key), { apiKey: source.apiKey });
 }
 
 function connectionMap(payload) {
