@@ -4,6 +4,8 @@
 
 审计当前 xi-ai-web 工作区，将当前已经落地的完整项目代码、测试、部署模板和必要文档整理为一个可复现的发布提交，并安全推送到现有 GitHub 远程，方便服务器通过 Docker Compose 拉取部署。
 
+2026-08-05 部署交付范围调整为镜像优先：服务器不克隆源码、不执行本地镜像构建，只下载根目录 `docker-compose.yml` 与 `.env.example`，从 GHCR 拉取预构建镜像后启动。GitHub 仓库负责通过 Actions 持续构建并发布多架构镜像。
+
 本任务的发布基线是当前工作区，而不是仅最近一次提交。当前工作区包含大量已修改文件和未跟踪的功能代码，发布前必须逐项纳入或明确排除，不能用 `git add .` 代替审计。
 
 ## 已确认事实
@@ -25,6 +27,8 @@
 5. 发布前运行类型检查、构建、隐私扫描、UI/功能契约、服务器测试和部署配置校验。
 6. 生成一个描述清晰的发布提交，然后以普通 `git push origin master` 推送；若远程发生分叉或认证失败，停止推送并报告，不覆盖远程历史。
 7. 推送成功后返回 GitHub 仓库地址、发布提交哈希、部署所需环境变量和最短 Docker Compose 部署步骤。
+8. 新增 GitHub Actions 镜像发布流水线，至少覆盖 `linux/amd64` 与 `linux/arm64`，使用仓库 `GITHUB_TOKEN` 写入 GHCR，不在仓库保存 Registry 密码。
+9. 根 Compose 不包含源码 `build`，主应用、知识库迁移和知识库 Worker 必须引用同一版本化 GHCR 镜像；服务器部署路径只需要 Compose 与 `.env`。
 
 ## 部署边界
 
@@ -32,6 +36,7 @@
 - 使用持久卷保存 `/app/data`，通过 1Panel/Nginx 将 HTTPS 请求反代到 `127.0.0.1:8787`。
 - `PROGRESS_SYNC_ENABLED` 默认关闭，必须完成 HTTPS、持久卷和反代请求体限制检查后再开启。
 - 不把公共用户 API Key、管理员密码、Shell JWT 或上游地址写入仓库；管理员密码只在服务器 `.env` 中配置。
+- GHCR 镜像必须设置为 Public 才能匿名拉取；如果保持 Private，服务器必须先使用只带 `read:packages` 权限的 GitHub PAT 登录 GHCR。
 
 ## 验收标准
 
@@ -42,6 +47,8 @@
 - [ ] 发布提交创建成功，工作区在提交后干净，提交哈希可追溯。
 - [ ] `origin/master` 与本地发布提交一致，未使用强制推送。
 - [ ] 新服务器可按部署文档拉取仓库、配置管理员密码、启动容器并通过 `/api/health` 与 `/api/ready` 检查。
+- [ ] 新服务器无需克隆源码，只下载 `docker-compose.yml` 和 `.env.example`，执行 `docker compose pull && docker compose up -d` 即可启动。
+- [ ] GitHub Actions 能发布 `ghcr.io/xiziqiwuyou/xi-ai-web:latest`、提交 SHA 标签和版本标签的多架构镜像。
 
 ## 非目标
 

@@ -14,7 +14,8 @@ Gate: 发布清单完成，敏感内容为零，远程状态没有未处理分�
 - 运行 `npm ci`、`npm run check`、`npm run build`。
 - 运行 `npm run privacy`、`npm run ui-contract`、`npm run feature-audit`、`npm run provider-contracts`。
 - 运行 `npm run test:security`、`npm run test:server`，在依赖可用时补充 `npm run test:e2e`。
-- 用临时环境变量执行 `docker compose -f deploy/app/docker-compose.yml config`，不得把密码写入仓库；检查镜像构建上下文、运行用户、只读根文件系统、持久卷、健康检查和反代配置。
+- 检查 GitHub Actions 的 GHCR 登录、标签、多架构平台、缓存和最小权限；根 Compose 不得存在 `build`，所有 xi-ai-web 运行角色统一引用 `XI_AI_WEB_IMAGE`。
+- 用临时环境变量执行 `docker compose config`，不得把密码写入仓库；检查镜像引用、只读根文件系统、持久卷、健康检查和反代配置。
 - 运行 `git diff --check`，审查构建产物和 staged 文件名列表。
 
 Gate: 质量命令和 Compose 配置通过；任何失败记录原因，不绕过失败继续发布。
@@ -34,7 +35,8 @@ Gate: 提交对象不含禁止内容，提交后工作区只剩明确保留的�
 - 执行 `git push origin master`，禁止强制推送。
 - 核对 `git rev-parse HEAD` 与 `git ls-remote origin refs/heads/master` 一致。
 - 返回仓库地址、提交哈希、是否包含完整功能代码、服务器部署命令和首发环境变量说明。
-- 不直接连接服务器；交付可复制的命令：克隆仓库、复制 `deploy/app/.env.example`、填写 `ADMIN_PASSWORD`、`docker compose up -d --build`、检查 `/api/health` 与 `/api/ready`。
+- 不直接连接服务器；交付可复制的命令：下载根目录 `docker-compose.yml` 与 `.env.example`、填写 `ADMIN_PASSWORD`、`docker compose pull`、`docker compose up -d`、检查 `/api/health` 与 `/api/ready`。
+- 记录 GHCR Package 首次设为 Public 的一次性步骤；Private Package 仅使用最小 `read:packages` PAT，不复用管理员凭据。
 
 ## 验证命令
 
@@ -48,7 +50,7 @@ npm run feature-audit
 npm run provider-contracts
 npm run test:security
 npm run test:server
-docker compose -f deploy/app/docker-compose.yml config
+docker compose config
 git diff --check
 ```
 

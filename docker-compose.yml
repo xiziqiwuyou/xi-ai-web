@@ -1,0 +1,200 @@
+name: xi-ai-web
+
+x-app-security: &app-security
+  init: true
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  pids_limit: 256
+  mem_limit: 1g
+  cpus: 2.0
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=64m
+
+x-app-environment: &app-environment
+  NODE_ENV: production
+  PORT: 8787
+  DATA_DIR: /app/data
+  ADMIN_USERNAME: ${ADMIN_USERNAME:-xizi2333}
+  ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env before starting}
+  ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:-}
+  APP_PASSWORD: ${APP_PASSWORD:-}
+  APP_SESSION_SECRET: ${APP_SESSION_SECRET:-}
+  UPSTREAM_BASE_URL: ${UPSTREAM_BASE_URL:-https://api.xi-ai.cn}
+  ALLOW_ADMIN_UPSTREAM_OVERRIDE: ${ALLOW_ADMIN_UPSTREAM_OVERRIDE:-false}
+  ALLOW_LOCAL_UPSTREAM: ${ALLOW_LOCAL_UPSTREAM:-false}
+  TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-1}
+  UPSTREAM_TIMEOUT_MS: ${UPSTREAM_TIMEOUT_MS:-120000}
+  IMAGE_UPSTREAM_TIMEOUT_MS: ${IMAGE_UPSTREAM_TIMEOUT_MS:-300000}
+  IMAGE_IMPORT_TIMEOUT_MS: ${IMAGE_IMPORT_TIMEOUT_MS:-30000}
+  SSE_HEARTBEAT_MS: ${SSE_HEARTBEAT_MS:-15000}
+  REQUEST_RATE_WINDOW_MS: ${REQUEST_RATE_WINDOW_MS:-60000}
+  REQUEST_RATE_MAX_REQUESTS: ${REQUEST_RATE_MAX_REQUESTS:-120}
+  REQUEST_MAX_CONCURRENT: ${REQUEST_MAX_CONCURRENT:-32}
+  CHAT_RATE_LIMIT_MAX: ${CHAT_RATE_LIMIT_MAX:-30}
+  CHAT_MAX_CONCURRENT: ${CHAT_MAX_CONCURRENT:-8}
+  GENERATION_RATE_LIMIT_MAX: ${GENERATION_RATE_LIMIT_MAX:-20}
+  GENERATION_MAX_CONCURRENT: ${GENERATION_MAX_CONCURRENT:-4}
+  IMAGE_IMPORT_RATE_LIMIT_MAX: ${IMAGE_IMPORT_RATE_LIMIT_MAX:-12}
+  IMAGE_IMPORT_MAX_CONCURRENT: ${IMAGE_IMPORT_MAX_CONCURRENT:-2}
+  IMAGE_TIMING_RATE_LIMIT_MAX: ${IMAGE_TIMING_RATE_LIMIT_MAX:-120}
+  IMAGE_TIMING_MAX_CONCURRENT: ${IMAGE_TIMING_MAX_CONCURRENT:-8}
+  EMBEDDING_RATE_LIMIT_MAX: ${EMBEDDING_RATE_LIMIT_MAX:-20}
+  EMBEDDING_MAX_CONCURRENT: ${EMBEDDING_MAX_CONCURRENT:-4}
+  SHELL_AUTH_RATE_LIMIT_MAX: ${SHELL_AUTH_RATE_LIMIT_MAX:-10}
+  SHELL_AUTH_MAX_CONCURRENT: ${SHELL_AUTH_MAX_CONCURRENT:-2}
+  ADMIN_LOGIN_RATE_LIMIT_MAX: ${ADMIN_LOGIN_RATE_LIMIT_MAX:-5}
+  ADMIN_LOGIN_MAX_CONCURRENT: ${ADMIN_LOGIN_MAX_CONCURRENT:-2}
+  PROGRESS_SYNC_ENABLED: ${PROGRESS_SYNC_ENABLED:-false}
+  PROGRESS_SYNC_TTL_SECONDS: ${PROGRESS_SYNC_TTL_SECONDS:-600}
+  PROGRESS_SYNC_MAX_PAYLOAD_MB: ${PROGRESS_SYNC_MAX_PAYLOAD_MB:-32}
+  PROGRESS_SYNC_MAX_IP_ATTEMPTS: ${PROGRESS_SYNC_MAX_IP_ATTEMPTS:-5}
+  PROGRESS_SYNC_MAX_SESSION_ATTEMPTS: ${PROGRESS_SYNC_MAX_SESSION_ATTEMPTS:-5}
+  PROGRESS_SYNC_RATE_LIMIT_MAX: ${PROGRESS_SYNC_RATE_LIMIT_MAX:-240}
+  PROGRESS_SYNC_MAX_CONCURRENT: ${PROGRESS_SYNC_MAX_CONCURRENT:-16}
+  KNOWLEDGE_ENABLED: ${KNOWLEDGE_ENABLED:-false}
+  KNOWLEDGE_TOKEN_SECRET: ${KNOWLEDGE_TOKEN_SECRET:-}
+  KNOWLEDGE_SESSION_TTL_SECONDS: ${KNOWLEDGE_SESSION_TTL_SECONDS:-1209600}
+  DATABASE_URL: ${DATABASE_URL:-postgresql://xi_ai:change-me@postgres:5432/xi_ai}
+  KNOWLEDGE_MIGRATION_DATABASE_URL: ${KNOWLEDGE_MIGRATION_DATABASE_URL:-}
+  DATABASE_SSL_MODE: ${DATABASE_SSL_MODE:-disable}
+  DATABASE_SSL_CA: ${DATABASE_SSL_CA:-}
+  KNOWLEDGE_DATABASE_CONNECT_TIMEOUT_MS: ${KNOWLEDGE_DATABASE_CONNECT_TIMEOUT_MS:-5000}
+  KNOWLEDGE_DATABASE_POOL_MAX: ${KNOWLEDGE_DATABASE_POOL_MAX:-10}
+  COS_SECRET_ID: ${COS_SECRET_ID:-}
+  COS_SECRET_KEY: ${COS_SECRET_KEY:-}
+  COS_BUCKET: ${COS_BUCKET:-example-1250000000}
+  COS_REGION: ${COS_REGION:-ap-guangzhou}
+  COS_APP_ID: ${COS_APP_ID:-1250000000}
+  KNOWLEDGE_COS_UPLOAD_GRANT_TTL_SECONDS: ${KNOWLEDGE_COS_UPLOAD_GRANT_TTL_SECONDS:-900}
+  KNOWLEDGE_COS_SOURCE_URL_TTL_SECONDS: ${KNOWLEDGE_COS_SOURCE_URL_TTL_SECONDS:-300}
+  KNOWLEDGE_WORKER_CONCURRENCY: ${KNOWLEDGE_WORKER_CONCURRENCY:-2}
+  KNOWLEDGE_WORKER_LEASE_SECONDS: ${KNOWLEDGE_WORKER_LEASE_SECONDS:-60}
+  KNOWLEDGE_EMBEDDING_LEASE_SECONDS: ${KNOWLEDGE_EMBEDDING_LEASE_SECONDS:-120}
+  KNOWLEDGE_EMBEDDING_REQUEST_TIMEOUT_MS: ${KNOWLEDGE_EMBEDDING_REQUEST_TIMEOUT_MS:-60000}
+  PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-http://localhost:8787}
+  LANGFLOW_ENABLED: ${LANGFLOW_ENABLED:-false}
+  LANGFLOW_BASE_URL: ${LANGFLOW_BASE_URL:-http://langflow:7860}
+  LANGFLOW_API_KEY: ${LANGFLOW_API_KEY:-}
+  LANGFLOW_WORKFLOW_PATH: ${LANGFLOW_WORKFLOW_PATH:-/api/v2/workflows}
+  LANGFLOW_REQUEST_TIMEOUT_MS: ${LANGFLOW_REQUEST_TIMEOUT_MS:-120000}
+  LANGFLOW_RATE_LIMIT_WINDOW_MS: ${LANGFLOW_RATE_LIMIT_WINDOW_MS:-60000}
+  LANGFLOW_RATE_LIMIT_MAX_REQUESTS: ${LANGFLOW_RATE_LIMIT_MAX_REQUESTS:-12}
+
+services:
+  xi-ai-web:
+    image: ${XI_AI_WEB_IMAGE:-ghcr.io/xiziqiwuyou/xi-ai-web:latest}
+    pull_policy: always
+    <<: *app-security
+    restart: unless-stopped
+    environment: *app-environment
+    ports:
+      - "${APP_BIND_ADDRESS:-127.0.0.1}:${APP_PORT:-8787}:8787"
+    volumes:
+      - xi-ai-web-data:/app/data
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+        required: false
+    networks:
+      - xi-ai
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8787/api/ready').then((r)=>{if(!r.ok)process.exit(1);return r.json();}).then((j)=>process.exit(j.ready?0:1)).catch(()=>process.exit(1));"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  postgres:
+    image: pgvector/pgvector:0.8.1-pg17
+    profiles:
+      - knowledge
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-xi_ai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-before-enabling-knowledge}
+      POSTGRES_DB: ${POSTGRES_DB:-xi_ai}
+    volumes:
+      - knowledge-postgres:/var/lib/postgresql/data
+    networks:
+      - xi-ai
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U ${POSTGRES_USER:-xi_ai} -d ${POSTGRES_DB:-xi_ai}
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  migrate:
+    image: ${XI_AI_WEB_IMAGE:-ghcr.io/xiziqiwuyou/xi-ai-web:latest}
+    pull_policy: always
+    profiles:
+      - knowledge
+    restart: "no"
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL:-postgresql://xi_ai:change-me@postgres:5432/xi_ai}
+      KNOWLEDGE_MIGRATION_DATABASE_URL: ${KNOWLEDGE_MIGRATION_DATABASE_URL:-}
+      DATABASE_SSL_MODE: ${DATABASE_SSL_MODE:-disable}
+      DATABASE_SSL_CA: ${DATABASE_SSL_CA:-}
+      KNOWLEDGE_DATABASE_CONNECT_TIMEOUT_MS: ${KNOWLEDGE_DATABASE_CONNECT_TIMEOUT_MS:-5000}
+      KNOWLEDGE_DATABASE_POOL_MAX: ${KNOWLEDGE_DATABASE_POOL_MAX:-10}
+    command: ["npm", "run", "knowledge:migrate"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - xi-ai
+
+  knowledge-worker:
+    image: ${XI_AI_WEB_IMAGE:-ghcr.io/xiziqiwuyou/xi-ai-web:latest}
+    pull_policy: always
+    profiles:
+      - knowledge
+    restart: unless-stopped
+    <<: *app-security
+    environment:
+      <<: *app-environment
+      KNOWLEDGE_ENABLED: "true"
+    command: ["npm", "run", "knowledge:worker"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - xi-ai
+
+  langflow:
+    image: ${LANGFLOW_IMAGE:-langflowai/langflow:latest}
+    profiles:
+      - langflow
+    restart: unless-stopped
+    environment:
+      LANGFLOW_HOST: 0.0.0.0
+      LANGFLOW_PORT: 7860
+      LANGFLOW_AUTO_LOGIN: ${LANGFLOW_AUTO_LOGIN:-false}
+      LANGFLOW_SUPERUSER: ${LANGFLOW_SUPERUSER:-admin}
+      LANGFLOW_SUPERUSER_PASSWORD: ${LANGFLOW_SUPERUSER_PASSWORD:-change-me-before-enabling-langflow}
+      LANGFLOW_SECRET_KEY: ${LANGFLOW_SECRET_KEY:-change-me-before-enabling-langflow}
+      LANGFLOW_CONFIG_DIR: /app/.langflow
+    ports:
+      - "127.0.0.1:${LANGFLOW_PORT:-7860}:7860"
+    volumes:
+      - langflow-data:/app/.langflow
+    networks:
+      - xi-ai
+
+volumes:
+  xi-ai-web-data:
+  knowledge-postgres:
+  langflow-data:
+
+networks:
+  xi-ai:
+    name: xi-ai

@@ -76,13 +76,36 @@ the environment variable is explicitly supplied.
 
 Deployment templates:
 
-- Docker Compose: `deploy/app/docker-compose.yml`
-- Compose env sample: `deploy/app/.env.example`
+- Unified Docker Compose: `docker-compose.yml`
+- Unified Compose env sample: `.env.example`
+- Standalone main-app Compose: `deploy/app/docker-compose.yml`
+- Standalone main-app env sample: `deploy/app/.env.example`
 - Nginx reverse proxy: `deploy/app/nginx.conf`
 - systemd unit: `deploy/app/xi-ai-web.service`
 - Optional Langflow runtime: `deploy/langflow/compose.yaml`
 
 ## 4. Start And Health Check
+
+For the unified Docker deployment, download `docker-compose.yml` and
+`.env.example` into an empty server directory, save the example as `.env`,
+replace the operator secrets, and run:
+
+```bash
+docker compose pull
+docker compose up -d
+docker compose ps
+```
+
+Use `docker compose --profile knowledge pull` followed by
+`docker compose --profile knowledge up -d` only after the
+PostgreSQL, COS, and knowledge settings have been filled in. Use
+`docker compose --profile langflow up -d` only after the Langflow credentials
+and private reverse-proxy boundary have been prepared. Do not publish the
+PostgreSQL port.
+
+The GHCR package must be Public for anonymous 1Panel pulls. A private package
+requires a one-time `docker login ghcr.io` using a PAT with `read:packages`
+only. Never put that PAT in `docker-compose.yml` or `.env`.
 
 Start the production server:
 

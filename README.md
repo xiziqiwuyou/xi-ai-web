@@ -106,9 +106,51 @@ docker run -d \
   xi-ai-web
 ```
 
-Production-ready templates are available in [`deploy/app`](deploy/app). See [`deploy/app/README.md`](deploy/app/README.md) for exact usage:
+The unified deployment template is available at [`docker-compose.yml`](docker-compose.yml), with a complete environment sample in [`.env.example`](.env.example). It pulls the prebuilt `ghcr.io/xiziqiwuyou/xi-ai-web:latest` image and keeps optional services behind Compose profiles. The server does not need a source checkout or a local image build:
 
-- [`docker-compose.yml`](deploy/app/docker-compose.yml) for the main no-database app;
+```bash
+mkdir -p /opt/xi-ai-web
+cd /opt/xi-ai-web
+curl -fsSL https://raw.githubusercontent.com/xiziqiwuyou/xi-ai-web/master/docker-compose.yml -o docker-compose.yml
+curl -fsSL https://raw.githubusercontent.com/xiziqiwuyou/xi-ai-web/master/.env.example -o .env
+# Edit .env and replace all change-me values before starting.
+docker compose pull
+docker compose up -d
+docker compose ps
+```
+
+The repository publishes `linux/amd64` and `linux/arm64` images through [`.github/workflows/publish-container.yml`](.github/workflows/publish-container.yml). The workflow publishes `latest` from `master`, immutable `sha-<commit>` tags, and `v*` release tags. After the first successful workflow run, open the GitHub package settings for `xi-ai-web` and set its visibility to **Public** so 1Panel can pull it anonymously. If the package remains private, log in once with a GitHub PAT that has only `read:packages`:
+
+```bash
+echo "$GHCR_READ_TOKEN" | docker login ghcr.io -u xiziqiwuyou --password-stdin
+```
+
+The default command starts only the public xi-ai-web service. Its data is stored in the `xi-ai-web-data` volume. By default the HTTP port binds to `127.0.0.1:8787`, which is suitable for a 1Panel/Nginx reverse proxy. Set `APP_BIND_ADDRESS=0.0.0.0` only when direct host-port access is intentional.
+
+To enable the optional PostgreSQL + pgvector + Tencent COS knowledge subsystem, set `KNOWLEDGE_ENABLED=true`, configure its database/COS values, and start the knowledge profile. The migration must complete before the web container is allowed to become ready:
+
+```bash
+docker compose --profile knowledge pull
+docker compose --profile knowledge up -d
+docker compose ps
+docker compose logs --tail=100 migrate knowledge-worker xi-ai-web
+```
+
+The database has no published host port. The `postgres` service is reachable only as `postgres:5432` on the private Compose network. Keep `PUBLIC_ORIGIN` equal to the public HTTPS origin when knowledge is enabled.
+
+To enable the optional Langflow runtime:
+
+```bash
+docker compose --profile langflow pull
+docker compose --profile langflow up -d
+```
+
+Create a Langflow API key, put it in `LANGFLOW_API_KEY`, set `LANGFLOW_ENABLED=true`, then restart `xi-ai-web`. Langflow binds its editor to `127.0.0.1:7860` and is not publicly exposed by this Compose file. Put it behind a separate authenticated reverse-proxy rule only if the editor is needed remotely.
+
+The previous split templates remain available in [`deploy/app`](deploy/app), [`deploy/knowledge`](deploy/knowledge), and [`deploy/langflow`](deploy/langflow) for operators who need independent stacks. See [`deploy/app/README.md`](deploy/app/README.md) for the standalone main-app usage:
+
+- [`docker-compose.yml`](docker-compose.yml) for the unified profile-based deployment;
+- [`docker-compose.yml`](deploy/app/docker-compose.yml) for the standalone main no-database app;
 - [`.env.example`](deploy/app/.env.example) for container environment values;
 - [`nginx.conf`](deploy/app/nginx.conf) for HTTPS reverse proxying and SSE streaming;
 - [`xi-ai-web.service`](deploy/app/xi-ai-web.service) for non-Docker systemd deployment.
