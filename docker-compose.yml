@@ -85,7 +85,7 @@ x-app-environment: &app-environment
 
 services:
   xi-ai-web:
-    image: ${XI_AI_WEB_IMAGE:-ghcr.io/xiziqiwuyou/xi-ai-web:latest}
+    image: ${XI_AI_WEB_IMAGE:-ghcr.io/xiziqiwuyou/xi-ai-web:v0.0.1}
     pull_policy: always
     <<: *app-security
     restart: unless-stopped
@@ -133,7 +133,7 @@ services:
       retries: 20
 
   migrate:
-    image: ${XI_AI_WEB_IMAGE:-ghcr.io/xiziqiwuyou/xi-ai-web:latest}
+    image: ${XI_AI_WEB_IMAGE:-ghcr.io/xiziqiwuyou/xi-ai-web:v0.0.1}
     pull_policy: always
     profiles:
       - knowledge
@@ -154,7 +154,7 @@ services:
       - xi-ai
 
   knowledge-worker:
-    image: ${XI_AI_WEB_IMAGE:-ghcr.io/xiziqiwuyou/xi-ai-web:latest}
+    image: ${XI_AI_WEB_IMAGE:-ghcr.io/xiziqiwuyou/xi-ai-web:v0.0.1}
     pull_policy: always
     profiles:
       - knowledge

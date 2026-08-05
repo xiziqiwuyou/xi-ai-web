@@ -44,7 +44,7 @@ flowchart TD
 - `127.0.0.1:8787` 仅供反向代理访问，外部通过 HTTPS 暴露。
 - Compose 健康检查访问 `/api/ready`，反代关闭 SSE 缓冲并设置足够的请求体/超时。
 - 主应用、知识库迁移和知识库 Worker 使用同一 `XI_AI_WEB_IMAGE`，避免代码版本漂移。
-- `latest` 跟随 `master`，同时发布 `sha-<commit>` 和 `v*` 版本标签，为生产锁定与回滚提供不可变入口。
+- `latest` 跟随 `master`，同时发布 `sha-<commit>` 和 `v*` 版本标签；生产 Compose 默认固定到 `v0.0.1`，为回滚提供不可变入口。
 - GHCR 默认私有时不宣称可匿名部署；文档必须给出将 Package 设为 Public 的一次性操作和 Private Package 的 PAT 登录替代方案。
 
 ## 回滚

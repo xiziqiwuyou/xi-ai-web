@@ -106,7 +106,7 @@ docker run -d \
   xi-ai-web
 ```
 
-The unified deployment template is available at [`docker-compose.yml`](docker-compose.yml), with a complete environment sample in [`.env.example`](.env.example). It pulls the prebuilt `ghcr.io/xiziqiwuyou/xi-ai-web:latest` image and keeps optional services behind Compose profiles. The server does not need a source checkout or a local image build:
+The unified deployment template is available at [`docker-compose.yml`](docker-compose.yml), with a complete environment sample in [`.env.example`](.env.example). It pulls the pinned prebuilt `ghcr.io/xiziqiwuyou/xi-ai-web:v0.0.1` image and keeps optional services behind Compose profiles. The server does not need a source checkout or a local image build:
 
 ```bash
 mkdir -p /opt/xi-ai-web
