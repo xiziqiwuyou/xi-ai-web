@@ -84,7 +84,14 @@ const upstreamServer = http.createServer(async (req, res) => {
       return;
     }
     if (req.url?.endsWith("/images/generations")) {
-      writeJson(res, { data: [{ b64_json: onePixelPng }] });
+      if (body.prompt === "Complete image batch") {
+        const count = Math.max(1, Math.min(10, Math.trunc(Number(body.n)) || 1));
+        writeJson(res, { data: Array.from({ length: count }, () => ({ b64_json: onePixelPng })) });
+      } else if (body.prompt === "Incomplete image batch" && Number(body.n) === 1) {
+        writeJson(res, { data: [] });
+      } else {
+        writeJson(res, { data: [{ b64_json: onePixelPng }] });
+      }
       return;
     }
 
@@ -241,7 +248,7 @@ try {
   const login = await request("/api/admin/login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ password })
+    body: JSON.stringify({ username: "xizi2333", password })
   });
   assert(login.response.ok, `Admin login failed: ${login.response.status} ${login.text}`);
   const cookie = cookieFrom(login.response);
@@ -322,6 +329,9 @@ try {
     (entry) => entry.enabled !== false && entry.vendor === "openai" && entry.capabilities?.includes("image")
   );
   assert(imageModel?.id, "Release check requires an enabled OpenAI image model");
+  const timingEstimatePath = `/api/image/timing-estimate?modelId=${encodeURIComponent(imageModel.id)}&mode=generate&resolution=1K&aspectRatio=1%3A1&count=2`;
+  const initialTimingEstimate = await getJson(timingEstimatePath);
+  assert(initialTimingEstimate.sampleCount === 0, "Fresh release check must start without image timing samples");
   const imageResult = await getJson("/api/generate/image", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -329,18 +339,64 @@ try {
       modelId: imageModel.id,
       connection: { apiKey: testApiKey, baseUrl: "http://127.0.0.1:9" },
       prompt: "A small red square on a white background",
-      options: { count: 1, quality: "low", outputFormat: "png" }
+      options: { count: 2, quality: "low", outputFormat: "png" }
     })
   });
   assert(imageResult.status === "completed", "Image route did not complete");
   assert(imageResult.assets?.[0]?.url?.startsWith("data:image/png;base64,"), "Image route did not normalize an image asset");
+  assert(imageResult.assets?.length === 2, "Image route did not complete the requested two-image result set");
+  assert(imageResult.raw?.requestedCount === 2 && imageResult.raw?.assetCount === 2, "Image result count metadata is inconsistent");
+  assert(imageResult.raw?.providerRequestCount === 2, "Image result did not report its supplemental Provider request");
+  assert(imageResult.timingEstimate?.sampleCount === 1, "Image response did not return the refreshed global timing estimate");
+  const refreshedTimingEstimate = await getJson(timingEstimatePath);
+  assert(refreshedTimingEstimate.sampleCount === 1, "Successful image generation did not persist one global timing sample");
+  assert(refreshedTimingEstimate.sampleLimit === 10, "Global timing estimate must retain the recent-10 contract");
 
   const chatUpstream = upstreamRequests.find((item) => /\/(?:responses|chat\/completions)$/u.test(item.url || ""));
-  const imageUpstream = upstreamRequests.find((item) => item.url?.endsWith("/images/generations"));
+  const imageUpstreams = upstreamRequests.filter((item) => item.url?.endsWith("/images/generations"));
+  const imageUpstream = imageUpstreams[0];
   assert(chatUpstream, "Chat did not reach the controlled upstream");
   assert(imageUpstream, "Image generation did not reach the controlled upstream");
+  assert(imageUpstreams.length === 2, "Partial image response must trigger one bounded supplemental request");
+  assert(imageUpstreams[0].body?.n === 2, "Initial image request must preserve the requested count");
+  assert(imageUpstreams[1].body?.n === 1, "Supplemental image request must ask for one missing image");
   assert(chatUpstream.authorization === `Bearer ${testApiKey}`, "Chat did not forward the BYOK authorization header");
   assert(imageUpstream.authorization === `Bearer ${testApiKey}`, "Image did not forward the BYOK authorization header");
+
+  const completeBatchOffset = upstreamRequests.length;
+  const completeBatch = await getJson("/api/generate/image", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      modelId: imageModel.id,
+      connection: { apiKey: testApiKey },
+      prompt: "Complete image batch",
+      options: { count: 2, quality: "low", outputFormat: "png" }
+    })
+  });
+  const completeBatchRequests = upstreamRequests
+    .slice(completeBatchOffset)
+    .filter((item) => item.url?.endsWith("/images/generations"));
+  assert(completeBatch.assets?.length === 2, "Complete upstream batch did not retain both images");
+  assert(completeBatch.raw?.providerRequestCount === 1, "Complete upstream batch must not trigger a supplemental request");
+  assert(completeBatchRequests.length === 1 && completeBatchRequests[0].body?.n === 2, "Complete upstream batch must make one n=2 request");
+
+  const incompleteBatchOffset = upstreamRequests.length;
+  const incompleteBatch = await request("/api/generate/image", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      modelId: imageModel.id,
+      connection: { apiKey: testApiKey },
+      prompt: "Incomplete image batch",
+      options: { count: 2, quality: "low", outputFormat: "png" }
+    })
+  });
+  const incompleteBatchRequests = upstreamRequests
+    .slice(incompleteBatchOffset)
+    .filter((item) => item.url?.endsWith("/images/generations"));
+  assert(incompleteBatch.response.status === 502, "Incomplete bounded image batch must not be reported as completed");
+  assert(incompleteBatchRequests.length === 2, "Incomplete image batch must stop after one bounded supplemental request");
 
   const listGone = await request("/api/conversations");
   const detailGone = await request("/api/conversations/release-check");
@@ -351,6 +407,42 @@ try {
     const retired = await request(retiredRoute);
     assert(retired.response.status === 404, `${retiredRoute} must remain removed`);
   }
+
+  const wrongUsername = await request("/api/admin/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: "wrong-operator", password })
+  });
+  const wrongPassword = await request("/api/admin/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: "xizi2333", password: "wrong-admin-password" })
+  });
+  assert(wrongUsername.response.status === 401 && wrongPassword.response.status === 401, "Invalid Admin credentials must return 401");
+  assert(wrongUsername.text === wrongPassword.text, "Admin login must not reveal which credential was incorrect");
+
+  const rotatedUsername = "release-operator";
+  const rotatedPassword = "release-rotated-admin-password";
+  const rotation = await getJson("/api/admin/credentials", {
+    method: "PATCH",
+    headers: { Cookie: cookie, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      currentPassword: password,
+      username: rotatedUsername,
+      password: rotatedPassword
+    })
+  });
+  assert(rotation.reauthenticationRequired === true && rotation.username === rotatedUsername, "Admin credential rotation did not require a new login");
+  const staleSession = await request("/api/admin/ops", { headers: { Cookie: cookie } });
+  assert(staleSession.response.status === 401, "Credential rotation must invalidate existing Admin sessions");
+  const rotatedLogin = await request("/api/admin/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: rotatedUsername, password: rotatedPassword })
+  });
+  assert(rotatedLogin.response.ok, "Rotated Admin credentials must support a fresh login");
+  const persistedCredentials = fs.readFileSync(path.join(dataDir, "admin-credentials.json"), "utf8");
+  assert(!persistedCredentials.includes(password) && !persistedCredentials.includes(rotatedPassword), "Admin credential file must not contain plaintext passwords");
 
   console.log(`Release check passed for ${baseUrl}`);
 } catch (error) {

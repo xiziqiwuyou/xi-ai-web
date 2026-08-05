@@ -161,6 +161,13 @@ export async function waitForWorkspaceWrites() {
   await workspaceWriteQueue;
 }
 
+export async function readWorkspaceRevision(): Promise<number> {
+  const record = await getWorkspaceRecord("meta", "workspaceRevision");
+  const revision = Number(record?.value);
+  if (!Number.isSafeInteger(revision) || revision < 0) return 0;
+  return Math.min(revision, Number.MAX_SAFE_INTEGER);
+}
+
 function incrementRevision(tx: IDBTransaction) {
   const meta = tx.objectStore("meta");
   const request = meta.get("workspaceRevision");

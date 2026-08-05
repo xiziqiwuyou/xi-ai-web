@@ -4,7 +4,11 @@ import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
-import { normalizeOptimizedImagePrompt } from "./image-prompt.mjs";
+import {
+  imagePromptOptimizationMessages,
+  normalizeOptimizedImagePrompt
+} from "./image-prompt.mjs";
+import { importPublicImageAsset } from "./public-image-import.mjs";
 import { retrieveContext, formatRetrievedContext } from "./knowledge/retrieval.mjs";
 import { createProviderAdapter } from "./providers/registry.mjs";
 import {
@@ -69,6 +73,7 @@ import {
   normalizeUpstreamBaseUrl
 } from "./upstream-security.mjs";
 import { createRequestGuard } from "./request-guard.mjs";
+import { createProgressSyncRouter, createProgressSyncService } from "./progress-sync.mjs";
 import { exchangeShellJwt, ShellJwtExchangeError } from "./shell-jwt-exchange.mjs";
 import {
   defaultAppPresets,
@@ -77,8 +82,34 @@ import {
   defaultPromptPresets,
   defaultSettings
 } from "./data/defaults.mjs";
+import {
+  migrateAssistants,
+  normalizeAssistantAvatar,
+  normalizeAssistants,
+  normalizeAssistantTextList
+} from "./data/assistant-catalog.mjs";
 import { createMetadataWriteQueue } from "./metadata-write-queue.mjs";
+import { createAdminCredentialStore } from "./admin-credentials.mjs";
 import { createModelUsageStore, trackModelUsageResponse } from "./model-usage.mjs";
+import {
+  createImageGenerationTimingStore,
+  normalizeImageTimingKey
+} from "./image-generation-timing.mjs";
+import {
+  parsePptDeckModelOutput,
+  pptDeckToMarkdown,
+  pptGenerationMessages
+} from "./ppt-deck.mjs";
+import {
+  findMindmapNode,
+  mergeMindmapExpansion,
+  mindmapDocumentToMarkdown,
+  mindmapGenerationMessages,
+  normalizeMindmapDocument,
+  normalizeMindmapGenerationOptions,
+  parseMindmapExpansionOutput,
+  parseMindmapModelOutput
+} from "./mindmap-document.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -93,16 +124,33 @@ const dataFile = path.join(dataDir, "app-data.json");
 const metadataDegradedFile = path.join(dataDir, ".metadata-degraded.json");
 const backupDir = path.join(dataDir, "backups");
 const auditFile = path.join(dataDir, "admin-audit.jsonl");
+const adminCredentialFile = path.join(dataDir, "admin-credentials.json");
 const modelUsageStore = createModelUsageStore({ filePath: path.join(dataDir, "model-usage.jsonl") });
-const adminPassword = process.env.ADMIN_PASSWORD || process.env.APP_PASSWORD || "";
+const imageGenerationTimingStore = createImageGenerationTimingStore({
+  filePath: path.join(dataDir, "image-generation-timing.jsonl")
+});
+const progressSyncTtlSeconds = Math.max(
+  180,
+  Math.min(1800, Number(process.env.PROGRESS_SYNC_TTL_SECONDS || 600) || 600)
+);
+const progressSyncMaxPayloadMb = Math.max(
+  5,
+  Math.min(64, Number(process.env.PROGRESS_SYNC_MAX_PAYLOAD_MB || 32) || 32)
+);
+const progressSyncService = createProgressSyncService({
+  dataDir,
+  ttlMs: progressSyncTtlSeconds * 1000,
+  maxPayloadBytes: progressSyncMaxPayloadMb * 1024 * 1024,
+  maxIpJoinAttempts: Math.max(1, Math.min(20, Number(process.env.PROGRESS_SYNC_MAX_IP_ATTEMPTS || 5) || 5)),
+  maxSessionJoinAttempts: Math.max(1, Math.min(10, Number(process.env.PROGRESS_SYNC_MAX_SESSION_ATTEMPTS || 5) || 5))
+});
+await progressSyncService.ready;
+const adminCredentialStore = createAdminCredentialStore({
+  filePath: adminCredentialFile,
+  username: process.env.ADMIN_USERNAME || "xizi2333",
+  password: process.env.ADMIN_PASSWORD || process.env.APP_PASSWORD || ""
+});
 const explicitAdminSessionSecret = process.env.ADMIN_SESSION_SECRET || process.env.APP_SESSION_SECRET || "";
-const derivedAdminSessionSecret = adminPassword
-  ? crypto.createHmac("sha256", adminPassword).update("xi-ai-web/admin-session/v1").digest()
-  : "";
-const adminSessionSecret =
-  explicitAdminSessionSecret ||
-  derivedAdminSessionSecret ||
-  "dev-only-admin-session-secret";
 const MAX_API_KEY_CHARS = 4_096;
 const MAX_CHAT_IMAGE_BYTES = 4 * 1024 * 1024;
 const MAX_CHAT_IMAGE_TOTAL_BYTES = 24 * 1024 * 1024;
@@ -145,7 +193,7 @@ function normalizeCatalogRequestModelAliases(modelCatalog) {
 
 function createDefaultData() {
   return {
-    version: 12,
+    version: 13,
     settings: defaultSettings(),
     menuItems: defaultMenuItems(),
     modelVendors: defaultModelVendors(),
@@ -182,6 +230,18 @@ function normalizeSettings(dataSettings) {
     : fallback.defaultModule;
 
   const requestedUpstream = source.upstreamBaseUrl || fallback.upstreamBaseUrl;
+  const progressSyncSource = source.progressSync && typeof source.progressSync === "object"
+    ? source.progressSync
+    : {};
+  const progressSync = {
+    enabled: typeof progressSyncSource.enabled === "boolean"
+      ? progressSyncSource.enabled
+      : fallback.progressSync.enabled,
+    ttlSeconds: Math.max(180, Math.min(1800, Math.trunc(Number(progressSyncSource.ttlSeconds) || fallback.progressSync.ttlSeconds))),
+    maxPayloadMb: Math.max(5, Math.min(64, Math.trunc(Number(progressSyncSource.maxPayloadMb) || fallback.progressSync.maxPayloadMb))),
+    maxIpJoinAttempts: Math.max(1, Math.min(20, Math.trunc(Number(progressSyncSource.maxIpJoinAttempts) || fallback.progressSync.maxIpJoinAttempts))),
+    maxSessionJoinAttempts: Math.max(1, Math.min(10, Math.trunc(Number(progressSyncSource.maxSessionJoinAttempts) || fallback.progressSync.maxSessionJoinAttempts)))
+  };
   return {
     theme: "rednote",
     siteName: String(source.siteName || fallback.siteName).trim(),
@@ -189,69 +249,9 @@ function normalizeSettings(dataSettings) {
     defaultModule,
     upstreamBaseUrl: upstreamPolicy.locked
       ? upstreamPolicy.configuredBaseUrl || fallback.upstreamBaseUrl
-      : normalizeUpstreamBaseUrl(requestedUpstream)
+      : normalizeUpstreamBaseUrl(requestedUpstream),
+    progressSync
   };
-}
-
-function normalizeAssistantTextList(value, fallback, splitPattern, limit, maxLength) {
-  const source = Array.isArray(value)
-    ? value
-    : typeof value === "string"
-      ? value.split(splitPattern)
-      : Array.isArray(fallback)
-        ? fallback
-        : [];
-  return [...new Set(source
-    .map((item) => String(item || "").trim().slice(0, maxLength))
-    .filter(Boolean))]
-    .slice(0, limit);
-}
-
-function normalizeAssistant(assistant, fallback) {
-  const source = assistant && typeof assistant === "object" ? assistant : {};
-  const fallbackSource = fallback && typeof fallback === "object" ? fallback : {};
-  const nowStamp = now();
-  return {
-    id: String(source.id || fallbackSource.id || crypto.randomUUID()).trim().slice(0, 140),
-    name: String(source.name || fallbackSource.name || "").trim().slice(0, 160),
-    description: String(source.description || fallbackSource.description || "").trim().slice(0, 1000),
-    category: String(source.category || fallbackSource.category || "通用效率").trim().slice(0, 80) || "通用效率",
-    tags: normalizeAssistantTextList(source.tags, fallbackSource.tags, /[,，\r\n]+/, 12, 80),
-    starterPrompts: normalizeAssistantTextList(source.starterPrompts, fallbackSource.starterPrompts, /[\r\n]+/, 8, 400),
-    color: String(source.color || fallbackSource.color || "#ff2442").trim().slice(0, 32),
-    systemPrompt: String(source.systemPrompt || fallbackSource.systemPrompt || "").trim().slice(0, 24000),
-    enabled: typeof source.enabled === "boolean" ? source.enabled : fallbackSource.enabled !== false,
-    createdAt: source.createdAt || fallbackSource.createdAt || nowStamp,
-    updatedAt: source.updatedAt || fallbackSource.updatedAt || nowStamp
-  };
-}
-
-function normalizeAssistants(dataAssistants, fallbackAssistants = defaultAssistants()) {
-  const list = Array.isArray(dataAssistants) && dataAssistants.length ? dataAssistants : fallbackAssistants;
-  const normalized = list.map((assistant, index) => {
-    const matchingFallback = fallbackAssistants.find((fallback) =>
-      (assistant?.id && fallback.id === assistant.id) ||
-      (assistant?.name && fallback.name === assistant.name)
-    );
-    const positionalFallback = list === fallbackAssistants ? fallbackAssistants[index] : undefined;
-    return normalizeAssistant(assistant, matchingFallback || positionalFallback || {});
-  }).filter((assistant) => assistant.id && assistant.name && assistant.systemPrompt);
-  return normalized.length
-    ? normalized
-    : fallbackAssistants.map((assistant) => normalizeAssistant(assistant, assistant));
-}
-
-function migrateAssistants(assistants, version) {
-  if (Number(version || 0) >= 7) return assistants;
-  const defaults = defaultAssistants();
-  const existingIds = new Set(assistants.map((assistant) => assistant.id));
-  const existingNames = new Set(assistants.map((assistant) => assistant.name));
-  const missingDefaults = defaults.filter((assistant) =>
-    !existingIds.has(assistant.id) && !existingNames.has(assistant.name)
-  );
-  return missingDefaults.length
-    ? normalizeAssistants([...assistants, ...missingDefaults], defaults)
-    : assistants;
 }
 
 function normalizeAppPreset(preset, fallback = {}) {
@@ -364,10 +364,7 @@ function normalizeData(raw) {
     ? normalizeModelVendors(data.modelVendors, [])
     : defaultModelVendors();
   const registry = reconcileModelRegistry(declaredVendors, migratedCatalog, fallback.modelCatalog);
-  const assistants = migrateAssistants(
-    normalizeAssistants(data.assistants, fallback.assistants),
-    data.version
-  );
+  const assistants = migrateAssistants(data.assistants, data.version, fallback.assistants);
 
   return {
     version: fallback.version,
@@ -548,7 +545,9 @@ function dataDirectoryWritable() {
 function buildReadinessPayload() {
   const enabledModels = db.modelCatalog.filter((entry) => entry.enabled !== false);
   const checks = {
-    adminConfigured: !isProduction || adminPassword.length >= 16,
+    adminConfigured:
+      !isProduction ||
+      (adminCredentialStore.configured && adminCredentialStore.passwordPolicySatisfied),
     metadata: metadataState.state === "ready",
     upstream: upstreamState.state === "ready",
     dataWritable: dataDirectoryWritable(),
@@ -572,16 +571,18 @@ function buildAdminOpsPayload() {
     {
       id: "admin-password",
       label: "管理员密码已配置",
-      ok: Boolean(adminPassword),
-      detail: adminPassword ? "后台需要管理员凭据访问。" : "生产环境请设置 ADMIN_PASSWORD。"
+      ok: adminCredentialStore.configured,
+      detail: adminCredentialStore.configured
+        ? `后台需要管理员用户名和密码访问（${adminCredentialStore.source}）。`
+        : "请设置 ADMIN_USERNAME 和 ADMIN_PASSWORD。"
     },
     {
       id: "session-secret",
       label: "会话密钥已独立配置",
-      ok: Boolean(explicitAdminSessionSecret || derivedAdminSessionSecret),
+      ok: Boolean(explicitAdminSessionSecret || adminCredentialStore.configured),
       detail: explicitAdminSessionSecret
         ? "ADMIN_SESSION_SECRET is configured."
-        : "The session signing key is domain-separated from ADMIN_PASSWORD."
+        : "The session signing key is domain-separated from the active Admin credential hash."
     },
     {
       id: "production-mode",
@@ -682,6 +683,7 @@ function loadData() {
 }
 
 let db = loadData();
+progressSyncService.updateConfig(db.settings.progressSync);
 let upstreamState = { state: "ready", reason: null };
 
 try {
@@ -716,6 +718,16 @@ const requestGuards = {
     maxRequests: Number(process.env.GENERATION_RATE_LIMIT_MAX || 20),
     maxConcurrent: Number(process.env.GENERATION_MAX_CONCURRENT || 4)
   }),
+  imageImport: createRequestGuard({
+    scope: "image-import",
+    maxRequests: Number(process.env.IMAGE_IMPORT_RATE_LIMIT_MAX || 12),
+    maxConcurrent: Number(process.env.IMAGE_IMPORT_MAX_CONCURRENT || 2)
+  }),
+  imageTiming: createRequestGuard({
+    scope: "image-timing",
+    maxRequests: Number(process.env.IMAGE_TIMING_RATE_LIMIT_MAX || 120),
+    maxConcurrent: Number(process.env.IMAGE_TIMING_MAX_CONCURRENT || 8)
+  }),
   embedding: createRequestGuard({
     scope: "embedding",
     maxRequests: Number(process.env.EMBEDDING_RATE_LIMIT_MAX || 20),
@@ -730,8 +742,42 @@ const requestGuards = {
     scope: "admin-login",
     maxRequests: Number(process.env.ADMIN_LOGIN_RATE_LIMIT_MAX || 5),
     maxConcurrent: Number(process.env.ADMIN_LOGIN_MAX_CONCURRENT || 2)
+  }),
+  progressSync: createRequestGuard({
+    scope: "progress-sync",
+    maxRequests: Number(process.env.PROGRESS_SYNC_RATE_LIMIT_MAX || 240),
+    maxConcurrent: Number(process.env.PROGRESS_SYNC_MAX_CONCURRENT || 16)
   })
 };
+
+app.get("/api/progress-sync/status", (req, res) => {
+  res.setHeader("Cache-Control", "no-store, max-age=0");
+  const config = progressSyncService.getConfig();
+  res.json({
+    enabled: db.settings.progressSync.enabled,
+    ttlSeconds: config.ttlSeconds,
+    maxPayloadBytes: config.maxPayloadBytes
+  });
+});
+
+app.use("/api/progress-sync", (req, res, next) => {
+  res.setHeader("Cache-Control", "no-store, max-age=0");
+  next();
+});
+app.use("/api/progress-sync/sessions", requestGuards.progressSync);
+app.use("/api/progress-sync", (req, res, next) => {
+  if (!db.settings.progressSync.enabled) {
+    res.setHeader("Cache-Control", "no-store, max-age=0");
+    return res.status(503).json({
+      error: {
+        code: "PROGRESS_SYNC_DISABLED",
+        message: "服务器暂未启用跨设备临时同步"
+      }
+    });
+  }
+  return next();
+});
+app.use("/api/progress-sync", createProgressSyncRouter({ service: progressSyncService }));
 
 app.use(
   "/api/workflows",
@@ -752,6 +798,8 @@ app.use(
 app.use("/api/chat/stream", requestGuards.chat);
 app.use("/api/chat/title", requestGuards.chat);
 app.use("/api/image/optimize-prompt", requestGuards.generation);
+app.use("/api/image/import", requestGuards.imageImport);
+app.use("/api/image/timing-estimate", requestGuards.imageTiming);
 app.use("/api/agents/run", requestGuards.chat);
 app.use("/api/audio/transcribe", requestGuards.generation);
 app.use("/api/retrieval/embed", requestGuards.embedding);
@@ -771,6 +819,7 @@ app.use("/api/chat/stream", express.json({ limit: "36mb", strict: true }));
 app.use("/api/chat/title", express.json({ limit: "256kb", strict: true }));
 app.use("/api/agents/run", express.json({ limit: "2mb", strict: true }));
 app.use("/api/image/optimize-prompt", express.json({ limit: "256kb", strict: true }));
+app.use("/api/image/import", express.json({ limit: "16kb", strict: true }));
 app.use("/api/audio/transcribe", express.json({ limit: "36mb", strict: true }));
 app.use("/api/retrieval/embed", express.json({ limit: "512kb", strict: true }));
 app.use("/api/media/video/status", express.json({ limit: "1mb", strict: true }));
@@ -824,13 +873,16 @@ function parseCookies(header = "") {
 }
 
 function signAdmin(value) {
-  return crypto.createHmac("sha256", adminSessionSecret).update(value).digest("base64url");
+  const derivedSecret = adminCredentialStore.sessionSecret();
+  const secret = explicitAdminSessionSecret || (derivedSecret.length ? derivedSecret : "dev-only-admin-session-secret");
+  return crypto.createHmac("sha256", secret).update(value).digest("base64url");
 }
 
 function createAdminSessionCookie() {
   const payload = Buffer.from(
     JSON.stringify({
       role: "admin",
+      revision: adminCredentialStore.revision,
       expiresAt: Date.now() + 1000 * 60 * 60 * 24 * 14
     })
   ).toString("base64url");
@@ -849,39 +901,36 @@ function isValidAdminSession(token = "") {
 
   try {
     const session = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
-    return session.role === "admin" && session.expiresAt > Date.now();
+    return (
+      session.role === "admin" &&
+      session.revision === adminCredentialStore.revision &&
+      session.expiresAt > Date.now()
+    );
   } catch {
     return false;
   }
 }
 
 function hasAdminAuth(req) {
-  if (!isProduction && !adminPassword) return true;
-  if (!adminPassword) return false;
+  if (!adminCredentialStore.configured) return false;
   const cookies = parseCookies(req.headers.cookie || "");
   return isValidAdminSession(cookies.cw_admin_session);
 }
 
-function compareAdminPassword(input) {
-  const left = crypto.createHash("sha256").update(String(input || "")).digest();
-  const right = crypto.createHash("sha256").update(adminPassword).digest();
-  return crypto.timingSafeEqual(left, right);
-}
-
 function requireAdmin(req, res, next) {
-  if (isProduction && !adminPassword) {
-    return res.status(503).json({ error: "管理员密码未配置，后台已锁定" });
+  if (!adminCredentialStore.configured) {
+    return res.status(503).json({ error: "管理员凭据未配置，后台已锁定" });
   }
   if (hasAdminAuth(req)) return next();
   return res.status(401).json({ error: "需要管理员登录" });
 }
 
 function requireKnowledgeAdmin(req, _res, next) {
-  if (isProduction && !adminPassword) {
+  if (!adminCredentialStore.configured) {
     return next(
       new KnowledgeError(
         KNOWLEDGE_ERROR_CODES.ADMIN_UNAVAILABLE,
-        "管理员密码未配置，知识库后台已锁定",
+        "管理员凭据未配置，知识库后台已锁定",
         { status: 503 }
       )
     );
@@ -943,15 +992,20 @@ function assertModuleAllowed(id) {
   if (!isModuleEnabled(id)) throw httpError(403, "当前功能未开放");
 }
 
-function getAssistant(id) {
+function getAssistant(id, { allowEmpty = false } = {}) {
   if (id) {
     const exact = db.assistants.find((assistant) => assistant.id === id && assistant.enabled !== false);
     if (!exact) throw httpError(410, "助手已停用或不存在");
     return exact;
   }
+  if (allowEmpty) return null;
   const fallback = db.assistants.find((assistant) => assistant.enabled !== false);
   if (!fallback) throw httpError(503, "当前没有可用助手");
   return fallback;
+}
+
+function getOptionalAssistant(id) {
+  return getAssistant(id, { allowEmpty: true });
 }
 
 function getConversation(id) {
@@ -1056,11 +1110,11 @@ function sortConversations(conversations) {
 
 function createConversation({ title, assistantId }) {
   const createdAt = now();
-  const assistant = getAssistant(assistantId);
+  const assistant = getOptionalAssistant(assistantId);
   const conversation = {
     id: crypto.randomUUID(),
     title: String(title || "新对话").trim() || "新对话",
-    assistantId: assistant.id,
+    assistantId: assistant?.id || "",
     pinned: false,
     messages: [],
     createdAt,
@@ -1116,7 +1170,7 @@ function requestConversationFromBody(body, assistant, content, entry) {
   return {
     id: compact(summary.id || crypto.randomUUID(), 140),
     title: compact(summary.title || makeTitle(content), 120),
-    assistantId: assistant.id,
+    assistantId: assistant?.id || "",
     pinned: Boolean(summary.pinned),
     messages: sanitizeRequestMessages(body?.history, modelInputCharacterLimit(entry)),
     createdAt,
@@ -1146,7 +1200,7 @@ function buildPromptMessages(
     });
 
   const trustedContext = boundedText([
-    assistant.systemPrompt,
+    assistant?.systemPrompt,
     ...skillInstructions.map((instruction, index) => `Skill ${index + 1}:\n${instruction}`)
   ].filter(Boolean).join("\n\n"), 48000);
   const systemContext = composeCloudKnowledgeSystemContext({
@@ -1154,7 +1208,7 @@ function buildPromptMessages(
     knowledge: cloudKnowledge,
     trailingContext: boundedText(searchContext, 24000)
   });
-  return [{ role: "system", content: systemContext }, ...history];
+  return systemContext ? [{ role: "system", content: systemContext }, ...history] : history;
 }
 
 function writeSse(res, event, payload) {
@@ -1858,6 +1912,7 @@ function assistantFromBody(body, existing) {
   const category = String(body.category ?? existing?.category ?? "通用效率").trim().slice(0, 80) || "通用效率";
   const tags = normalizeAssistantTextList(body.tags, existing?.tags, /[,，\r\n]+/, 12, 80);
   const starterPrompts = normalizeAssistantTextList(body.starterPrompts, existing?.starterPrompts, /[\r\n]+/, 8, 400);
+  const avatar = normalizeAssistantAvatar(body.avatar, existing?.avatar);
   const systemPrompt = String(body.systemPrompt ?? existing?.systemPrompt ?? "").trim().slice(0, 24000);
   const color = String(body.color ?? existing?.color ?? "#ff2442").trim().slice(0, 32);
   const enabled = typeof body.enabled === "boolean" ? body.enabled : existing?.enabled !== false;
@@ -1872,6 +1927,7 @@ function assistantFromBody(body, existing) {
     category,
     tags,
     starterPrompts,
+    avatar,
     color,
     systemPrompt,
     enabled,
@@ -1960,7 +2016,7 @@ app.get("/api/health", (req, res) => {
   res.json({
     ok: true,
     version: "0.3.0",
-    adminConfigured: Boolean(adminPassword),
+    adminConfigured: adminCredentialStore.configured,
     knowledge: publicKnowledgeRuntimeStatus(knowledgeRuntime),
     langflow: publicLangflowStatus(langflowConfig)
   });
@@ -2009,19 +2065,18 @@ app.post("/api/public/shell-token/exchange", asyncRoute(async (req, res) => {
 
 app.get("/api/admin/status", (req, res) => {
   res.json({
-    authRequired: Boolean(adminPassword) || isProduction,
+    authRequired: true,
     authenticated: hasAdminAuth(req),
-    adminConfigured: Boolean(adminPassword)
+    adminConfigured: adminCredentialStore.configured
   });
 });
 
 app.post("/api/admin/login", (req, res) => {
-  if (!isProduction && !adminPassword) return res.json({ ok: true });
-  if (!adminPassword) {
-    return res.status(503).json({ error: "管理员密码未配置，后台已锁定" });
+  if (!adminCredentialStore.configured) {
+    return res.status(503).json({ error: "管理员凭据未配置，后台已锁定" });
   }
-  if (!compareAdminPassword(req.body?.password)) {
-    return res.status(401).json({ error: "管理员密码不正确" });
+  if (!adminCredentialStore.verify(req.body?.username, req.body?.password)) {
+    return res.status(401).json({ error: "管理员用户名或密码不正确" });
   }
   setAdminCookie(req, res, createAdminSessionCookie());
   res.json({ ok: true });
@@ -2038,6 +2093,7 @@ adminRouter.use(createMetadataWriteQueue());
 
 adminRouter.get("/bootstrap", (req, res) => {
   res.json({
+    adminUsername: adminCredentialStore.username,
     settings: db.settings,
     menuItems: adminMenuItems(),
     modelVendors: db.modelVendors,
@@ -2049,6 +2105,41 @@ adminRouter.get("/bootstrap", (req, res) => {
     langflowWorkflows: db.langflowWorkflows,
     toolSettings: normalizeToolSettings(db.toolSettings)
   });
+});
+
+adminRouter.patch("/credentials", (req, res) => {
+  try {
+    const previousUsername = adminCredentialStore.username;
+    const result = adminCredentialStore.rotate({
+      currentPassword: req.body?.currentPassword,
+      username: req.body?.username,
+      password: req.body?.password
+    });
+    try {
+      appendAudit("admin-credentials-update", {
+        usernameChanged: result.username !== previousUsername,
+        passwordChanged: Boolean(req.body?.password)
+      });
+    } catch (error) {
+      console.error("Unable to append the Admin credential rotation audit record", error);
+    }
+    clearAdminCookie(res);
+    res.json({
+      ok: true,
+      username: result.username,
+      reauthenticationRequired: true
+    });
+  } catch (error) {
+    if (String(error?.code || "").startsWith("ADMIN_")) {
+      return res.status(error.status || 400).json({
+        error: {
+          code: error.code,
+          message: error.message
+        }
+      });
+    }
+    throw error;
+  }
 });
 
 adminRouter.patch("/settings", asyncRoute(async (req, res) => {
@@ -2083,8 +2174,13 @@ adminRouter.patch("/settings", asyncRoute(async (req, res) => {
     throw httpError(400, "生产环境的上游 API 域名必须使用 HTTPS");
   }
   nextSettings.upstreamBaseUrl = parsedUpstream;
+  nextSettings.progressSync = normalizeSettings({
+    ...db.settings,
+    progressSync: nextSettings.progressSync
+  }).progressSync;
   delete nextSettings.adminEntryEnabled;
   db.settings = nextSettings;
+  progressSyncService.updateConfig(db.settings.progressSync);
   if (knowledgeRuntime?.upstreamRef) knowledgeRuntime.upstreamRef.current = db.settings.upstreamBaseUrl;
   saveData();
   appendAudit("settings-update", { siteName: db.settings.siteName, allowGuestChat: db.settings.allowGuestChat });
@@ -2492,6 +2588,7 @@ adminRouter.patch("/metadata-import", asyncRoute(async (req, res) => {
   db.promptPresets = nextData.promptPresets;
   db.langflowWorkflows = nextData.langflowWorkflows;
   db.toolSettings = nextData.toolSettings;
+  progressSyncService.updateConfig(db.settings.progressSync);
   if (knowledgeRuntime?.upstreamRef) knowledgeRuntime.upstreamRef.current = db.settings.upstreamBaseUrl;
   saveData();
   clearMetadataDegraded();
@@ -2525,6 +2622,7 @@ adminRouter.post("/backups/:name/restore", asyncRoute(async (req, res) => {
   }
   const preRestoreBackup = backupCurrentData("pre-restore");
   db = restored;
+  progressSyncService.updateConfig(db.settings.progressSync);
   if (knowledgeRuntime?.upstreamRef) knowledgeRuntime.upstreamRef.current = db.settings.upstreamBaseUrl;
   saveData();
   clearMetadataDegraded();
@@ -2576,6 +2674,20 @@ app.delete("/api/conversations/:id", (req, res) => {
   publicConversationGone(req, res);
 });
 
+app.get("/api/image/timing-estimate", (req, res) => {
+  assertModuleAllowed("image");
+  const entry = resolveCatalogEntry({ modelId: req.query.modelId }, "image");
+  const key = normalizeImageTimingKey({
+    modelId: entry.id,
+    mode: req.query.mode,
+    resolution: req.query.resolution,
+    aspectRatio: req.query.aspectRatio,
+    count: req.query.count
+  });
+  res.setHeader("Cache-Control", "no-store, max-age=0");
+  res.json(imageGenerationTimingStore.estimate(key));
+});
+
 app.post(
   "/api/chat/title",
   asyncRoute(async (req, res) => {
@@ -2616,6 +2728,30 @@ app.post(
 );
 
 app.post(
+  "/api/image/import",
+  asyncRoute(async (req, res) => {
+    assertModuleAllowed("image");
+    const sourceUrl = String(req.body?.url || "").trim();
+    if (!sourceUrl) throw httpError(400, "缺少远程图片地址");
+    try {
+      const asset = await importPublicImageAsset(sourceUrl, {
+        maxBytes: MAX_IMAGE_EDIT_UPLOAD_BYTES,
+        timeoutMs: Number(process.env.IMAGE_IMPORT_TIMEOUT_MS || 30_000)
+      });
+      res.setHeader("Cache-Control", "no-store, max-age=0");
+      return res.json(asset);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "远程图片读取失败";
+      if (/invalid|HTTPS|credential|restricted|私网|限制|地址/u.test(message)) {
+        throw httpError(400, message);
+      }
+      if (/超过允许大小/u.test(message)) throw httpError(413, message);
+      throw httpError(502, message);
+    }
+  })
+);
+
+app.post(
   "/api/image/optimize-prompt",
   asyncRoute(async (req, res) => {
     assertModuleAllowed("image");
@@ -2629,15 +2765,9 @@ app.post(
       const optimized = await requestChatCompletion({
         provider,
         model: entry.model,
-        messages: [
-          {
-            role: "system",
-            content: "你是图像提示词优化器。保留用户意图，补充主体、环境、构图、光线、材质和输出约束。只返回一段可直接用于文生图或图像编辑的中文提示词，不要解释，不要加引号。"
-          },
-          { role: "user", content: prompt }
-        ],
-        temperature: 0.35,
-        maxTokens: 1000,
+        messages: imagePromptOptimizationMessages(prompt),
+        temperature: 0.3,
+        maxTokens: 1200,
         tools: [],
         hostedTools: [],
         signal: controller.signal
@@ -2662,7 +2792,7 @@ app.post(
     const { connection, entry, provider } = resolveRuntimeProvider(req.body || {}, "chat");
     const inputLimit = assertModelInputCharacters(entry, [content], "Chat message");
     const displayContent = boundedText(displaySource, inputLimit);
-    const assistant = getAssistant(req.body?.assistantId);
+    const assistant = getOptionalAssistant(req.body?.assistantId);
     const model = entry.model;
     const attachments = sanitizeChatAttachments(req.body?.attachments, entry);
     const skillInstructions = chatSkillInstructionsFromBody(req.body?.skillInstructions);
@@ -3176,7 +3306,21 @@ app.post(
         const outputCompression = Number.isFinite(Number(options.outputCompression))
           ? Math.max(0, Math.min(100, Math.trunc(Number(options.outputCompression))))
           : undefined;
-        const json = await createProviderAdapter(provider).generateImage({
+        const timingKey = normalizeImageTimingKey({
+          modelId: entry.id,
+          mode,
+          resolution: imageSize,
+          aspectRatio,
+          count: requestedCount
+        });
+        const imageGenerationStartedAt = Date.now();
+        const fallbackMimeType = outputFormat === "jpeg"
+          ? "image/jpeg"
+          : outputFormat === "webp"
+            ? "image/webp"
+            : "image/png";
+        const imageAdapter = createProviderAdapter(provider);
+        const requestImageBatch = (batchCount) => imageAdapter.generateImage({
           model,
           prompt,
           mode,
@@ -3187,33 +3331,53 @@ app.post(
           size: options.size || "1024x1024",
           aspectRatio,
           imageSize,
-          count: requestedCount,
+          count: batchCount,
           quality: options.quality,
           outputFormat,
           outputCompression,
           background: options.background,
           signal: controller.signal
         });
-        const fallbackMimeType = outputFormat === "jpeg"
-          ? "image/jpeg"
-          : outputFormat === "webp"
-            ? "image/webp"
-            : "image/png";
-        const assets = extractAssets(json, "image", fallbackMimeType).slice(0, requestedCount);
+        const providerResponses = [await requestImageBatch(requestedCount)];
+        const assets = extractAssets(providerResponses[0], "image", fallbackMimeType).slice(0, requestedCount);
         if (!assets.length) throw httpError(502, "Image provider returned no usable image assets");
-        const revisedPrompts = Array.isArray(json?.data)
-          ? json.data.map((item) => item?.revised_prompt).filter(Boolean)
-          : [];
+        while (assets.length < requestedCount && providerResponses.length < requestedCount) {
+          const supplementalResponse = await requestImageBatch(1);
+          providerResponses.push(supplementalResponse);
+          const missingCount = requestedCount - assets.length;
+          const supplementalAssets = extractAssets(supplementalResponse, "image", fallbackMimeType)
+            .slice(0, missingCount);
+          if (!supplementalAssets.length) break;
+          assets.push(...supplementalAssets);
+        }
+        if (assets.length < requestedCount) {
+          throw httpError(502, `Image provider returned only ${assets.length} of ${requestedCount} requested images`);
+        }
+        const json = providerResponses[0];
+        const revisedPrompts = providerResponses.flatMap((response) => (
+          Array.isArray(response?.data)
+            ? response.data.map((item) => item?.revised_prompt).filter(Boolean)
+            : []
+        ));
+        imageGenerationTimingStore.record({
+          ...timingKey,
+          status: "completed",
+          durationMs: Date.now() - imageGenerationStartedAt,
+          createdAt: now()
+        });
+        const timingEstimate = imageGenerationTimingStore.estimate(timingKey);
         return res.json(
           resultPayload("image", "画图结果", {
             assets,
             text: json.text || json.revised_prompt || revisedPrompts.join("\n"),
+            timingEstimate,
             raw: {
               provider: entry.vendor,
               model,
               mode,
               requestedCount,
-              assetCount: assets.length
+              assetCount: assets.length,
+              providerRequestCount: providerResponses.length
             }
           })
         );
@@ -3273,28 +3437,100 @@ app.post(
         );
       }
 
-      if (module === "ppt" || module === "mindmap" || module === "translate") {
+      if (module === "ppt") {
         trackModelInvocation(res, entry, module);
-        const systemPrompt =
-          module === "ppt"
-            ? [
-                "你是专业的演示文稿策划助手。",
-                "根据用户主题生成可直接用于制作 PPT 的结构化内容。",
-                "输出 Markdown，必须包含：标题、受众、核心观点、8-10 页幻灯片大纲、每页标题、要点、讲述备注。",
-                "内容要具体、可执行，不要写成泛泛的目录。"
-              ].join("\n")
-            : module === "mindmap"
-              ? [
-                  "你是专业的信息架构和思维导图助手。",
-                  "根据用户主题生成层级清晰的思维导图内容。",
-                  "输出 Markdown，先给出 Mermaid mindmap 代码块，再给出简短的层级说明。",
-                  "节点名称要短，层级不超过 4 层，避免无意义空话。"
-                ].join("\n")
-              : [
-                  "你是专业翻译助手。",
-                  "识别原文语言，并翻译为用户指定的目标语言；未指定目标语言时，默认翻译为简体中文。",
-                  "保留原文格式、专有名词、数字和代码，只输出译文，不添加解释。"
-                ].join("\n");
+        const messages = pptGenerationMessages(prompt, options.ppt);
+        const content = await requestChatCompletion({
+          provider,
+          model,
+          temperature: Number.isFinite(Number(options.temperature))
+            ? Number(options.temperature)
+            : 0.4,
+          topP: Number.isFinite(Number(options.topP)) ? Number(options.topP) : undefined,
+          maxTokens: Number.isFinite(Number(options.maxTokens))
+            ? Math.max(1, Math.trunc(Number(options.maxTokens)))
+            : undefined,
+          messages,
+          signal: controller.signal
+        });
+        const fallbackTitle = prompt.split(/\r?\n/u)[0].trim() || "AI 演示文稿";
+        const deck = parsePptDeckModelOutput(content, options.ppt, fallbackTitle);
+        return res.json(
+          resultPayload("ppt", "PPT 演示文稿", {
+            text: deck ? pptDeckToMarkdown(deck) : content,
+            deck: deck || undefined,
+            raw: { format: deck ? "ppt-deck-v1" : "markdown-fallback" }
+          })
+        );
+      }
+
+      if (module === "mindmap") {
+        trackModelInvocation(res, entry, module);
+        assertModelInputCharacters(entry, [prompt], "Mind map source");
+        const mindmapOptions = normalizeMindmapGenerationOptions(options.mindmap);
+        const currentDocument = options.mindmap?.currentDocument
+          ? normalizeMindmapDocument(options.mindmap.currentDocument, {
+              maxDepth: 5,
+              preserveIds: true
+            }, prompt.split(/\r?\n/u)[0])
+          : null;
+        if (mindmapOptions.operation !== "generate" && !currentDocument) {
+          throw httpError(400, "请先生成思维导图后再执行 AI 操作");
+        }
+        if (
+          mindmapOptions.operation === "expand"
+          && !findMindmapNode(currentDocument?.root, mindmapOptions.targetNodeId)
+        ) {
+          throw httpError(400, "请选择需要扩展的有效节点");
+        }
+        const messages = mindmapGenerationMessages(prompt, {
+          ...(options.mindmap || {}),
+          currentDocument
+        });
+        const content = await requestChatCompletion({
+          provider,
+          model,
+          temperature: Number.isFinite(Number(options.temperature))
+            ? Number(options.temperature)
+            : 0.4,
+          topP: Number.isFinite(Number(options.topP)) ? Number(options.topP) : undefined,
+          maxTokens: Number.isFinite(Number(options.maxTokens))
+            ? Math.max(1, Math.trunc(Number(options.maxTokens)))
+            : undefined,
+          messages,
+          signal: controller.signal
+        });
+        const fallbackTitle = prompt.split(/\r?\n/u)[0].trim().slice(0, 120) || "思维导图";
+        let mindmap;
+        if (mindmapOptions.operation === "expand") {
+          const targetNode = findMindmapNode(currentDocument.root, mindmapOptions.targetNodeId);
+          const expansion = parseMindmapExpansionOutput(content, mindmapOptions, targetNode?.label || fallbackTitle);
+          if (!expansion) throw httpError(502, "模型未返回可用的扩展节点");
+          mindmap = mergeMindmapExpansion(
+            currentDocument,
+            mindmapOptions.targetNodeId,
+            expansion,
+            mindmapOptions
+          );
+        } else {
+          mindmap = parseMindmapModelOutput(content, mindmapOptions, fallbackTitle);
+        }
+        if (!mindmap) throw httpError(502, "模型未返回可用的思维导图结构");
+        return res.json(
+          resultPayload("mindmap", "思维导图", {
+            text: mindmapDocumentToMarkdown(mindmap),
+            mindmap,
+            raw: {
+              format: "mindmap-document-v1",
+              operation: mindmapOptions.operation,
+              presetId: mindmapOptions.presetId
+            }
+          })
+        );
+      }
+
+      if (module === "translate") {
+        trackModelInvocation(res, entry, module);
         const content = await requestChatCompletion({
           provider,
           model,
@@ -3308,17 +3544,17 @@ app.post(
           messages: [
             {
               role: "system",
-              content: systemPrompt
+              content: [
+                "你是专业翻译助手。",
+                "识别原文语言，并翻译为用户指定的目标语言；未指定目标语言时，默认翻译为简体中文。",
+                "保留原文格式、专有名词、数字和代码，只输出译文，不添加解释。"
+              ].join("\n")
             },
             { role: "user", content: prompt }
           ],
           signal: controller.signal
         });
-        return res.json(
-          resultPayload(module, module === "ppt" ? "PPT 大纲" : module === "mindmap" ? "思维导图" : "翻译结果", {
-            text: content
-          })
-        );
+        return res.json(resultPayload("translate", "翻译结果", { text: content }));
       }
 
       if (module === "agents") {
@@ -3488,11 +3724,8 @@ app.use((error, req, res, next) => {
 httpServer.listen(port, "0.0.0.0", () => {
   const mode = isProduction ? "production" : "development";
   console.log(`xi-ai-web listening on http://localhost:${port} (${mode})`);
-  if (!isProduction && !adminPassword) {
-    console.log("ADMIN_PASSWORD is not set; admin APIs are unlocked for local development.");
-  }
-  if (isProduction && !adminPassword) {
-    console.log("ADMIN_PASSWORD is not set; admin APIs are locked in production.");
+  if (!adminCredentialStore.configured) {
+    console.log("ADMIN_PASSWORD is not set; admin APIs are locked.");
   }
 });
 
@@ -3504,7 +3737,10 @@ async function shutdown(signal) {
   const forceExit = setTimeout(() => process.exit(1), 10_000);
   forceExit.unref();
   httpServer.close(async () => {
-    await knowledgeRuntime.close().catch((error) => console.error(error));
+    await Promise.all([
+      knowledgeRuntime.close().catch((error) => console.error(error)),
+      progressSyncService?.close().catch((error) => console.error(error))
+    ]);
     clearTimeout(forceExit);
     process.exit(0);
   });

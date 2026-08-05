@@ -16,11 +16,14 @@ curl http://127.0.0.1:8787/api/health
 curl http://127.0.0.1:8787/api/ready
 ```
 
-Before starting, set the only required value in `.env`:
+Before starting, review these Admin credentials in `.env`:
 
-- `ADMIN_PASSWORD`: strong password for the private `/admin` entry.
+- `ADMIN_USERNAME`: bootstrap username, default `xizi2333`.
+- `ADMIN_PASSWORD`: strong password for the private `/xizi2333` entry.
 
 The Compose file fixes the upstream gateway at `https://api.xi-ai.cn`, disables optional cloud knowledge and Langflow services, and binds the container to `127.0.0.1:8787` for a 1Panel or Nginx reverse proxy.
+
+Cross-device temporary sync is also disabled on first production boot. After HTTPS is active, open `/xizi2333` and enable it under site settings. The default authorization-code lifetime is 10 minutes and the default encrypted payload limit is 32 MB. Opaque temporary files use the existing `/app/data/progress-sync` volume and are removed after claim, cancellation, rejection, or expiry. Restarting the service invalidates active codes.
 
 The public browser sends only each user's API Key. The server uses `UPSTREAM_BASE_URL` for provider requests. Do not put a public user's API Key, shell token, or provider URL in `.env`.
 
@@ -31,6 +34,7 @@ Create a website or reverse proxy in 1Panel with:
 - Upstream address: `http://127.0.0.1:8787`
 - WebSocket: enabled
 - Streaming responses: buffering disabled when the panel exposes this option
+- Request body limit: at least 68 MB when the Admin encrypted-payload limit may reach 64 MB
 
 Point the DNS record to the server and enable HTTPS. The minimal Compose file does not require a public-origin variable.
 
@@ -65,6 +69,6 @@ After start:
 
 - `/api/health` returns `"ok": true`;
 - `/api/ready` returns `"ready": true`;
-- `/admin` requires the configured admin password;
+- `/xizi2333` requires the configured Admin username and password;
 - `/chat` opens the BYOK dialog in a fresh browser session;
 - admin metadata export does not contain public BYOK API Keys.

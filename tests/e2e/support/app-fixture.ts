@@ -24,6 +24,7 @@ import type {
   KnowledgeRetrievalRequest,
   AdminLangflowWorkflow,
   LangflowWorkflow,
+  MindmapDocument,
   ModelCatalogEntry,
   ModelVendorEntry,
   ProviderKind,
@@ -143,7 +144,7 @@ export const publicDestinations = [
   { id: "image", path: "/image", label: "\u56fe\u50cf\u751f\u6210", heading: "\u56fe\u50cf\u751f\u6210" },
   { id: "agents", path: "/agents", label: "\u667a\u80fd\u4f53", heading: "\u8ba9\u667a\u80fd\u4f53\uff0c\u771f\u6b63\u5f00\u59cb\u5de5\u4f5c\u3002" },
   { id: "workflows", path: "/workflows", label: "\u5de5\u4f5c\u6d41", heading: "\u5de5\u4f5c\u6d41" },
-  { id: "ppt", path: "/ppt", label: "AI \u4e00\u952e PPT", heading: "\u4e00\u53e5\u4e3b\u9898\uff0c\u4e00\u4efd\u597d PPT\u3002" },
+  { id: "ppt", path: "/ppt", label: "AI \u4e00\u952e PPT", heading: "AI \u4e00\u952e PPT" },
   { id: "mindmap", path: "/mindmap", label: "\u601d\u7ef4\u5bfc\u56fe", heading: "\u628a\u6a21\u7cca\u60f3\u6cd5\uff0c\u53d8\u6210\u6e05\u6670\u8def\u5f84\u3002" },
   { id: "assistants", path: "/assistants", label: "\u52a9\u624b\u5e93", heading: "\u7ed9\u4efb\u52a1\u627e\u4e00\u4f4d \u771f\u6b63\u61c2\u884c\u7684\u4f19\u4f34\u3002" },
   { id: "translate", path: "/translate", label: "\u7ffb\u8bd1", heading: "\u4e0d\u53ea\u662f\u7ffb\u8bd1\uff0c\u66f4\u50cf\u6bcd\u8bed\u8868\u8fbe\u3002" }
@@ -155,7 +156,14 @@ export const publicBootstrapFixture: PublicBootstrapPayload = {
     theme: "rednote",
     allowGuestChat: true,
     defaultModule: "chat",
-    upstreamBaseUrl: "https://api.xi-ai.cn"
+    upstreamBaseUrl: "https://api.xi-ai.cn",
+    progressSync: {
+      enabled: true,
+      ttlSeconds: 600,
+      maxPayloadMb: 32,
+      maxIpJoinAttempts: 5,
+      maxSessionJoinAttempts: 5
+    }
   },
   menuItems: publicDestinations.map((destination, index) => ({
     id: destination.id,
@@ -348,6 +356,7 @@ export const publicBootstrapFixture: PublicBootstrapPayload = {
       category: "通用效率",
       tags: ["战略", "拆解"],
       starterPrompts: ["帮我把一个模糊目标拆成行动计划", "评估这个方案的关键风险"],
+      avatar: "sparkles",
       color: "#ff2442",
       systemPrompt: "Answer briefly.",
       enabled: true,
@@ -361,6 +370,7 @@ export const publicBootstrapFixture: PublicBootstrapPayload = {
       category: "内容创作",
       tags: ["写作", "润色"],
       starterPrompts: ["把这段草稿改成一篇清晰的文章"],
+      avatar: "pen-line",
       color: "#2368e8",
       systemPrompt: "Improve the writing.",
       enabled: true,
@@ -374,6 +384,7 @@ export const publicBootstrapFixture: PublicBootstrapPayload = {
       category: "商业办公",
       tags: ["产品", "需求"],
       starterPrompts: ["把这个想法整理成产品需求", "帮我设计一轮用户访谈"],
+      avatar: "panels-top-left",
       color: "#168f5b",
       systemPrompt: "Think like a product lead.",
       enabled: true,
@@ -387,6 +398,7 @@ export const publicBootstrapFixture: PublicBootstrapPayload = {
       category: "学习研究",
       tags: ["数据", "洞察"],
       starterPrompts: ["解释这组指标背后的变化"],
+      avatar: "chart-no-axes-combined",
       color: "#a96800",
       systemPrompt: "Analyze the supplied data.",
       enabled: true,
@@ -400,6 +412,7 @@ export const publicBootstrapFixture: PublicBootstrapPayload = {
       category: "通用效率",
       tags: ["效率", "执行"],
       starterPrompts: ["把今天的任务排出优先级"],
+      avatar: "list-checks",
       color: "#7b61ff",
       systemPrompt: "Create an efficient action plan.",
       enabled: true,
@@ -413,6 +426,7 @@ export const publicBootstrapFixture: PublicBootstrapPayload = {
       category: "编程开发",
       tags: ["代码", "调试"],
       starterPrompts: ["审查这段代码并指出高风险问题"],
+      avatar: "code-2",
       color: "#3f6ccf",
       systemPrompt: "Review code rigorously.",
       enabled: true,
@@ -426,6 +440,7 @@ export const publicBootstrapFixture: PublicBootstrapPayload = {
       category: "生活创意",
       tags: ["创意", "灵感"],
       starterPrompts: ["给这个主题设计三个不同创意方向"],
+      avatar: "palette",
       color: "#c34f8c",
       systemPrompt: "Develop original, practical concepts.",
       enabled: true,
@@ -511,6 +526,7 @@ const modelVendorFixtures: ModelVendorEntry[] = [
 ];
 
 const adminBootstrapFixture: AdminBootstrapPayload = {
+  adminUsername: "xizi2333",
   settings: publicBootstrapFixture.settings,
   menuItems: publicBootstrapFixture.menuItems,
   modelVendors: modelVendorFixtures,
@@ -823,9 +839,12 @@ type ApiHarness = {
     moduleId: "image" | "ppt" | "mindmap" | "translate";
     payload: GenerationPayload;
   }>;
+  imageTimingEstimateRequests: Array<Record<string, string>>;
   modelCatalogMutations: ModelCatalogMutation[];
   modelVendorMutations: ModelVendorMutation[];
   setBootstrap: (payload: PublicBootstrapPayload) => void;
+  setImageAssetUrls: (urls: string[] | null) => void;
+  setGenerationDelayMs: (delayMs: number) => void;
   setAdminBootstrap: (payload: AdminBootstrapPayload) => void;
   setAdminBootstrapModelVendors: (modelVendors: ModelVendorEntry[] | undefined) => void;
   setAdminStatus: (status: AdminStatus) => void;
@@ -864,7 +883,10 @@ export const test = base.extend<BrowserFixtures>({
       let knowledgeSession: KnowledgeAuthResponse = { authenticated: false };
       let knowledgeBases = structuredClone(readyKnowledgeBases);
       let knowledgeRetrievalError: { code: string; message: string; status?: number } | null = null;
+      let imageAssetUrls: string[] | null = null;
+      let generationDelayMs = 0;
       const generationRequests: ApiHarness["generationRequests"] = [];
+      const imageTimingEstimateRequests: ApiHarness["imageTimingEstimateRequests"] = [];
       const modelCatalogMutations: ModelCatalogMutation[] = [];
       const modelVendorMutations: ModelVendorMutation[] = [];
 
@@ -887,6 +909,22 @@ export const test = base.extend<BrowserFixtures>({
 
         if (request.method() === "GET" && pathname === "/api/public/bootstrap") {
           await route.fulfill({ json: bootstrap });
+          return;
+        }
+
+        if (request.method() === "GET" && pathname === "/api/image/timing-estimate") {
+          const searchParams = new URL(request.url()).searchParams;
+          imageTimingEstimateRequests.push(Object.fromEntries(searchParams.entries()));
+          await route.fulfill({
+            json: {
+              estimatedMs: 29_000,
+              sampleCount: 10,
+              sampleLimit: 10,
+              source: "global",
+              scope: "exact",
+              updatedAt: "2026-08-02T12:00:00.000Z"
+            }
+          });
           return;
         }
 
@@ -1046,6 +1084,25 @@ export const test = base.extend<BrowserFixtures>({
             json: adminModelVendorsOverride === null
               ? adminBootstrap
               : { ...adminBootstrap, modelVendors: adminModelVendorsOverride }
+          });
+          return;
+        }
+
+        if (request.method() === "PATCH" && pathname === "/api/admin/credentials") {
+          const payload = request.postDataJSON() as {
+            currentPassword?: string;
+            username?: string;
+            password?: string;
+          };
+          const username = String(payload.username || "").trim();
+          if (!payload.currentPassword || !username) {
+            await route.fulfill({ status: 400, json: { error: "管理员凭据无效" } });
+            return;
+          }
+          adminBootstrap = { ...adminBootstrap, adminUsername: username };
+          adminStatus = { authRequired: true, authenticated: false, adminConfigured: true };
+          await route.fulfill({
+            json: { ok: true, username, reauthenticationRequired: true }
           });
           return;
         }
@@ -1641,27 +1698,135 @@ export const test = base.extend<BrowserFixtures>({
           const requestedAssetCount = moduleId === "image"
             ? Math.max(1, Math.min(4, Math.trunc(Number(payload.options?.count) || 1)))
             : 0;
+          const requestedPptSlideCount = moduleId === "ppt"
+            ? Math.max(4, Math.min(20, Math.trunc(Number(payload.options?.ppt?.slideCount) || 8)))
+            : 0;
+          const mindmapOperation = payload.options?.mindmap?.operation || "generate";
+          const mindmapFixture: MindmapDocument | undefined = moduleId === "mindmap"
+            ? structuredClone(payload.options?.mindmap?.currentDocument || {
+                version: 1,
+                title: payload.prompt || "Deterministic map",
+                summary: "Structured mind map fixture",
+                root: {
+                  id: "root",
+                  label: payload.prompt || "Deterministic map",
+                  children: [
+                    {
+                      id: "branch-one",
+                      label: "目标与价值",
+                      children: [{ id: "detail-one", label: "成功标准", children: [] }]
+                    },
+                    {
+                      id: "branch-two",
+                      label: "行动路径",
+                      children: [{ id: "detail-two", label: "下一步", children: [] }]
+                    },
+                    {
+                      id: "branch-three",
+                      label: "风险与验证",
+                      children: []
+                    }
+                  ]
+                }
+              } satisfies MindmapDocument)
+            : undefined;
+          if (mindmapFixture && mindmapOperation === "expand") {
+            const findNode = (node: MindmapDocument["root"]): MindmapDocument["root"] | null => {
+              if (node.id === payload.options?.mindmap?.targetNodeId) return node;
+              for (const child of node.children) {
+                const match = findNode(child);
+                if (match) return match;
+              }
+              return null;
+            };
+            findNode(mindmapFixture.root)?.children.push({
+              id: "expanded-evidence",
+              label: "AI 新增节点",
+              note: "只更新选中分支",
+              children: []
+            });
+          }
+          if (mindmapFixture && mindmapOperation === "reorganize") {
+            mindmapFixture.root.children.reverse();
+            mindmapFixture.summary = "AI 已按逻辑重新组织";
+          }
+          const pptFixtureLayoutCycle = ["quote", "two-column", "data", "timeline", "section", "content"] as const;
           const result: GenerationResult = {
             id: `e2e-${moduleId}-result`,
             module: moduleId,
             title: `Deterministic ${moduleId} result`,
             status: "completed",
             text: moduleId === "mindmap"
-              ? "# Deterministic map\n## Branch one\n### Detail"
+              ? `# ${mindmapFixture?.root.label || "Deterministic map"}\n${mindmapFixture?.root.children.map((child) => `## ${child.label}`).join("\n") || ""}`
               : moduleId === "translate"
                 ? "Deterministic translated result."
                 : moduleId === "ppt"
                   ? "# Deterministic deck\n\n## Slide 1"
                   : undefined,
+            deck: moduleId === "ppt"
+              ? {
+                  version: 1,
+                  title: payload.prompt || "Deterministic deck",
+                  subtitle: "Structured preview fixture",
+                  summary: "A deterministic browser-rendered presentation",
+                  themeId: payload.options?.ppt?.themeId || "red-note",
+                  aspectRatio: "16:9",
+                  slides: Array.from({ length: requestedPptSlideCount }, (_, index) => {
+                    const type = index === 0
+                      ? "cover" as const
+                      : index === requestedPptSlideCount - 1
+                        ? "summary" as const
+                        : pptFixtureLayoutCycle[(index - 1) % pptFixtureLayoutCycle.length];
+                    const bullets = type === "cover" || type === "section"
+                      ? []
+                      : type === "quote"
+                        ? ["让复杂信息更快转化为清晰行动"]
+                        : type === "data"
+                          ? ["增长率 24%", "满意度 92%", "交付周期 -18%"]
+                          : type === "timeline"
+                            ? ["洞察问题", "验证方案", "规模落地", "持续优化"]
+                            : [`要点 ${index + 1}-1`, `要点 ${index + 1}-2`, `要点 ${index + 1}-3`];
+                    return {
+                      id: `fixture-slide-${index + 1}`,
+                      type,
+                      title: index === 0 ? payload.prompt : `第 ${index + 1} 页内容`,
+                      subtitle: type === "cover"
+                        ? "Structured preview fixture"
+                        : type === "section"
+                          ? "从关键事实进入下一章节"
+                          : undefined,
+                      bullets,
+                      leftContent: type === "two-column" ? ["当前体验", "主要问题"] : undefined,
+                      rightContent: type === "two-column" ? ["目标体验", "改进结果"] : undefined,
+                      speakerNotes: index > 0 ? `第 ${index + 1} 页演讲备注` : undefined
+                    };
+                  })
+                }
+              : undefined,
+            mindmap: mindmapFixture,
             assets: moduleId === "image"
               ? Array.from({ length: requestedAssetCount }, (_, index) => ({
                   type: "image" as const,
-                  url: `/assets/figma/inspiration-01.jpg?asset=${index + 1}`,
+                  url: imageAssetUrls?.[index % imageAssetUrls.length]
+                    || `/assets/figma/inspiration-01.jpg?asset=${index + 1}`,
                   label: `Generated image ${index + 1}`
                 }))
               : undefined,
+            timingEstimate: moduleId === "image"
+              ? {
+                  estimatedMs: 32_000,
+                  sampleCount: 10,
+                  sampleLimit: 10,
+                  source: "global",
+                  scope: "exact",
+                  updatedAt: "2026-08-02T12:01:00.000Z"
+                }
+              : undefined,
             createdAt: "2026-01-01T00:00:00.000Z"
           };
+          if (generationDelayMs > 0) {
+            await new Promise((resolve) => setTimeout(resolve, generationDelayMs));
+          }
           await route.fulfill({ json: result });
           return;
         }
@@ -1685,10 +1850,17 @@ export const test = base.extend<BrowserFixtures>({
         langflowRequests,
         knowledgeRetrievalRequests,
         generationRequests,
+        imageTimingEstimateRequests,
         modelCatalogMutations,
         modelVendorMutations,
         setBootstrap(nextPayload) {
           bootstrap = cloneBootstrap(nextPayload);
+        },
+        setImageAssetUrls(urls) {
+          imageAssetUrls = urls?.length ? [...urls] : null;
+        },
+        setGenerationDelayMs(delayMs) {
+          generationDelayMs = Math.max(0, Math.min(5_000, Math.trunc(delayMs)));
         },
         setAdminBootstrap(nextPayload) {
           adminBootstrap = structuredClone(nextPayload);

@@ -22,6 +22,7 @@ import {
 import {
   getAllWorkspaceRecords,
   putWorkspaceRecord,
+  readWorkspaceRevision,
   readWorkspaceSnapshot,
   replaceAllWorkspaceRecords,
   replaceWorkspaceSnapshot,
@@ -193,6 +194,29 @@ export async function exportWorkspaceArchive() {
   return createWorkspaceExportBlob(await readWorkspaceSnapshot());
 }
 
+export type StableWorkspaceCapture = {
+  envelope: WorkspaceExportEnvelope;
+  revision: number;
+};
+
+export async function captureStableWorkspaceArchive(maxAttempts = 2): Promise<StableWorkspaceCapture> {
+  await initializeWorkspace();
+  const attempts = Math.max(1, Math.min(3, Math.trunc(maxAttempts)));
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    await waitForWorkspaceWrites();
+    const revisionBefore = await readWorkspaceRevision();
+    const snapshot = await readWorkspaceSnapshot();
+    const envelope = await createWorkspaceExportBlob(snapshot).then((result) => result.envelope);
+    const revisionAfter = await readWorkspaceRevision();
+    if (revisionBefore === revisionAfter) {
+      return { envelope, revision: revisionAfter };
+    }
+  }
+
+  throw new Error("工作区在捕获期间发生了变化，请停止编辑后重试。");
+}
+
 function syncThemeMirror(snapshot: WorkspaceSnapshot) {
   const theme = snapshot.preferences.find((item) => item.key === "theme")?.value;
   if (!theme || typeof window === "undefined") return;
@@ -205,20 +229,26 @@ function syncThemeMirror(snapshot: WorkspaceSnapshot) {
 
 export async function restoreWorkspaceArchive(
   envelope: WorkspaceExportEnvelope,
-  mode: "merge" | "replace"
+  mode: "merge" | "replace",
+  expectedRevision?: number
 ) {
   await initializeWorkspace();
   suspendWorkspaceWrites();
   try {
     await waitForWorkspaceWrites();
+    if (expectedRevision !== undefined) {
+      const currentRevision = await readWorkspaceRevision();
+      if (currentRevision !== expectedRevision) {
+        throw new Error("本机工作区在预览后发生了变化，请重新获取同步内容后再恢复。");
+      }
+    }
     const incoming = sanitizeWorkspaceSnapshot(envelope.workspace, true);
     const snapshot = mode === "merge"
       ? mergeWorkspaceSnapshots(await readWorkspaceSnapshot(), incoming)
       : incoming;
     await replaceWorkspaceSnapshot(snapshot);
     syncThemeMirror(snapshot);
-  } catch (error) {
+  } finally {
     resumeWorkspaceWrites();
-    throw error;
   }
 }

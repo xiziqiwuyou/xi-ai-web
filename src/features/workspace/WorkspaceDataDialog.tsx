@@ -15,10 +15,7 @@ import {
   X
 } from "lucide-react";
 import { ConfirmationDialog, Dialog } from "../../components/ui";
-import type {
-  WorkspaceDataCounts,
-  WorkspaceExportEnvelope
-} from "../../types";
+import type { WorkspaceDataCounts, WorkspaceExportEnvelope } from "../../types";
 import { previewWorkspaceImport } from "./workspaceArchive";
 import {
   exportWorkspaceArchive,
@@ -82,7 +79,11 @@ function CountsGrid({ counts }: { counts: WorkspaceDataCounts }) {
   );
 }
 
-function WorkspaceDataDialog({ open, initialError = "", onClose }: WorkspaceDataDialogProps) {
+function WorkspaceDataDialog({
+  open,
+  initialError = "",
+  onClose
+}: WorkspaceDataDialogProps) {
   const titleId = useId();
   const descriptionId = useId();
   const closeButtonRef = useRef<HTMLButtonElement>(null);
@@ -356,6 +357,7 @@ function WorkspaceDataDialog({ open, initialError = "", onClose }: WorkspaceData
         }}
         onConfirm={() => void restoreArchive()}
       />
+
     </>
   );
 }

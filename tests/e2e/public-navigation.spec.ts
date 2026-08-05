@@ -3,6 +3,7 @@ import {
   isMobileProject,
   navigationAction,
   openMobileNavigation,
+  publicBootstrapFixture,
   publicDestinations,
   seedReadyProvider,
   test,
@@ -34,6 +35,29 @@ test("public root resolves to the Chat workspace", async ({ page }) => {
   await page.goto("/");
   await expect(page).toHaveURL(/\/chat$/);
   await expect(page).toHaveTitle("AI \u5bf9\u8bdd - xi-ai-web");
+});
+
+test("admin-managed menu labels appear in public navigation and document titles", async ({ page, apiHarness }, testInfo) => {
+  const customPptLabel = "一键ppt";
+  apiHarness.setBootstrap({
+    ...publicBootstrapFixture,
+    menuItems: publicBootstrapFixture.menuItems.map((item) => (
+      item.id === "ppt" ? { ...item, label: customPptLabel } : item
+    ))
+  });
+
+  await page.goto("/chat");
+  await waitForPublicModule(page, publicDestinations[0]);
+  if (isMobileProject(testInfo.project.name)) await openMobileNavigation(page);
+
+  const customPptAction = navigationAction(page, customPptLabel);
+  await expect(customPptAction).toBeVisible();
+  await expect(navigationAction(page, "AI 一键 PPT")).toHaveCount(0);
+  await customPptAction.click();
+
+  await expect(page).toHaveURL(/\/ppt$/);
+  await expect(page).toHaveTitle(`${customPptLabel} - xi-ai-web`);
+  await expect(page.locator("[data-active-module='ppt']")).toBeVisible();
 });
 
 test("selected public navigation stays flat without a drop shadow", async ({ page }, testInfo) => {
@@ -82,6 +106,28 @@ test("public shell scrollbars reveal only for the active scroll event", async ({
 
   await expect(workspace).toHaveAttribute("data-scroll-active", "false", { timeout: 1_200 });
   expect(await scrollbarVisual(".figma-workspace")).toEqual(workspaceIdle);
+});
+
+test("entering Image Generation resets the public workspace to the top", async ({ page }, testInfo) => {
+  const mobile = isMobileProject(testInfo.project.name);
+  const source = publicDestinations.find((destination) => destination.id === "ppt")!;
+  const image = publicDestinations.find((destination) => destination.id === "image")!;
+  await page.setViewportSize({ width: mobile ? 390 : 1280, height: 600 });
+  await page.goto(source.path);
+  await waitForPublicModule(page, source);
+
+  const workspace = page.locator(".figma-workspace");
+  await expect.poll(() => workspace.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+  await workspace.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await expect.poll(() => workspace.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+
+  if (mobile) await openMobileNavigation(page);
+  await navigationAction(page, image.label).click();
+  await waitForPublicModule(page, image);
+
+  await expect.poll(() => workspace.evaluate((element) => element.scrollTop)).toBe(0);
 });
 
 test("invalid public paths resolve to the configured default", async ({ page }) => {
@@ -185,6 +231,68 @@ test("navigation intent preloads cold module code without changing the active ro
   await expect(page.locator("[data-module-transition]")).toHaveAttribute("data-module-transition", "idle");
   await expect(navigationAction(page, agents.label)).not.toHaveAttribute("aria-current", "page");
   await expect(navigationAction(page, image.label)).not.toHaveAttribute("aria-current", "page");
+});
+
+test("ready menu destinations switch through brief canvas fade phases", async ({ page }, testInfo) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "connection", {
+      configurable: true,
+      value: { effectiveType: "4g", saveData: true }
+    });
+  });
+  await page.goto("/chat");
+  await waitForPublicModule(page, publicDestinations[0]);
+  if (isMobileProject(testInfo.project.name)) await openMobileNavigation(page);
+
+  await page.evaluate(() => {
+    type TransitionSample = { moduleId: string; phase: string; durationMs: number };
+    const trackedWindow = window as typeof window & { __moduleCanvasTransitions?: TransitionSample[] };
+    trackedWindow.__moduleCanvasTransitions = [];
+    const record = () => {
+      const canvas = document.querySelector<HTMLElement>("[data-module-canvas]");
+      if (!canvas) return;
+      const duration = getComputedStyle(canvas).animationDuration.trim();
+      const durationMs = duration.endsWith("ms")
+        ? Number.parseFloat(duration)
+        : Number.parseFloat(duration) * 1000;
+      trackedWindow.__moduleCanvasTransitions?.push({
+        moduleId: canvas.dataset.moduleCanvas || "",
+        phase: canvas.dataset.transitionPhase || "",
+        durationMs: Number.isFinite(durationMs) ? durationMs : 0
+      });
+    };
+    record();
+    new MutationObserver(record).observe(document.querySelector("#workspace-main")!, {
+      attributes: true,
+      attributeFilter: ["data-module-canvas", "data-transition-phase"],
+      childList: true,
+      subtree: true
+    });
+  });
+
+  const image = publicDestinations.find((destination) => destination.id === "image")!;
+  await navigationAction(page, image.label).dispatchEvent("click");
+  await waitForPublicModule(page, image);
+  await expect(page.locator("[data-module-canvas='image']")).toHaveAttribute("data-transition-phase", "idle");
+
+  const samples = await page.evaluate(() => (
+    window as typeof window & {
+      __moduleCanvasTransitions?: Array<{ moduleId: string; phase: string; durationMs: number }>;
+    }
+  ).__moduleCanvasTransitions || []);
+  const exitingIndex = samples.findIndex((sample) => sample.moduleId === "chat" && sample.phase === "exiting");
+  const enteringIndex = samples.findIndex((sample) => sample.moduleId === "image" && sample.phase === "entering");
+  const settledIndex = samples.findIndex((sample, index) => (
+    index > enteringIndex && sample.moduleId === "image" && sample.phase === "idle"
+  ));
+
+  expect(exitingIndex).toBeGreaterThanOrEqual(0);
+  expect(enteringIndex).toBeGreaterThan(exitingIndex);
+  expect(settledIndex).toBeGreaterThan(enteringIndex);
+  expect(samples[exitingIndex].durationMs).toBeGreaterThan(0);
+  expect(samples[enteringIndex].durationMs).toBeGreaterThan(0);
+  expect(samples[exitingIndex].durationMs + samples[enteringIndex].durationMs).toBeLessThanOrEqual(220);
 });
 
 test("pending module transitions preserve the shell and complete with reduced motion and focus", async ({ page }, testInfo) => {
@@ -424,6 +532,7 @@ test("public menu keeps the approved order and has no admin entry", async ({ pag
     await expect(navigation.getByRole("button", { name: retiredLabel, exact: true })).toHaveCount(0);
   }
   await expect(page.locator('a[href="/admin"]')).toHaveCount(0);
+  await expect(page.locator('a[href="/xizi2333"]')).toHaveCount(0);
 });
 
 test("mobile menu closes on Escape and restores its trigger", async ({ page }, testInfo) => {

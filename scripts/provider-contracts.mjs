@@ -299,6 +299,8 @@ async function testModelEndpointProtocolRouting() {
       assertEqual(request.url, "https://routing.contract.test/v1/chat/completions", "OpenAI Chat exact endpoint");
       const body = parseJsonBody(request);
       assert(Array.isArray(body.messages), "OpenAI Chat uses messages");
+      assertEqual(body.messages[0].role, "system", "OpenAI Chat keeps the assistant system role");
+      assertEqual(body.messages[0].content, "System prompt", "OpenAI Chat keeps the assistant prompt");
       assertAbsent(body, "input", "OpenAI Chat must not use Responses input");
       return jsonResponse({ choices: [{ message: { content: "chat routed" } }] });
     }
@@ -316,6 +318,8 @@ async function testModelEndpointProtocolRouting() {
       assertEqual(request.url, "https://routing.contract.test/v1/responses", "OpenAI Responses exact endpoint");
       const body = parseJsonBody(request);
       assert(Array.isArray(body.input), "OpenAI Responses uses input items");
+      assertEqual(body.instructions, "System prompt", "OpenAI Responses maps the assistant prompt to instructions");
+      assertEqual(body.input[0].role, "user", "Official OpenAI Responses does not duplicate instructions into input");
       assertAbsent(body, "messages", "OpenAI Responses must not use Chat messages");
       return jsonResponse({ output_text: "responses routed" });
     }
@@ -325,6 +329,54 @@ async function testModelEndpointProtocolRouting() {
       messages: sampleMessages()
     });
     assertEqual(text, "responses routed", "OpenAI Responses parser");
+  });
+
+  const compatibleResponses = {
+    ...provider("openai-compatible", chatCapabilities, "https://routing.contract.test"),
+    endpointProtocol: "openai-responses"
+  };
+  await withMockFetch("Compatible Responses prompt fallback", [
+    (request) => {
+      const body = parseJsonBody(request);
+      assertEqual(body.instructions, "System prompt", "Compatible Responses keeps top-level instructions");
+      assertEqual(body.input[0].role, "developer", "Compatible Responses receives a developer prompt fallback");
+      assertEqual(body.input[0].content, "System prompt", "Compatible Responses fallback keeps the assistant prompt");
+      assertEqual(body.input[1].role, "user", "Compatible Responses keeps user input after the fallback");
+      return jsonResponse({ output_text: "compatible responses routed" });
+    }
+  ], async () => {
+    const text = await createProviderAdapter(compatibleResponses).completeText({
+      model: "compatible-responses-route",
+      messages: sampleMessages()
+    });
+    assertEqual(text, "compatible responses routed", "Compatible Responses parser");
+  });
+
+  await withMockFetch("Compatible Responses tool-round prompt fallback", [
+    (request) => {
+      const body = parseJsonBody(request);
+      assertEqual(body.instructions, "System prompt", "Compatible Responses first tool round keeps instructions");
+      assertEqual(body.input[0].role, "developer", "Compatible Responses first tool round keeps developer fallback");
+      return jsonResponse({
+        id: "compatible-responses-tool-1",
+        output: [{ type: "function_call", call_id: "compatible-call-1", name: "lookup", arguments: "{\"query\":\"x\"}" }]
+      });
+    },
+    (request) => {
+      const body = parseJsonBody(request);
+      assertEqual(body.instructions, "System prompt", "Compatible Responses follow-up tool round keeps instructions");
+      assertEqual(body.input[0].role, "developer", "Compatible Responses follow-up tool round keeps developer fallback");
+      assertEqual(body.input[1].type, "function_call_output", "Compatible Responses keeps tool output after developer fallback");
+      return jsonResponse({ output_text: "compatible tool final" });
+    }
+  ], async () => {
+    const text = await createProviderAdapter(compatibleResponses).completeText({
+      model: "compatible-responses-tool-route",
+      messages: sampleMessages(),
+      tools: [toolDefinition()],
+      runTool: async () => ({ ok: true })
+    });
+    assertEqual(text, "compatible tool final", "Compatible Responses tool parser");
   });
 
   const openAiImageWithStoredResponses = {
@@ -358,6 +410,7 @@ async function testModelEndpointProtocolRouting() {
       assertEqual(headerValue(request.init.headers, "x-api-key"), anthropicMessages.apiKey, "Anthropic protocol auth header");
       const body = parseJsonBody(request);
       assert(Array.isArray(body.messages), "Anthropic protocol uses Messages content");
+      assertEqual(body.system, "System prompt", "Anthropic maps the assistant prompt to top-level system");
       return jsonResponse({ content: [{ type: "text", text: "anthropic routed" }] });
     }
   ], async () => {
@@ -379,6 +432,7 @@ async function testModelEndpointProtocolRouting() {
       assertEqual(headerValue(request.init.headers, "x-goog-api-key"), geminiGenerateContent.apiKey, "Gemini protocol auth header");
       const body = parseJsonBody(request);
       assert(Array.isArray(body.contents), "Gemini protocol uses contents and parts");
+      assertEqual(body.systemInstruction.parts[0].text, "System prompt", "Gemini maps the assistant prompt to systemInstruction");
       return jsonResponse({ candidates: [{ content: { parts: [{ text: "gemini routed" }] } }] });
     }
   ], async () => {
@@ -536,6 +590,7 @@ async function testOpenAIAdapter() {
   await withMockFetch("openai tools", [
     (request) => {
       const body = parseJsonBody(request);
+      assertEqual(body.instructions, "System prompt", "OpenAI first tool round keeps assistant instructions");
       assertEqual(body.tools[0].type, "function", "OpenAI tool type");
       assertEqual(body.tools[0].strict, true, "OpenAI tool schema is strict");
       return jsonResponse({
@@ -545,6 +600,7 @@ async function testOpenAIAdapter() {
     },
     (request) => {
       const body = parseJsonBody(request);
+      assertEqual(body.instructions, "System prompt", "OpenAI follow-up tool round keeps assistant instructions");
       assertEqual(body.previous_response_id, "resp-1", "OpenAI tool loop previous response id");
       assertEqual(body.input[0].type, "function_call_output", "OpenAI tool output type");
       assertEqual(body.input[0].call_id, "call-1", "OpenAI tool output call id");

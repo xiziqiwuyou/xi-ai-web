@@ -329,7 +329,7 @@ test("knowledge workspace creates, uploads, indexes and starts a model rebuild",
   await page.locator('.knowledge-cloud-connection-form input[type="password"]').fill("sk-workspace-session-only");
   await page.getByRole("button", { name: "保存到本次会话" }).click();
   await page.getByRole("button", { name: "继续索引" }).click();
-  await expect(page.getByText("可检索", { exact: true })).toBeVisible();
+  await expect(page.locator(".knowledge-document-status.ready", { hasText: "可检索" })).toBeVisible();
 
   await page.getByRole("button", { name: "切换向量模型" }).click();
   await page.getByRole("button", { name: "新向量模型", exact: true }).click();

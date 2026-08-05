@@ -1,0 +1,39 @@
+{
+  "id": "image-result-preview-actions",
+  "name": "image-result-preview-actions",
+  "title": "Image result preview and editing actions",
+  "description": "Replace oversized inline image results with compact thumbnails, a transformable preview dialog, export actions, regenerate, and edit-to-image workflow handoff.",
+  "status": "in_progress",
+  "dev_type": "feature",
+  "scope": "image result thumbnails, preview transforms, export, regenerate, and image-edit handoff",
+  "package": "web",
+  "priority": "P2",
+  "creator": "xiziqiwuyou",
+  "assignee": "xiziqiwuyou",
+  "createdAt": "2026-08-02",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "Fixed the CORS-blocked edit handoff with a guarded same-origin importer and deferred editor scrolling; changes remain uncommitted with the preceding Chat tasks.",
+  "meta": {
+    "verification": {
+      "typecheck": "passed",
+      "build": "passed",
+      "uiContract": "passed",
+      "featureAudit": "passed",
+      "focusedPlaywright": "4 passed, 8 conditionally skipped across desktop-1440, desktop-1280, mobile-390, and mobile-375, including the CORS-blocked edit handoff",
+      "securityTests": "11 passed",
+      "serverTests": "26 passed",
+      "privateUrlSmoke": "HTTP 400",
+      "publicImageImportSmoke": "image/png data URL returned",
+      "diffCheck": "passed"
+    }
+  }
+}

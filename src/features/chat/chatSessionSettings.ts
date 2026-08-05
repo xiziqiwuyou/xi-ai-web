@@ -96,7 +96,7 @@ export const defaultChatSessionSettings: ChatSessionSettings = {
   renderUserMarkdown: true,
   collapseThinking: true,
   showMessageOutline: false,
-  messageFontSize: 15,
+  messageFontSize: 13,
   renderMath: true,
   enableSingleDollarMath: true,
   codeTheme: "auto",

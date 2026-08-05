@@ -45,6 +45,75 @@ npm run privacy
 npm run test:server
 ```
 
+## Scenario: Private Admin Credentials
+
+### 1. Scope / Trigger
+
+- Trigger: changes to the Admin page route, `server/admin-credentials.mjs`, Admin login/session Cookies, `/api/admin/credentials`, Admin bootstrap identity, deployment credential variables, or Site Settings credential UI.
+
+### 2. Signatures
+
+```text
+GET   /api/admin/status      -> { authRequired, authenticated, adminConfigured }
+POST  /api/admin/login       { username, password } -> { ok }
+GET   /api/admin/bootstrap   -> { adminUsername, ...metadata }
+PATCH /api/admin/credentials { currentPassword, username, password } ->
+                              { ok, username, reauthenticationRequired }
+```
+
+```text
+ADMIN_USERNAME=xizi2333
+ADMIN_PASSWORD=<required secret>
+ADMIN_SESSION_SECRET=<optional independent signing secret>
+DATA_DIR/admin-credentials.json =
+  { version, username, salt, passwordHash, revision, updatedAt }
+```
+
+### 3. Contracts
+
+- The Admin page exists only at `/xizi2333`; protected management APIs remain under `/api/admin/*`. Public navigation exposes neither `/xizi2333` nor legacy `/admin`, and `/admin` never mounts Admin UI.
+- Login always verifies both username and password. `ADMIN_USERNAME` defaults to `xizi2333`; an empty `ADMIN_PASSWORD` keeps Admin APIs locked in every runtime mode.
+- Rotated credentials live only in `DATA_DIR/admin-credentials.json` as a versioned username, random salt, `scrypt` hash, random credential revision, and timestamp. Never include this file in metadata export/restore, backup payloads, logs, or browser state.
+- A valid persisted credential file overrides bootstrap environment credentials. Deleting the file and restarting is the operator recovery path back to `ADMIN_USERNAME` and `ADMIN_PASSWORD`.
+- Every signed Admin session contains the active credential revision. Rotation changes the revision, clears the current Cookie, and invalidates all previous sessions.
+- Rotation requires the current password; a blank new password preserves it. Usernames use 3 to 64 ASCII letters, digits, dots, underscores, or hyphens; new passwords use 16 to 512 characters.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| Missing configured password | `503`; Admin APIs remain locked in development and production |
+| Wrong username or wrong password | Same generic `401` body; never reveal which field failed |
+| Invalid new username | `400 ADMIN_USERNAME_INVALID`; do not write the credential file |
+| Invalid non-empty new password | `400 ADMIN_PASSWORD_INVALID`; do not write the credential file |
+| Wrong current password during rotation | `401 ADMIN_CREDENTIALS_INVALID`; preserve current credentials and sessions |
+| Valid rotation | Atomic same-directory replacement, new revision, expired Cookie, all previous sessions rejected |
+| Malformed persisted credential file | Fail closed during startup; never fall back silently to environment credentials |
+
+### 5. Good/Base/Bad Cases
+
+- Good: an authenticated operator changes username and password, receives a cleared Cookie, old Cookies return `401`, and a fresh login succeeds without either plaintext password appearing on disk.
+- Base: no credential file exists, so the runtime uses `ADMIN_USERNAME` plus `ADMIN_PASSWORD`; deleting a later credential file and restarting restores this bootstrap pair.
+- Bad: allowing password-only login, treating empty development credentials as authenticated, placing credentials in `app-data.json`, or signing sessions without a credential revision.
+
+### 6. Tests Required
+
+- `tests/server/admin-credentials.test.mjs`: default username, locked empty password, generic verification, salted persistence, restart, repeat rotation, username-only rotation, and validation errors.
+- `scripts/release-check.mjs`: production login, generic failures, endpoint rotation, stale Cookie rejection, fresh login, and plaintext absence.
+- `tests/e2e/admin-shell.spec.ts`: `/xizi2333`, legacy `/admin` rejection, username/password form, Site Settings rotation, and desktop/mobile containment.
+- `npm run ui-contract`, `npm run privacy`, `npm run test:server`, and `npm run release-check` remain green.
+
+### 7. Wrong vs Correct
+
+```js
+// Wrong: password-only login and a session that survives credential rotation.
+if (body.password === process.env.ADMIN_PASSWORD) setCookie({ role: "admin" });
+
+// Correct: verify the active pair and bind the Cookie to the credential revision.
+if (!adminCredentialStore.verify(body.username, body.password)) return generic401();
+setCookie({ role: "admin", revision: adminCredentialStore.revision, expiresAt });
+```
+
 ### Shell Type-3 JWT Exchange Boundary
 
 - `POST /api/public/shell-token/exchange` accepts `{ token }` only and derives both Shell control-plane URLs from the origin of the validated administrator-managed `upstreamBaseUrl`. Never accept a caller-provided host or path.
@@ -61,6 +130,67 @@ npm run test:server
 - A request releases its slot exactly once on response `finish` or premature `close`. A queued request whose client disconnected must skip its downstream handler. Use `req.aborted` and the explicit abort event for request disconnects; do not treat `req.destroyed` alone as proof of a disconnect because Express may set it after consuming a normal request body. A synchronous downstream throw must release the slot before propagating.
 - The queue serializes one Node process only. It is not a distributed lock and must not be described as horizontal multi-instance consistency.
 - `tests/server/metadata-write-queue.test.mjs` covers ordering, GET bypass, close/finish idempotence, disconnected queued requests, and synchronous throws.
+
+## Structured PPT Preset Contract
+
+### 1. Scope / Trigger
+
+- Trigger: changes to `/api/generate/ppt`, `server/ppt-deck.mjs`, `server/ppt-preset-profiles.mjs`, `PptGenerationOptions`, or the browser PPT preset catalog.
+
+### 2. Signatures
+
+```js
+pptGenerationMessages(prompt, options)
+parsePptDeckModelOutput(content, options, fallbackTitle)
+```
+
+```text
+POST /api/generate/ppt { connection, modelId, prompt, options: { ppt } }
+```
+
+### 3. Contracts
+
+- The browser submits a bounded `presentationType` plus editable generation options. It never submits trusted preset instructions.
+- `server/ppt-preset-profiles.mjs` owns purpose, narrative flow, required/optional sections, layout guidance, and content rules for the eight supported preset IDs.
+- The combined system message requires one JSON object, `16:9`, cover-first structure, the requested slide count, semantic layout variety, and no three consecutive identical ordinary layouts.
+- Parsing bounds all visible text, retains the cover and terminal summary when trimming, and conservatively retypes only a third repeated ordinary layout while preserving its content.
+- Invalid structured output remains available through the existing Markdown-compatible fallback. Do not render an invalid Provider envelope as a trusted structured deck.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| Unknown preset ID | Normalize to `business-report` before prompt composition |
+| Page count outside `4..20` | Clamp before Provider access and parsing |
+| User prompt or optional text exceeds its bound | Truncate in the user message; never merge it into trusted preset text |
+| Unsupported slide type | Normalize to cover/content semantics according to position |
+| Fewer valid slides than requested | Reject the structured deck and use the existing compatibility path |
+| More slides than requested | Preserve cover and terminal summary, then trim middle slides |
+| Third repeated ordinary layout | Use the selected preset's safe layout cycle and preserve normalized points |
+| Invalid JSON or empty slides | Return `null` for the existing Markdown-compatible fallback |
+
+### 5. Good/Base/Bad Cases
+
+- Good: a product-launch request combines the server-owned product narrative with the user's manually overridden audience and theme, returns an exact structured deck, and renders mixed semantic layouts.
+- Base: an unknown preset falls back to the business profile and a valid short deck remains readable through the compatibility path.
+- Bad: accepting a browser-provided system prompt, silently inventing numeric evidence, or forcing layout variety by discarding slide content.
+
+### 6. Tests Required
+
+- `tests/server/ppt-deck.test.mjs`: all eight profile IDs, trusted prompt composition, option bounds, sanitization, cover/summary retention, and repeated-layout repair.
+- `tests/e2e/module-shell.spec.ts`: preset default application plus manual overrides, exact request projection, cover/summary/data/timeline/two-column/quote rendering, desktop geometry, mobile containment, and menu accessibility at all four configured viewports.
+- `npm run check`, `npm run ui-contract`, `npm run feature-audit`, `npm run test:server`, and `npm run release-check` remain green.
+
+### 7. Wrong vs Correct
+
+```js
+// Wrong: an untrusted browser field becomes a system instruction.
+messages = [{ role: "system", content: req.body.options.ppt.presetPrompt }];
+
+// Correct: resolve the trusted profile by normalized ID and keep user fields in the user message.
+const options = normalizePptGenerationOptions(req.body.options?.ppt);
+messages = pptGenerationMessages(prompt, options);
+```
 
 ---
 
@@ -587,8 +717,8 @@ WHERE v.account_id = $1
 
 - Public assistants are developer-managed metadata. Normalize category, tags, starter prompts, enabled state, IDs, text bounds, and timestamps at the server boundary; public bootstrap returns enabled records only while Admin bootstrap retains disabled records.
 - Versioned metadata migrations merge missing shipped defaults by stable ID or exact name and must not replace administrator-created records. Once the new metadata version is saved, later deletions stay deleted.
-- An explicit `assistantId` is fail-closed. Missing or disabled IDs return a clear 4xx response before provider access; never use `|| assistants[0]` for an explicit request or rewrite historical conversation bindings after deletion.
-- Chat streaming receives resolved Skill instructions explicitly and includes them after the selected assistant system prompt. Keep request credentials transient and redact provider errors.
+- An absent or empty Chat `assistantId` is a valid neutral conversation and contributes no Assistant system prompt. A non-empty `assistantId` is fail-closed: missing or disabled records return a clear 4xx response before provider access; never use `|| assistants[0]` or rewrite historical bindings after deletion.
+- Chat streaming receives resolved Skill instructions explicitly and includes them after the selected Assistant system prompt when one exists. Keep request credentials transient and redact provider errors.
 - For SSE cancellation, `IncomingMessage.close` is not a client-abort signal. Listen to `request.aborted` and a premature `response.close`, abort provider work only while the response is unfinished, and always close a live response in `finally`.
 - `scripts/automation-contracts.mjs` must cover metadata migration, curated category coverage, timestamp preservation, missing-assistant rejection before provider access, exact assistant system prompt injection, Skill instruction injection, and stream completion.
 
@@ -826,3 +956,11 @@ const created = vendors.find((item) => item.label === submittedLabel);
 const created = await api.createModelVendor(payload);
 setActiveVendorId(created.id);
 ```
+
+## Assistant Catalog And Prompt Projection
+
+- `server/data/assistant-catalog.mjs` owns shipped assistant IDs, seven-category metadata, semantic avatar allowlisting, structured system prompts, and versioned default backfill. A metadata migration may append missing shipped records once, but matching administrator-edited and custom records remain authoritative.
+- Assistant-bound Chat sends only the exact `assistantId`; neutral Chat omits the field. `server/index.mjs` resolves non-empty IDs and owns prompt composition. Never accept a browser-supplied replacement system prompt for a catalog assistant.
+- Project the resolved system prompt in the protocol-native field: OpenAI Chat `messages[0].role = "system"`, OpenAI Responses `instructions`, Anthropic top-level `system`, and Gemini `systemInstruction.parts`.
+- Responses requests retain `instructions` on every tool round. Non-OpenAI providers configured for the Responses protocol additionally receive a `developer` input projection as a bounded compatibility fallback; official OpenAI requests do not duplicate that fallback.
+- Required regression gates: `tests/server/defaults.test.mjs`, `scripts/provider-contracts.mjs`, and the assistant Chat request in `scripts/automation-contracts.mjs`.

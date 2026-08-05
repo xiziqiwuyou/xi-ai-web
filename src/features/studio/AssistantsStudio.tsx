@@ -1,46 +1,18 @@
 import { useEffect, useId, useMemo, useState } from "react";
 
 import {
-  ArrowLeftRight,
   Bot,
-  BookOpen,
-  CheckCircle2,
-  Columns2,
-  Copy,
-  Download,
-  Expand,
-  FileText,
-  FileUp,
-  GitFork,
-  Languages,
-  Loader2,
-  Minus,
-  Plus,
   Search,
-  Shuffle,
   Sparkles,
-  Wand2,
   X
 } from "lucide-react";
 
+import { AssistantAvatar } from "../assistants/AssistantAvatar";
 import { queueAssistantLaunch } from "../assistants/assistantLaunch";
 import { Dialog } from "../../components/ui";
 import { type StudioModuleProps } from "./studioShared";
 
-import type {
-  Assistant,
-  GalleryItem,
-  GenerationModuleId,
-  GenerationResult,
-  ImageAspectRatio,
-  ImageGenerationMode,
-  ImageInputPayload,
-  ImageOutputFormat,
-  ImageResolution,
-  ModelCatalogEntry,
-  ModuleId,
-  UserProviderConfig
-} from "../../types";
+import type { Assistant } from "../../types";
 
 
 const preferredAssistantCategories = [
@@ -49,6 +21,7 @@ const preferredAssistantCategories = [
   "编程开发",
   "学习研究",
   "商业办公",
+  "营销增长",
   "生活创意"
 ] as const;
 
@@ -67,6 +40,13 @@ export function AssistantsStudio({ assistants, onModuleChange }: StudioModulePro
     [assistants]
   );
   const categories = useMemo(() => assistantCategories(availableAssistants), [availableAssistants]);
+  const categoryCounts = useMemo(() => {
+    const counts = new Map<string, number>([["全部", availableAssistants.length]]);
+    availableAssistants.forEach((assistant) => {
+      counts.set(assistant.category, (counts.get(assistant.category) || 0) + 1);
+    });
+    return counts;
+  }, [availableAssistants]);
   const [activeCategory, setActiveCategory] = useState("全部");
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState(availableAssistants[0]?.id || "");
@@ -125,10 +105,12 @@ export function AssistantsStudio({ assistants, onModuleChange }: StudioModulePro
               type="button"
               key={category}
               className={activeCategory === category ? "active" : ""}
+              aria-label={category}
               aria-pressed={activeCategory === category}
               onClick={() => setActiveCategory(category)}
             >
-              {category}
+              <span>{category}</span>
+              <small>{categoryCounts.get(category) || 0}</small>
             </button>
           ))}
         </nav>
@@ -160,7 +142,7 @@ export function AssistantsStudio({ assistants, onModuleChange }: StudioModulePro
               aria-haspopup="dialog"
               aria-label={`查看助手 ${assistant.name}`}
             >
-              <span className="figma-agent-symbol" style={{ background: assistant.color }}><Bot size={19} /></span>
+              <AssistantAvatar assistant={assistant} className="figma-agent-symbol" />
               <small className="figma-agent-category">{assistant.category}</small>
               <strong>{assistant.name}</strong>
               <p>{assistant.description}</p>
@@ -188,9 +170,7 @@ export function AssistantsStudio({ assistants, onModuleChange }: StudioModulePro
         className="figma-agent-dialog"
       >
         <div className="figma-agent-dialog-top">
-          <span className="figma-agent-dialog-symbol" style={{ background: selected?.color }}>
-            <Bot size={21} />
-          </span>
+          <AssistantAvatar assistant={selected} className="figma-agent-dialog-symbol" />
           <button type="button" onClick={() => setDetailOpen(false)} aria-label="关闭助手详情" title="关闭">
             <X size={17} />
           </button>

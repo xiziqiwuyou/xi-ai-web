@@ -1,6 +1,7 @@
 import {
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -18,6 +19,7 @@ import {
   ChevronUp,
   FileText,
   Globe2,
+  History,
   Image as ImageIcon,
   LayoutGrid,
   Pin,
@@ -29,11 +31,19 @@ import {
   Trash2,
   X
 } from "lucide-react";
+import { AssistantAvatar } from "../assistants/AssistantAvatar";
 import { FigmaMenu, getFloatingHorizontalOffset, getFloatingVerticalPlacement } from "../../components/ui";
 import { compactModelLabel } from "../../components/workbench";
 import { createClientId } from "../../utils/clientId";
 import ChatMessageContent from "./ChatMessageContent";
-import { cleanSettingChoice, estimatedTokenCount, type ChatSessionSettings } from "./chatSessionSettings";
+import {
+  chatContextMessageCountValues,
+  cleanSettingChoice,
+  estimatedTokenCount,
+  selectChatHistory,
+  type ChatContextMessageCount,
+  type ChatSessionSettings
+} from "./chatSessionSettings";
 import ChatCommandPalette, { type ChatCommandOption } from "./ChatCommandPalette";
 import { activeChatCommand, chatCommandMatches, removeChatCommand } from "./chatCommands";
 import { skillCompatibility, toolCompatibility } from "../automation/toolCompatibility";
@@ -84,6 +94,10 @@ export const searchProviderOptions = [
   { value: "glm", label: "智谱 GLM", detail: "结构化搜索 API" },
   { value: "kimi", label: "Kimi", detail: "$web_search 联网能力" },
   { value: "off", label: "关闭联网搜索", detail: "本次会话不执行搜索" }
+] as const;
+const contextMessageCountOptions = [
+  ...chatContextMessageCountValues.map((value) => ({ value: String(value), label: `最近 ${value} 条` })),
+  { value: "unlimited", label: "不限" }
 ] as const;
 
 export function vendorTabForModel(model?: ModelCatalogEntry): ModelVendorTab {
@@ -201,6 +215,7 @@ export type ChatSessionBlockProps = {
   onSearchProviderChange: (provider: SearchProviderKind | "") => void;
   onKnowledgeChange: (knowledgeBaseIds: string[]) => void;
   onReasoningEffortChange: (value: ReasoningEffort) => void;
+  onContextMessageCountChange: (value: ChatContextMessageCount) => void;
   onImageInput: (event: ChangeEvent<HTMLInputElement>) => void;
   onLongPaste: (text: string) => void;
   onRemoveImage: (attachmentId: string) => void;
@@ -238,6 +253,7 @@ export function ChatSessionBlock({
   onSearchProviderChange,
   onKnowledgeChange,
   onReasoningEffortChange,
+  onContextMessageCountChange,
   onImageInput,
   onLongPaste,
   onRemoveImage,
@@ -246,9 +262,10 @@ export function ChatSessionBlock({
   onStop
 }: ChatSessionBlockProps) {
   const imageInputRef = useRef<HTMLInputElement | null>(null);
-  const bottomRef = useRef<HTMLDivElement | null>(null);
+  const messageHistoryRef = useRef<HTMLDivElement | null>(null);
   const modelPickerRef = useRef<HTMLDivElement | null>(null);
   const modelTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const messageHistoryScrollTimerRef = useRef<number | null>(null);
   const vendorListScrollTimerRef = useRef<number | null>(null);
   const modelListScrollTimerRef = useRef<number | null>(null);
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
@@ -256,6 +273,7 @@ export function ChatSessionBlock({
   const [modelPickerOffset, setModelPickerOffset] = useState(0);
   const [vendorListScrolling, setVendorListScrolling] = useState(false);
   const [modelListScrolling, setModelListScrolling] = useState(false);
+  const [messageHistoryScrolling, setMessageHistoryScrolling] = useState(false);
   const modelPopoverId = useId();
   const commandListId = useId();
   const modelListId = `${modelPopoverId}-list`;
@@ -309,21 +327,7 @@ export function ChatSessionBlock({
         {
           id: `${conversation.id}-welcome`,
           role: "assistant",
-          content: "你好，我是 **AiStudio** 助手。连接知识、想法与成果——现在想创作什么？",
-          createdAt: conversation.createdAt,
-          status: "done"
-        },
-        {
-          id: `${conversation.id}-sample-user`,
-          role: "user",
-          content: "帮我梳理一份关于生成式 AI 在企业落地的简短介绍。",
-          createdAt: conversation.createdAt,
-          status: "done"
-        },
-        {
-          id: `${conversation.id}-sample-answer`,
-          role: "assistant",
-          content: "当然可以。\n\n**生成式 AI 正在成为企业的创造力基础设施。**\n\n它将重复性知识工作转化为可编排的智能流程：从市场洞察、内容生产到客户支持。关键不在于替代人，而是让每一位员工都能以更短路径完成高价值决策。\n\n要不要我继续为这段内容生成一个 6 页的演示文稿？",
+          content: "你好，今天想从哪里开始？可以直接提问、整理资料，或一起完成一项具体任务。",
           createdAt: conversation.createdAt,
           status: "done"
         }
@@ -332,11 +336,26 @@ export function ChatSessionBlock({
     ? displayMessages
     : displayMessages.filter((message) => message.role !== "user");
   const lastMessage = [...displayMessages].reverse().find((message) => message.content);
+  const latestMessageContent = displayMessages[displayMessages.length - 1]?.content || "";
+  const latestAssistantMessage = [...conversation.messages].reverse().find((message) => message.role === "assistant");
+  const selectedContextMessages = selectChatHistory(conversation.messages, settings);
+  const estimatedContextTokens = selectedContextMessages.reduce(
+    (total, message) => total + estimatedTokenCount(message.content) + 8,
+    0
+  );
+  const usageLabel = latestAssistantMessage?.usage
+    ? `本轮 输入 ${latestAssistantMessage.usage.inputTokens.toLocaleString("zh-CN")} · 输出 ${latestAssistantMessage.usage.outputTokens.toLocaleString("zh-CN")} · 总计 ${latestAssistantMessage.usage.totalTokens.toLocaleString("zh-CN")}`
+    : `上下文估算 ${estimatedContextTokens.toLocaleString("zh-CN")} Token`;
+  const contextMessageCountLabel = settings.contextMessageCount === null
+    ? "不限"
+    : `最近 ${settings.contextMessageCount} 条`;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (ui.collapsed) return;
-    bottomRef.current?.scrollIntoView({ block: "end" });
-  }, [displayMessages.length, streaming, ui.collapsed]);
+    const history = messageHistoryRef.current;
+    if (!history) return;
+    history.scrollTop = history.scrollHeight;
+  }, [displayMessages.length, latestMessageContent, streaming, ui.collapsed]);
 
   useEffect(() => {
     if (!modelPickerOpen) setActiveModelVendor(vendorTabForModel(selectedModel));
@@ -345,6 +364,11 @@ export function ChatSessionBlock({
   useEffect(() => {
     if (!ui.collapsed) return;
     setModelPickerOpen(false);
+    setMessageHistoryScrolling(false);
+    if (messageHistoryScrollTimerRef.current !== null) {
+      window.clearTimeout(messageHistoryScrollTimerRef.current);
+      messageHistoryScrollTimerRef.current = null;
+    }
   }, [ui.collapsed]);
 
   useEffect(() => {
@@ -398,11 +422,17 @@ export function ChatSessionBlock({
   }, [modelPickerOpen]);
 
   useEffect(() => () => {
+    if (messageHistoryScrollTimerRef.current !== null) {
+      window.clearTimeout(messageHistoryScrollTimerRef.current);
+      messageHistoryScrollTimerRef.current = null;
+    }
     if (vendorListScrollTimerRef.current !== null) {
       window.clearTimeout(vendorListScrollTimerRef.current);
+      vendorListScrollTimerRef.current = null;
     }
     if (modelListScrollTimerRef.current !== null) {
       window.clearTimeout(modelListScrollTimerRef.current);
+      modelListScrollTimerRef.current = null;
     }
   }, []);
 
@@ -496,6 +526,17 @@ export function ChatSessionBlock({
     modelListScrollTimerRef.current = window.setTimeout(() => {
       setModelListScrolling(false);
       modelListScrollTimerRef.current = null;
+    }, 650);
+  };
+
+  const handleMessageHistoryScroll = () => {
+    setMessageHistoryScrolling(true);
+    if (messageHistoryScrollTimerRef.current !== null) {
+      window.clearTimeout(messageHistoryScrollTimerRef.current);
+    }
+    messageHistoryScrollTimerRef.current = window.setTimeout(() => {
+      setMessageHistoryScrolling(false);
+      messageHistoryScrollTimerRef.current = null;
     }, 650);
   };
 
@@ -656,14 +697,16 @@ export function ChatSessionBlock({
             </div>
           ) : null}
           </div>
-          <span
-            className={assistant ? "figma-session-assistant" : "figma-session-assistant missing"}
-            aria-label={`当前助手：${assistant?.name || "已失效"}`}
-            title={assistant?.name || "助手已失效"}
-          >
-            <Bot size={13} aria-hidden="true" />
-            <span>{assistant?.name || "助手已失效"}</span>
-          </span>
+          {conversation.assistantId ? (
+            <span
+              className={assistant ? "figma-session-assistant" : "figma-session-assistant missing"}
+              aria-label={`当前助手：${assistant?.name || "已失效"}`}
+              title={assistant?.name || "助手已失效"}
+            >
+              <Bot size={13} aria-hidden="true" />
+              <span>{assistant?.name || "助手已失效"}</span>
+            </span>
+          ) : null}
         </div>
         <div className="figma-session-mobile-actions">
           <button
@@ -717,7 +760,11 @@ export function ChatSessionBlock({
 
       {ui.collapsed ? (
         <button type="button" className="figma-session-preview" onClick={onToggle}>
-          <img src={assistantAvatarUrl} alt="" />
+          <AssistantAvatar
+            assistant={assistant}
+            fallbackImageUrl={assistantAvatarUrl}
+            className="figma-session-avatar"
+          />
           <span>
             <strong>{conversation.title || selectedModel?.label || "新对话"}</strong>
             <small>{lastMessage?.content.replace(/[*#`]/g, "").slice(0, 90)}</small>
@@ -726,8 +773,11 @@ export function ChatSessionBlock({
       ) : (
         <>
           <div
+            ref={messageHistoryRef}
             className={`${settings.messageStyle === "list" ? "figma-message-history list" : "figma-message-history"}${settings.useSerifFont ? " serif" : ""}`}
             style={{ "--figma-message-font-size": `${settings.messageFontSize}px` } as CSSProperties}
+            data-scroll-active={messageHistoryScrolling ? "true" : "false"}
+            onScroll={handleMessageHistoryScroll}
           >
             {settings.showMessageOutline ? (
               <nav className="figma-message-outline" aria-label="消息大纲">
@@ -747,7 +797,11 @@ export function ChatSessionBlock({
               {visibleMessages.map((message) => (
                 <article id={`chat-message-${message.id}`} key={message.id} className={`figma-message ${message.role}`}>
                   {message.role === "assistant" ? (
-                    <img className="figma-message-avatar" src={assistantAvatarUrl} alt="AiStudio" />
+                    <AssistantAvatar
+                      assistant={assistant}
+                      fallbackImageUrl={assistantAvatarUrl}
+                      className="figma-message-avatar"
+                    />
                   ) : null}
                   <div className="figma-message-bubble">
                     {message.content ? (
@@ -772,11 +826,6 @@ export function ChatSessionBlock({
                       </small>
                     )}
                     <KnowledgeCitationList citations={message.knowledgeCitations} />
-                    {settings.showUsage && message.usage ? (
-                      <small className="figma-message-usage">
-                        输入 {message.usage.inputTokens.toLocaleString("zh-CN")} · 输出 {message.usage.outputTokens.toLocaleString("zh-CN")} · 总计 {message.usage.totalTokens.toLocaleString("zh-CN")}
-                      </small>
-                    ) : null}
                   </div>
                   {message.role === "user" ? (
                     userAvatarUrl
@@ -785,7 +834,7 @@ export function ChatSessionBlock({
                   ) : null}
                 </article>
               ))}
-              <div ref={bottomRef} />
+              <div />
             </div>
           </div>
 
@@ -846,6 +895,30 @@ export function ChatSessionBlock({
                   ariaLabel="思维链长度"
                   triggerIcon={<BrainCircuit size={14} aria-hidden="true" />}
                 />
+                <FigmaMenu
+                  className="figma-context-count-menu"
+                  label="引用上下文条数"
+                  value={settings.contextMessageCount === null ? "unlimited" : String(settings.contextMessageCount)}
+                  options={contextMessageCountOptions}
+                  onChange={(value) => onContextMessageCountChange(
+                    value === "unlimited"
+                      ? null
+                      : cleanSettingChoice(Number(value), chatContextMessageCountValues, 16)
+                  )}
+                  ariaLabel="引用上下文条数"
+                  disabled={streaming}
+                  triggerIcon={<History size={14} aria-hidden="true" />}
+                  triggerText={`上下文 · ${contextMessageCountLabel}`}
+                />
+                {settings.showUsage ? (
+                  <output
+                    className="figma-token-usage-summary"
+                    aria-label="Token 统计"
+                    title={latestAssistantMessage?.usage ? "最新一次模型响应的接口用量" : `当前实际引用 ${selectedContextMessages.length} 条消息的本地估算`}
+                  >
+                    {usageLabel}
+                  </output>
+                ) : null}
                 <button type="button" className="clear" onClick={onClear}>
                   <Trash2 size={14} />
                   清除消息

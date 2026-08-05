@@ -10,7 +10,7 @@ import {
   useTransition
 } from "react";
 import { api } from "./api";
-import AppShell from "./app/AppShell";
+import AppShell, { type ModuleCanvasPhase } from "./app/AppShell";
 import ModuleRouter from "./app/ModuleRouter";
 import { cleanMenuLabel } from "./app/moduleRegistry";
 import { preloadPublicModule } from "./app/publicModuleLoader";
@@ -41,6 +41,7 @@ import {
   saveUserProviderConfig
 } from "./features/settings/userProviderConfig";
 import WorkspaceDataDialog from "./features/workspace/WorkspaceDataDialog";
+import ProgressSyncDialog from "./features/workspace/ProgressSyncDialog";
 import type {
   ConversationSummary,
   GalleryItem,
@@ -54,6 +55,8 @@ import type {
 const AdminPortal = lazy(() => import("./features/admin/AdminPortal"));
 const KnowledgeCloudPortal = lazy(() => import("./features/knowledge-cloud/KnowledgeCloudPortal"));
 const fallbackModule: ModuleId = "chat";
+const moduleExitDurationMs = 60;
+const moduleEnterDurationMs = 160;
 
 function ModuleLoading() {
   return (
@@ -76,9 +79,39 @@ function pushPublicUrl(moduleId: ModuleId) {
   window.history.pushState({ moduleId }, "", path);
 }
 
+function publicMenuLabel(menuItems: MenuItem[] | undefined, moduleId: ModuleId) {
+  return cleanMenuLabel(
+    moduleId,
+    menuItems?.find((item) => item.id === moduleId)?.label
+  );
+}
+
+type ProgressSyncHandoff = {
+  mode: "send" | "receive";
+  code: string;
+};
+
+const emptyProgressSyncHandoff: ProgressSyncHandoff = { mode: "receive", code: "" };
+
+function parseProgressSyncHandoff(hash: string): ProgressSyncHandoff {
+  const receiveCode = /^#sync=(\d{6})$/u.exec(hash)?.[1];
+  if (receiveCode) return { mode: "receive", code: receiveCode };
+  const sendCode = /^#sync-send=(\d{6})$/u.exec(hash)?.[1];
+  if (sendCode) return { mode: "send", code: sendCode };
+  return emptyProgressSyncHandoff;
+}
+
+function clearProgressSyncHandoffUrl() {
+  window.history.replaceState(
+    window.history.state,
+    "",
+    `${window.location.pathname}${window.location.search}`
+  );
+}
+
 function App() {
   const normalizedPath = normalizePathname(window.location.pathname);
-  const isAdminRoute = normalizedPath === "/admin";
+  const isAdminRoute = normalizedPath === "/xizi2333";
   const isKnowledgeRoute = normalizedPath === "/knowledge";
   const isStandaloneRoute = isAdminRoute || isKnowledgeRoute;
   const [loading, setLoading] = useState(true);
@@ -88,8 +121,10 @@ function App() {
   );
   const [pendingModule, setPendingModule] = useState<ModuleId | null>(null);
   const [moduleTransitionError, setModuleTransitionError] = useState<ModuleId | null>(null);
+  const [moduleCanvasPhase, setModuleCanvasPhase] = useState<ModuleCanvasPhase>("idle");
   const [moduleTransitionPending, startModuleTransition] = useTransition();
   const moduleRequestIdRef = useRef(0);
+  const moduleCanvasTimerRef = useRef<number | null>(null);
   const [userProvider, setUserProvider] = useState<UserProviderConfig>(loadUserProviderConfig);
   const [shellJwtHandoff, setShellJwtHandoff] = useState(() =>
     isStandaloneRoute ? emptyShellJwtHandoff : parseShellJwtHandoff(window.location.hash)
@@ -100,6 +135,12 @@ function App() {
   const [apiConfigOpen, setApiConfigOpen] = useState(false);
   const [workspaceDataOpen, setWorkspaceDataOpen] = useState(false);
   const [workspaceDataError, setWorkspaceDataError] = useState("");
+  const [progressSyncOpen, setProgressSyncOpen] = useState(false);
+  const [progressSyncMode, setProgressSyncMode] = useState<"send" | "receive">("send");
+  const [progressSyncInitialCode, setProgressSyncInitialCode] = useState("");
+  const [progressSyncHandoff, setProgressSyncHandoff] = useState<ProgressSyncHandoff>(() =>
+    isStandaloneRoute ? emptyProgressSyncHandoff : parseProgressSyncHandoff(window.location.hash)
+  );
   const [galleryItems, setGalleryItems] = useState<GalleryItem[]>([]);
   const [galleryHydrated, setGalleryHydrated] = useState(false);
   const [error, setError] = useState("");
@@ -108,25 +149,54 @@ function App() {
     setActiveModule(moduleId);
   }, []);
 
-  const transitionToModule = useCallback((moduleId: ModuleId, langflowAvailable: boolean) => {
+  const clearModuleCanvasTimer = useCallback(() => {
+    if (moduleCanvasTimerRef.current === null) return;
+    window.clearTimeout(moduleCanvasTimerRef.current);
+    moduleCanvasTimerRef.current = null;
+  }, []);
+
+  const transitionToModule = useCallback((
+    moduleId: ModuleId,
+    langflowAvailable: boolean,
+    skipCanvasExit = false
+  ) => {
     const requestId = moduleRequestIdRef.current + 1;
     moduleRequestIdRef.current = requestId;
+    clearModuleCanvasTimer();
     setPendingModule(moduleId);
     setModuleTransitionError(null);
     void preloadPublicModule(moduleId, langflowAvailable)
       .then(() => {
         if (moduleRequestIdRef.current !== requestId) return;
-        startModuleTransition(() => {
-          applyActiveModule(moduleId);
-        });
+        if (skipCanvasExit || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+          setModuleCanvasPhase("idle");
+          startModuleTransition(() => {
+            applyActiveModule(moduleId);
+          });
+          return;
+        }
+
+        setModuleCanvasPhase("exiting");
+        moduleCanvasTimerRef.current = window.setTimeout(() => {
+          moduleCanvasTimerRef.current = null;
+          if (moduleRequestIdRef.current !== requestId) return;
+
+          startModuleTransition(() => {
+            if (moduleRequestIdRef.current !== requestId) return;
+            applyActiveModule(moduleId);
+            setModuleCanvasPhase("entering");
+          });
+        }, moduleExitDurationMs);
       })
       .catch(() => {
         if (moduleRequestIdRef.current !== requestId) return;
+        clearModuleCanvasTimer();
+        setModuleCanvasPhase("idle");
         setPendingModule(null);
         setModuleTransitionError(moduleId);
         replacePublicUrl(activeModule);
       });
-  }, [activeModule, applyActiveModule]);
+  }, [activeModule, applyActiveModule, clearModuleCanvasTimer]);
 
   const applyPublicBootstrap = useCallback(
     (nextPayload: PublicBootstrapPayload) => {
@@ -139,8 +209,10 @@ function App() {
       const canonicalPath = publicPathForModule(resolvedModule);
 
       moduleRequestIdRef.current += 1;
+      clearModuleCanvasTimer();
       setPendingModule(null);
       setModuleTransitionError(null);
+      setModuleCanvasPhase("idle");
       setPayload(nextPayload);
       applyActiveModule(resolvedModule);
       void preloadPublicModule(resolvedModule, nextPayload.langflow.available).catch(() => undefined);
@@ -149,8 +221,12 @@ function App() {
       }
       return nextPayload;
     },
-    [applyActiveModule]
+    [applyActiveModule, clearModuleCanvasTimer]
   );
+
+  useEffect(() => {
+    return () => clearModuleCanvasTimer();
+  }, [clearModuleCanvasTimer]);
 
   const loadPublicBootstrap = useCallback(async () => {
     const nextPayload = await api.publicBootstrap();
@@ -161,6 +237,23 @@ function App() {
     if (!shellJwtHandoff.present) return;
     clearShellJwtHandoffUrl(window.location, window.history);
   }, [shellJwtHandoff.present]);
+
+  useLayoutEffect(() => {
+    if (!progressSyncHandoff.code) return;
+    clearProgressSyncHandoffUrl();
+  }, [progressSyncHandoff.code]);
+
+  useEffect(() => {
+    if (isStandaloneRoute) return undefined;
+    const handleProgressSyncHashChange = () => {
+      const nextHandoff = parseProgressSyncHandoff(window.location.hash);
+      if (!nextHandoff.code) return;
+      clearProgressSyncHandoffUrl();
+      setProgressSyncHandoff(nextHandoff);
+    };
+    window.addEventListener("hashchange", handleProgressSyncHashChange);
+    return () => window.removeEventListener("hashchange", handleProgressSyncHashChange);
+  }, [isStandaloneRoute]);
 
   useEffect(() => {
     if (isStandaloneRoute || !shellJwtHandoff.present) {
@@ -241,7 +334,7 @@ function App() {
         requestedModule,
         payload.settings.defaultModule
       );
-      transitionToModule(resolvedModule, payload.langflow.available);
+      transitionToModule(resolvedModule, payload.langflow.available, true);
       if (publicPathForModule(resolvedModule) !== window.location.pathname) {
         replacePublicUrl(resolvedModule);
       }
@@ -254,12 +347,22 @@ function App() {
   useEffect(() => {
     if (moduleTransitionPending || !pendingModule || activeModule !== pendingModule) return;
     setPendingModule(null);
-  }, [activeModule, moduleTransitionPending, pendingModule]);
+    if (moduleCanvasPhase !== "entering") return;
+
+    const requestId = moduleRequestIdRef.current;
+    clearModuleCanvasTimer();
+    moduleCanvasTimerRef.current = window.setTimeout(() => {
+      moduleCanvasTimerRef.current = null;
+      if (moduleRequestIdRef.current === requestId) {
+        setModuleCanvasPhase("idle");
+      }
+    }, moduleEnterDurationMs);
+  }, [activeModule, clearModuleCanvasTimer, moduleCanvasPhase, moduleTransitionPending, pendingModule]);
 
   useEffect(() => {
     if (isStandaloneRoute) return;
-    document.title = `${cleanMenuLabel(activeModule)} - ${PRODUCT_NAME}`;
-  }, [activeModule, isStandaloneRoute]);
+    document.title = `${publicMenuLabel(payload?.menuItems, activeModule)} - ${PRODUCT_NAME}`;
+  }, [activeModule, isStandaloneRoute, payload?.menuItems]);
 
   useEffect(() => {
     if (isStandaloneRoute) return;
@@ -297,11 +400,22 @@ function App() {
   }, [isStandaloneRoute]);
 
   useEffect(() => {
+    if (isStandaloneRoute || !payload || !progressSyncHandoff.code) return;
+    if (payload.settings.progressSync?.enabled !== false) {
+      setProgressSyncMode(progressSyncHandoff.mode);
+      setProgressSyncInitialCode(progressSyncHandoff.code);
+      setProgressSyncOpen(true);
+      setApiConfigOpen(false);
+    }
+    setProgressSyncHandoff(emptyProgressSyncHandoff);
+  }, [isStandaloneRoute, payload, progressSyncHandoff]);
+
+  useEffect(() => {
     if (isStandaloneRoute || loading || !payload) return;
-    if (!isUserProviderReady(userProvider)) {
+    if (!isUserProviderReady(userProvider) && !progressSyncOpen && !progressSyncHandoff.code) {
       setApiConfigOpen(true);
     }
-  }, [activeModule, isStandaloneRoute, loading, payload, userProvider]);
+  }, [activeModule, isStandaloneRoute, loading, payload, progressSyncHandoff.code, progressSyncOpen, userProvider]);
 
   useEffect(() => {
     if (isStandaloneRoute || !galleryHydrated) return;
@@ -377,6 +491,12 @@ function App() {
     setWorkspaceDataOpen(true);
   }, []);
 
+  const openProgressSync = useCallback((mode: "send" | "receive") => {
+    setProgressSyncMode(mode);
+    setProgressSyncInitialCode("");
+    setProgressSyncOpen(true);
+  }, []);
+
   const addGalleryItem = useCallback((item: GalleryItem) => {
     setGalleryItems((current) => [item, ...current.filter((entry) => entry.id !== item.id)].slice(0, 50));
   }, []);
@@ -441,11 +561,14 @@ function App() {
       <AppShell
         menuItems={visibleMenuItems}
         activeModule={activeModule}
+        moduleCanvasPhase={moduleCanvasPhase}
         pendingModule={pendingModule}
         moduleTransitionPending={moduleTransitionPending || Boolean(pendingModule)}
-        pendingModuleLabel={pendingModule ? cleanMenuLabel(pendingModule) : ""}
+        pendingModuleLabel={pendingModule ? publicMenuLabel(payload.menuItems, pendingModule) : ""}
         moduleTransitionError={moduleTransitionError}
-        moduleTransitionErrorLabel={moduleTransitionError ? cleanMenuLabel(moduleTransitionError) : ""}
+        moduleTransitionErrorLabel={moduleTransitionError
+          ? publicMenuLabel(payload.menuItems, moduleTransitionError)
+          : ""}
         apiReady={isUserProviderReady(userProvider)}
         maskedApiKey={maskUserProviderKey(userProvider.apiKey)}
         accessAddress={(payload.settings.upstreamBaseUrl || "https://api.xi-ai.cn").replace(/^https?:\/\//i, "").replace(/\/$/, "") || "api.xi-ai.cn"}
@@ -456,6 +579,8 @@ function App() {
           if (path) window.location.assign(path);
         }}
         onOpenWorkspaceData={openWorkspaceData}
+        progressSyncEnabled={payload.settings.progressSync?.enabled !== false}
+        onOpenProgressSync={() => openProgressSync("send")}
         onOpenApiConfig={() => setApiConfigOpen(true)}
         onWorkspaceError={reportWorkspaceError}
       >
@@ -509,6 +634,16 @@ function App() {
           setWorkspaceDataError("");
         }}
       />
+      {payload.settings.progressSync?.enabled !== false && progressSyncOpen ? (
+        <ProgressSyncDialog
+          key={`${progressSyncMode}:${progressSyncInitialCode}`}
+          open
+          initialMode={progressSyncMode}
+          initialCode={progressSyncInitialCode}
+          userProvider={userProvider}
+          onClose={() => setProgressSyncOpen(false)}
+        />
+      ) : null}
     </>
   );
 }

@@ -31,7 +31,7 @@ test("admin publishes a Langflow mapping and the public chat-style page runs it"
     adminConfigured: true
   });
 
-  await page.goto("/admin");
+  await page.goto("/xizi2333");
   await expect(page.locator(".admin-console-layout")).toBeVisible({ timeout: 20_000 });
   await openWorkflowPublishing(page, isMobileProject(testInfo.project.name));
 

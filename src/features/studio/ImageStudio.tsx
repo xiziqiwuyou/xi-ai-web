@@ -1,20 +1,15 @@
 import { useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 
 import {
-  ArrowLeftRight,
   Bot,
   BookOpen,
   CheckCircle2,
   Columns2,
-  Copy,
-  Download,
-  Expand,
-  FileText,
   FileUp,
   GitFork,
+  Image as ImageIcon,
   Languages,
   Loader2,
-  Minus,
   Plus,
   Search,
   Shuffle,
@@ -27,10 +22,10 @@ import { api } from "../../api";
 import { compactModelLabel, modelsForCapability, vendorLabels } from "../../components/workbench";
 import { Dialog, FigmaMenu, type FigmaMenuOption } from "../../components/ui";
 import { isUserProviderReady, userConnectionPayload } from "../settings/userProviderConfig";
-import { loadImageGenerationHistory, saveImageGenerationTiming } from "../workspace/workspaceRepository";
-import { createClientId } from "../../utils/clientId";
 import { filterRequestedImageModels, imageModelCapabilities, imageModelSupportsResolution } from "./imageCapabilities";
-import { estimateImageDurationMs, formatDurationMs } from "./imageGenerationTiming";
+import { fallbackImageDurationMs, formatDurationMs } from "./imageGenerationTiming";
+import ImageResultGallery, { type ImageResultAsset } from "./ImageResultGallery";
+import { imageInputFromResult, type ImageResultTransform } from "./imageResultActions";
 import { StudioModelSelect, useStudioModel, type StudioModuleProps } from "./studioShared";
 
 import type {
@@ -40,6 +35,8 @@ import type {
   GenerationResult,
   ImageAspectRatio,
   ImageGenerationMode,
+  ImageGenerationTimingEstimate,
+  ImageGenerationTimingKey,
   ImageInputPayload,
   ImageOutputFormat,
   ImageResolution,
@@ -48,12 +45,6 @@ import type {
   UserProviderConfig
 } from "../../types";
 
-
-const imageCountOptions: readonly FigmaMenuOption[] = [
-  { value: "1", label: "1 张" },
-  { value: "2", label: "2 张" },
-  { value: "4", label: "4 张" }
-];
 
 const imageQualityOptions: readonly FigmaMenuOption[] = [
   { value: "low", label: "低", detail: "优先生成速度" },
@@ -84,6 +75,7 @@ const imageSizePresets = [
 
 type ImageSizePresetValue = (typeof imageSizePresets)[number]["value"];
 type ImageQuality = "low" | "medium" | "high";
+type PromptVariant = "original" | "optimized";
 
 const defaultImageSizePreset = imageSizePresets[0];
 const fixedImageOutputFormat: ImageOutputFormat = "png";
@@ -170,6 +162,14 @@ function supportsImageResolution(model: ModelCatalogEntry | undefined, resolutio
   return false;
 }
 
+function supportsLocalImageEditing(model: ModelCatalogEntry | undefined) {
+  if (!model || !imageModelCapabilities(model).supportsEdit) return false;
+  return !(
+    model.vendor === "botcf" &&
+    /^gemini-[a-z0-9.-]*image(?:$|[-_])/i.test(model.model)
+  );
+}
+
 function readImageFile(file: File, maxUploadMb = 8, pngOnly = false) {
   return new Promise<ImageInputPayload>((resolve, reject) => {
     if (pngOnly ? file.type !== "image/png" : !/^image\/(png|jpeg|webp)$/i.test(file.type)) {
@@ -200,14 +200,12 @@ export function ImageStudio({
   onRequestApiConfig
 }: StudioModuleProps) {
   const [prompt, setPrompt] = useState(defaultImagePrompt);
-  const [originalPrompt, setOriginalPrompt] = useState(defaultImagePrompt);
   const [optimizedPrompt, setOptimizedPrompt] = useState("");
   const [promptOptimizerModelId, setPromptOptimizerModelId] = useState("");
   const [optimizingPrompt, setOptimizingPrompt] = useState(false);
-  const [promptPreviewOpen, setPromptPreviewOpen] = useState(false);
+  const [promptVariant, setPromptVariant] = useState<PromptVariant>("original");
   const [mode, setMode] = useState<ImageGenerationMode>("generate");
   const [sizePresetValue, setSizePresetValue] = useState<ImageSizePresetValue>(defaultImageSizePreset.value);
-  const [count, setCount] = useState("1");
   const [quality, setQuality] = useState<ImageQuality>("low");
   const [inputImages, setInputImages] = useState<ImageInputPayload[]>([]);
   const [referenceImageUrls, setReferenceImageUrls] = useState<string[]>([]);
@@ -217,13 +215,14 @@ export function ImageStudio({
   const [busy, setBusy] = useState(false);
   const [startedAtMs, setStartedAtMs] = useState(0);
   const [elapsedMs, setElapsedMs] = useState(0);
-  const [estimatedMs, setEstimatedMs] = useState(30_000);
-  const [timingHistory, setTimingHistory] = useState<Awaited<ReturnType<typeof loadImageGenerationHistory>>>([]);
+  const [timingEstimate, setTimingEstimate] = useState<ImageGenerationTimingEstimate | null>(null);
   const [notice, setNotice] = useState("");
   const [result, setResult] = useState<GenerationResult | null>(null);
+  const imageFormRef = useRef<HTMLFormElement | null>(null);
   const inputImageRef = useRef<HTMLInputElement | null>(null);
   const maskImageRef = useRef<HTMLInputElement | null>(null);
   const generationAbortRef = useRef<AbortController | null>(null);
+  const timingEstimateRequestRef = useRef(0);
   const { models, selectedModel, chooseModel } = useStudioModel(
     modelCatalog,
     "image",
@@ -238,6 +237,12 @@ export function ImageStudio({
   const usesBotcfGemini = Boolean(
     usesBotcf && /^gemini-[a-z0-9.-]*image(?:$|[-_])/i.test(selectedModel?.model || "")
   );
+  const resultEditModel = useMemo(
+    () => supportsLocalImageEditing(selectedModel)
+      ? selectedModel
+      : models.find((model) => supportsLocalImageEditing(model)),
+    [models, selectedModel]
+  );
   const maxReferenceImages = imageCapabilities.maxReferenceImages;
   const inputImage = inputImages[0] || null;
   const sizeOptions = useMemo(
@@ -245,16 +250,34 @@ export function ImageStudio({
     [selectedModel]
   );
   const selectedSizePreset = imageSizePreset(sizePresetValue);
+  const timingKey = useMemo<ImageGenerationTimingKey>(() => ({
+    modelId: selectedModel?.id || "",
+    mode,
+    resolution: selectedSizePreset.resolution,
+    aspectRatio: selectedSizePreset.aspectRatio,
+    count: 1
+  }), [mode, selectedModel?.id, selectedSizePreset.aspectRatio, selectedSizePreset.resolution]);
+  const estimatedMs = timingEstimate?.estimatedMs ?? fallbackImageDurationMs(timingKey);
+  const timingSampleLabel = timingEstimate?.sampleCount
+    ? `基于服务端最近 ${timingEstimate.sampleCount} 次记录（最多 10 次）`
+    : "暂无服务端记录，使用基础估算";
+  const outputOrientation = selectedSizePreset.aspectRatio === "9:16"
+    ? "portrait"
+    : selectedSizePreset.aspectRatio === "16:9"
+      ? "landscape"
+      : "square";
+  const outputAspectRatio = selectedSizePreset.aspectRatio.replace(":", " / ");
   const chatModels = useMemo(() => modelsForCapability(modelCatalog, "chat"), [modelCatalog]);
   const promptOptimizerModel = chatModels.find((model) => model.id === promptOptimizerModelId) || chatModels[0];
+  const activePrompt = promptVariant === "optimized" && optimizedPrompt ? optimizedPrompt : prompt;
   const resultImages = useMemo(
-    () => result?.assets?.filter((asset) => asset.type === "image") || [],
+    () => result?.assets?.filter((asset): asset is ImageResultAsset => asset.type === "image") || [],
     [result]
   );
   const generatedInspirations = useMemo(() => {
     const items: Array<{ src: string; alt: string; prompt: string }> = [];
     resultImages.forEach((asset, index) => {
-      items.push({ src: asset.url, alt: `本次生成图像 ${index + 1}`, prompt: prompt.trim() });
+      items.push({ src: asset.url, alt: `本次生成图像 ${index + 1}`, prompt: activePrompt.trim() });
     });
     galleryItems
       .filter((item) => item.sourceModule === "image")
@@ -266,7 +289,7 @@ export function ImageStudio({
           });
       });
     return [...new Map(items.map((item) => [item.src, item])).values()];
-  }, [galleryItems, prompt, resultImages]);
+  }, [activePrompt, galleryItems, resultImages]);
   const inspirationPool = useMemo(
     () => [
       ...new Map(
@@ -284,10 +307,6 @@ export function ImageStudio({
     );
   }, [batchOffset, inspirationPool]);
 
-  useEffect(() => {
-    void loadImageGenerationHistory().then(setTimingHistory);
-  }, []);
-
   useEffect(() => () => generationAbortRef.current?.abort(), []);
 
   useEffect(() => {
@@ -299,14 +318,25 @@ export function ImageStudio({
   }, [busy, startedAtMs]);
 
   useEffect(() => {
-    setEstimatedMs(estimateImageDurationMs(timingHistory, {
-      modelId: selectedModel?.id || "",
-      mode,
-      resolution: selectedSizePreset.resolution,
-      aspectRatio: selectedSizePreset.aspectRatio,
-      count: Number(count) || 1
-    }));
-  }, [count, mode, selectedModel?.id, selectedSizePreset, timingHistory]);
+    if (!timingKey.modelId) {
+      timingEstimateRequestRef.current += 1;
+      setTimingEstimate(null);
+      return undefined;
+    }
+    const controller = new AbortController();
+    const requestId = timingEstimateRequestRef.current + 1;
+    timingEstimateRequestRef.current = requestId;
+    setTimingEstimate(null);
+    void api.imageTimingEstimate(timingKey, controller.signal)
+      .then((estimate) => {
+        if (timingEstimateRequestRef.current === requestId) setTimingEstimate(estimate);
+      })
+      .catch((error) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        if (timingEstimateRequestRef.current === requestId) setTimingEstimate(null);
+      });
+    return () => controller.abort();
+  }, [timingKey]);
 
   useEffect(() => {
     setBatchOffset((current) => inspirationPool.length ? current % inspirationPool.length : 0);
@@ -333,22 +363,27 @@ export function ImageStudio({
   }, [selectedModel, selectedSizePreset]);
 
   const optimizePrompt = async () => {
-    if (!prompt.trim() || !promptOptimizerModel) return;
+    const sourcePrompt = activePrompt.trim();
+    if (!sourcePrompt || !promptOptimizerModel) return;
     if (!isUserProviderReady(userProvider)) {
       onRequestApiConfig();
       return;
     }
     setOptimizingPrompt(true);
     setNotice("");
-    setOriginalPrompt(prompt.trim());
+    setPrompt(sourcePrompt);
+    setPromptVariant("original");
+    setOptimizedPrompt("");
     try {
       const response = await api.optimizeImagePrompt({
         connection: userConnectionPayload(userProvider),
         modelId: promptOptimizerModel.id,
-        prompt: prompt.trim()
+        prompt: sourcePrompt
       });
-      setOptimizedPrompt(response.prompt);
-      setPromptPreviewOpen(true);
+      const nextPrompt = response.prompt.trim();
+      if (!nextPrompt) throw new Error("优化后的提示词为空");
+      setOptimizedPrompt(nextPrompt);
+      setPromptVariant("optimized");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "提示词优化失败");
     } finally {
@@ -415,13 +450,45 @@ export function ImageStudio({
     }
   };
 
+  const editGeneratedImage = async (
+    asset: ImageResultAsset,
+    transform: ImageResultTransform,
+    index: number
+  ) => {
+    if (!resultEditModel) throw new Error("暂无支持本地图生图的可用模型");
+    const fileName = `generated-result-${index + 1}.png`;
+    let image: ImageInputPayload;
+    try {
+      image = await imageInputFromResult(asset.url, transform, fileName);
+    } catch (directReadError) {
+      if (!/^https:\/\//i.test(asset.url)) throw directReadError;
+      const imported = await api.importImageResult(asset.url);
+      image = await imageInputFromResult(imported.dataUrl, transform, fileName);
+    }
+    if (selectedModel?.id !== resultEditModel.id) chooseModel(resultEditModel.id);
+    setMode("edit");
+    setInputImages([image]);
+    setReferenceImageUrls([]);
+    setReferenceImageUrlDraft("");
+    setMaskImage(null);
+    setNotice("已将结果图片加入图生图模式");
+    window.setTimeout(() => window.requestAnimationFrame(() => {
+      imageFormRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }), 0);
+  };
+
+  const regenerateImage = () => {
+    setNotice("");
+    window.requestAnimationFrame(() => imageFormRef.current?.requestSubmit());
+  };
+
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (!isUserProviderReady(userProvider)) {
       onRequestApiConfig();
       return;
     }
-    if (!selectedModel || !prompt.trim()) {
+    if (!selectedModel || !activePrompt.trim()) {
       setNotice("请输入画面描述并选择模型。");
       return;
     }
@@ -434,23 +501,21 @@ export function ImageStudio({
       return;
     }
     setBusy(true);
+    setResult(null);
     const requestStartedAt = Date.now();
-    const requestStartedIso = new Date(requestStartedAt).toISOString();
     setStartedAtMs(requestStartedAt);
     setElapsedMs(0);
     setNotice("");
-    let requestSucceeded = false;
-    let requestCancelled = false;
     const controller = new AbortController();
     generationAbortRef.current = controller;
     try {
       const nextResult = await api.generate("image", {
         connection: userConnectionPayload(userProvider),
         modelId: selectedModel.id,
-        prompt: prompt.trim(),
+        prompt: activePrompt.trim(),
         options: {
           mode,
-          count: Number(count),
+          count: 1,
           aspectRatio: selectedSizePreset.aspectRatio,
           imageSize: selectedSizePreset.resolution,
           size: imageRequestSize(selectedSizePreset.aspectRatio, selectedSizePreset.resolution),
@@ -463,33 +528,20 @@ export function ImageStudio({
         }
       }, controller.signal);
       setResult(nextResult);
-      requestSucceeded = true;
+      if (nextResult.timingEstimate) {
+        timingEstimateRequestRef.current += 1;
+        setTimingEstimate(nextResult.timingEstimate);
+      }
       onGenerationResult({
         ...nextResult,
         sourceModule: "image",
-        prompt: prompt.trim(),
+        prompt: activePrompt.trim(),
         modelId: selectedModel.id
       });
     } catch (error) {
-      requestCancelled = controller.signal.aborted;
+      const requestCancelled = controller.signal.aborted;
       setNotice(requestCancelled ? "已取消本次图片生成" : error instanceof Error ? error.message : "图像生成失败");
     } finally {
-      const completedAt = new Date().toISOString();
-      const timingRecord: Awaited<ReturnType<typeof loadImageGenerationHistory>>[number] = {
-        id: createClientId("image-timing"),
-        modelId: selectedModel.id,
-        mode,
-        resolution: selectedSizePreset.resolution,
-        aspectRatio: selectedSizePreset.aspectRatio,
-        count: Number(count) || 1,
-        status: requestSucceeded ? "completed" : requestCancelled ? "cancelled" : "failed",
-        startedAt: requestStartedIso,
-        completedAt,
-        updatedAt: completedAt,
-        durationMs: Date.now() - requestStartedAt
-      };
-      setTimingHistory((current) => [timingRecord, ...current].slice(0, 60));
-      void saveImageGenerationTiming(timingRecord).catch(() => undefined);
       if (generationAbortRef.current === controller) {
         generationAbortRef.current = null;
         setBusy(false);
@@ -507,7 +559,7 @@ export function ImageStudio({
       </header>
 
       <div className="figma-image-builder">
-        <form className="figma-image-form" onSubmit={submit}>
+        <form ref={imageFormRef} className="figma-image-form" onSubmit={submit}>
         <section className="figma-image-composer" aria-labelledby="image-prompt-title">
           <div className="figma-image-mode-row">
             <div className="figma-section-kicker">
@@ -534,42 +586,66 @@ export function ImageStudio({
               </button>
             </div>
           </div>
-          <textarea
-            aria-label="图像提示词"
-            value={prompt}
-            disabled={busy}
-            onChange={(event) => {
-              setPrompt(event.target.value);
-              if (event.target.value !== optimizedPrompt) setPromptPreviewOpen(false);
-            }}
-            rows={3}
-            placeholder="描述你想看见的画面..."
-          />
-          <div className="figma-image-prompt-tools">
-            <button type="button" disabled={busy || optimizingPrompt || !prompt.trim() || !promptOptimizerModel} onClick={() => void optimizePrompt()}>
-              {optimizingPrompt ? <Loader2 className="spin" size={14} /> : <Sparkles size={14} />}
-              {optimizingPrompt ? "正在优化" : "优化提示词"}
-            </button>
-            <FigmaMenu
-              className="figma-image-optimizer-menu"
-              label="优化模型"
-              value={promptOptimizerModel?.id || ""}
-              options={chatModels.map((model) => ({ value: model.id, label: compactModelLabel(model), detail: model.vendorLabel || vendorLabels[model.vendor] || model.vendor }))}
-              onChange={setPromptOptimizerModelId}
-              ariaLabel="提示词优化模型"
-              disabled={busy || optimizingPrompt || !chatModels.length}
+          <div className="figma-image-prompt-field">
+            <textarea
+              aria-label="图像提示词"
+              value={activePrompt}
+              disabled={busy || optimizingPrompt}
+              aria-busy={optimizingPrompt}
+              onChange={(event) => {
+                setPrompt(event.target.value);
+                setOptimizedPrompt("");
+                setPromptVariant("original");
+              }}
+              rows={3}
+              placeholder="描述你想看见的画面..."
             />
-          </div>
-          {promptPreviewOpen && optimizedPrompt ? (
-            <div className="figma-image-prompt-preview" aria-label="优化后的提示词">
-              <div><span>优化预览</span><button type="button" onClick={() => setPromptPreviewOpen(false)} aria-label="关闭优化预览"><X size={14} /></button></div>
-              <p>{optimizedPrompt}</p>
-              <footer>
-                <button type="button" onClick={() => { setPrompt(originalPrompt); setPromptPreviewOpen(false); }}>恢复原文</button>
-                <button type="button" className="active" onClick={() => { setOriginalPrompt(prompt); setPrompt(optimizedPrompt); setPromptPreviewOpen(false); }}>应用优化</button>
-              </footer>
+            <div className="figma-image-prompt-tools">
+              <div className="figma-image-prompt-tool-group">
+                <button
+                  type="button"
+                  disabled={busy || optimizingPrompt || !activePrompt.trim() || !promptOptimizerModel}
+                  onClick={() => void optimizePrompt()}
+                >
+                  {optimizingPrompt ? <Loader2 className="spin" size={14} /> : <Sparkles size={14} />}
+                  {optimizingPrompt ? "正在优化" : "优化提示词"}
+                </button>
+                <FigmaMenu
+                  className="figma-image-optimizer-menu"
+                  label="优化模型"
+                  triggerPrefix="优化模型"
+                  value={promptOptimizerModel?.id || ""}
+                  options={chatModels.map((model) => ({ value: model.id, label: compactModelLabel(model), detail: model.vendorLabel || vendorLabels[model.vendor] || model.vendor }))}
+                  onChange={setPromptOptimizerModelId}
+                  ariaLabel="提示词优化模型"
+                  disabled={busy || optimizingPrompt || !chatModels.length}
+                />
+              </div>
+              <div className="figma-image-prompt-variants" role="group" aria-label="提示词版本切换">
+                <button
+                  type="button"
+                  className={promptVariant === "original" ? "active" : ""}
+                  aria-label="使用优化前的提示词"
+                  aria-pressed={promptVariant === "original"}
+                  title="使用优化前的提示词"
+                  onClick={() => setPromptVariant("original")}
+                >
+                  优化前
+                </button>
+                <button
+                  type="button"
+                  className={promptVariant === "optimized" ? "active" : ""}
+                  aria-label="使用优化后的提示词"
+                  aria-pressed={promptVariant === "optimized"}
+                  title={optimizedPrompt ? "使用优化后的提示词" : "请先优化提示词"}
+                  disabled={!optimizedPrompt}
+                  onClick={() => setPromptVariant("optimized")}
+                >
+                  优化后
+                </button>
+              </div>
             </div>
-          ) : null}
+          </div>
           {mode === "edit" ? (
             <div className="figma-image-upload-grid">
               {!usesBotcfGemini ? (
@@ -691,10 +767,6 @@ export function ImageStudio({
           <section className="figma-image-control-deck figma-image-parameters" aria-labelledby="image-parameters-title">
             <div className="figma-image-control-heading">
               <h2 id="image-parameters-title">创作参数</h2>
-              <div className="figma-image-eta" aria-live="polite">
-                <span>{busy ? "正在生成" : "预计耗时"}</span>
-                <strong>{busy ? `${formatDurationMs(elapsedMs)} / 约 ${formatDurationMs(estimatedMs)}` : formatDurationMs(estimatedMs)}</strong>
-              </div>
             </div>
             <div className="figma-image-parameter-grid">
               <StudioModelSelect
@@ -726,22 +798,8 @@ export function ImageStudio({
                 disabled={busy}
                 placement="up"
               />
-              <FigmaMenu
-                className="figma-studio-field"
-                label="生成数量"
-                value={count}
-                options={imageCountOptions}
-                onChange={setCount}
-                ariaLabel="生成数量"
-                disabled={busy}
-                placement="up"
-              />
             </div>
             <div className="figma-image-composer-footer">
-              <div className="figma-image-timing-meta">
-                <span>{timingHistory.length ? `基于 ${timingHistory.filter((item) => item.status === "completed").length} 次记录` : "首次生成将建立估算记录"}</span>
-                {busy ? <div className="figma-image-progress"><i style={{ width: `${Math.min(92, Math.round((elapsedMs / Math.max(estimatedMs, 1)) * 100))}%` }} /></div> : null}
-              </div>
               {busy ? (
                 <button type="button" className="figma-secondary-action" onClick={() => generationAbortRef.current?.abort()}>
                   <X size={16} />
@@ -756,29 +814,48 @@ export function ImageStudio({
             </div>
           </section>
         </section>
-        </form>
+      </form>
+
+      <aside className="figma-image-output-pane" aria-label="本次生成结果">
+        <div className="figma-image-output-shell">
+          {resultImages.length ? (
+            <ImageResultGallery
+              assets={resultImages}
+              aspectRatio={selectedSizePreset.aspectRatio}
+              busy={busy}
+              canEdit={Boolean(resultEditModel)}
+              onRegenerate={regenerateImage}
+              onEdit={editGeneratedImage}
+            />
+          ) : (
+            <section className={`figma-image-output-state ${busy ? "is-loading" : "is-idle"}`} aria-labelledby="image-output-title">
+              <header>
+                <h2 id="image-output-title">本次结果</h2>
+                <span>{busy ? "生成中" : "等待生成"}</span>
+              </header>
+              <div
+                className="figma-image-output-frame"
+                data-orientation={outputOrientation}
+                style={{ aspectRatio: outputAspectRatio }}
+              >
+                <div className="figma-image-output-status" role={busy ? "status" : undefined} aria-live={busy ? "polite" : undefined}>
+                  {busy ? <span className="figma-image-loading-spinner" aria-hidden="true" /> : <ImageIcon size={28} aria-hidden="true" />}
+                  <strong>{busy ? "正在生成" : "等待生成"}</strong>
+                  <small>
+                    {busy
+                      ? `${formatDurationMs(elapsedMs)} / 预计 ${formatDurationMs(estimatedMs)}`
+                      : `预计 ${formatDurationMs(estimatedMs)}`}
+                  </small>
+                </div>
+              </div>
+              <footer>{timingSampleLabel}</footer>
+            </section>
+          )}
+        </div>
+      </aside>
 
       {notice ? <p className="figma-module-notice" role="alert">{notice}</p> : null}
       {!models.length ? <p className="figma-module-notice" role="status">暂无可用图像模型。</p> : null}
-
-      {resultImages.length ? (
-        <section className="figma-image-results" aria-labelledby="image-results-title">
-          <header>
-            <h2 id="image-results-title">本次结果</h2>
-            <span>{resultImages.length} 张</span>
-          </header>
-          <div role="list" aria-label="本次生成图片">
-            {resultImages.map((asset, index) => (
-              <figure key={`${asset.url}-${index}`} role="listitem">
-                <img src={asset.url} alt={`生成结果 ${index + 1}`} />
-                <a href={asset.url} download={`xi-ai-image-${index + 1}.${fixedImageOutputFormat}`} aria-label={`下载生成结果 ${index + 1}`} title="下载图片">
-                  <Download size={15} />
-                </a>
-              </figure>
-            ))}
-          </div>
-        </section>
-      ) : null}
 
       <section className="figma-inspiration-section" aria-labelledby="inspiration-title">
         <header>
@@ -801,6 +878,8 @@ export function ImageStudio({
               className={`figma-inspiration-card figma-inspiration-card-${(index % 3) + 1}`}
               onClick={() => {
                 setPrompt(item.prompt);
+                setOptimizedPrompt("");
+                setPromptVariant("original");
               }}
               aria-label={`复用灵感：${item.alt}`}
             >

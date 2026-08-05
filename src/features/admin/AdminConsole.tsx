@@ -69,6 +69,7 @@ import type {
   SiteSettings,
   ToolSetting
 } from "../../types";
+import type { AdminCredentialUpdate } from "../../types";
 
 
 export function AdminConsole({
@@ -79,7 +80,8 @@ export function AdminConsole({
   onError,
   onBootstrapChange,
   onPublicRefresh,
-  onLogout
+  onLogout,
+  onCredentialsChanged
 }: {
   bootstrap: AdminBootstrapPayload;
   notice: string;
@@ -89,6 +91,7 @@ export function AdminConsole({
   onBootstrapChange: (payload: AdminBootstrapPayload) => void;
   onPublicRefresh: () => Promise<unknown>;
   onLogout: () => Promise<void>;
+  onCredentialsChanged: (username: string) => void;
 }) {
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const contentScrollRef = useRef<HTMLDivElement | null>(null);
@@ -918,9 +921,14 @@ export function AdminConsole({
 
 {activeSection === "site" ? (
         <AdminSiteSection
+          adminUsername={bootstrap.adminUsername}
           settings={settingsDraft}
           onChange={(patch) => setSettingsDraft((current) => ({ ...current, ...patch }))}
           onSave={() => void saveSettings()}
+          onCredentialsSave={async (credentials: AdminCredentialUpdate) => {
+            const result = await api.updateAdminCredentials(credentials);
+            onCredentialsChanged(result.username);
+          }}
         />
       ) : null}
 

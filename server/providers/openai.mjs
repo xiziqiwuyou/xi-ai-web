@@ -29,6 +29,11 @@ function splitSystem(messages = []) {
   return { system, input };
 }
 
+function responseInput(provider, system, input) {
+  if (provider?.kind === "openai" || !system) return input;
+  return [{ role: "developer", content: system }, ...input];
+}
+
 function mapOpenAIContent(content) {
   if (!Array.isArray(content)) return content || "";
   return content
@@ -194,9 +199,9 @@ async function completeWithTools({
       headers: authHeaders(provider),
       body: responseRequestBody({
         model,
-        input,
+        input: responseInput(provider, system, input),
         previousResponseId,
-        instructions: previousResponseId ? "" : system,
+        instructions: system,
         temperature,
         topP,
         reasoningEffort,
@@ -251,7 +256,7 @@ async function completeText(params) {
     headers: authHeaders(provider),
     body: responseRequestBody({
       model,
-      input,
+      input: responseInput(provider, system, input),
       instructions: system,
       temperature,
       topP,

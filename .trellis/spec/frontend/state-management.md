@@ -45,11 +45,11 @@ Rules:
 2. Invalid or unavailable paths fall back to the configured default, then the first available item.
 3. User navigation uses `history.pushState`; canonical correction uses `replaceState`; `popstate` restores module state.
 4. The backend owns order, enabled state, and visibility. The visible labels and notes are fixed by the exact Figma contract in `TopBar`.
-5. `/admin` and `/knowledge` are exact isolated routes. Neither is added to the eight-item public navigation or allowed to load public bootstrap/provider state.
+5. `/xizi2333` and `/knowledge` are exact isolated routes. Neither is added to the eight-item public navigation or allowed to load public bootstrap/provider state. Legacy `/admin` is an unknown public route and must not mount Admin UI.
 
 The `/knowledge` portal may read the theme mirror only. It must not initialize public BYOK state, gallery/workspace hydration, or search-service state. Passwords and recovery codes never enter `localStorage`, `sessionStorage`, IndexedDB, URL state, or workspace export. A one-time recovery code is cleared from React state immediately after the user completes its mandatory acknowledgement.
 
-Knowledge Admin state stays inside the address-only `/admin` tree. The six destination IDs are part of the typed Admin navigation state, not public URL state. Filters and opaque cursors may survive only while their destination remains mounted; settings and account writes always submit the last server `version`. One-time invite/reset plaintext is deliberately cleared on destination change, Admin logout, refresh, or component unmount and must never enter Web Storage, IndexedDB, query strings, bootstrap data, audit metadata, or generic notification history.
+Knowledge Admin state stays inside the address-only `/xizi2333` tree. The six destination IDs are part of the typed Admin navigation state, not public URL state. Filters and opaque cursors may survive only while their destination remains mounted; settings and account writes always submit the last server `version`. One-time invite/reset plaintext is deliberately cleared on destination change, Admin logout, refresh, or component unmount and must never enter Web Storage, IndexedDB, query strings, bootstrap data, audit metadata, or generic notification history.
 
 Cloud library reads are server projections keyed by stable base/document IDs. Pending uploads may hold one short-lived `KnowledgeUploadGrant` only for the active transfer; its temporary key, secret, token, and server-generated object path never enter `sessionStorage`, IndexedDB, workspace archives, conversations, URL state, or retry metadata. A reload restores document status from the server and requests a new upload flow rather than persisting or replaying expired credentials.
 
@@ -73,7 +73,7 @@ const publicRoutes: ReadonlyArray<{ id: ModuleId; path: `/${string}` }>;
 - Route order is `chat`, `image`, `agents`, `workflows`, `ppt`, `mindmap`, `assistants`, `translate`.
 - Paths are `/chat`, `/image`, `/agents`, `/workflows`, `/ppt`, `/mindmap`, `/assistants`, `/translate`.
 - Visible labels are `AI 对话`, `图像生成`, `智能体`, `工作流`, `AI 一键 PPT`, `思维导图`, `助手库`, `翻译`.
-- `/` canonicalizes to `/chat`; `/admin` remains address-only.
+- `/` canonicalizes to `/chat`; `/xizi2333` remains address-only and `/admin` follows unknown-public-route fallback.
 - BYOK values stay under `cherry-web-user-provider` in `sessionStorage` and never enter bootstrap data.
 
 ### 4. Validation & Error Matrix
@@ -84,7 +84,8 @@ const publicRoutes: ReadonlyArray<{ id: ModuleId; path: `/${string}` }>;
 | Hidden destination | Do not render or select it |
 | Disabled destination | Render disabled when visible; do not navigate to it |
 | Missing URL or Key | Open the required non-dismissible BYOK dialog; the shell may render only the masked replacement row and must not provide a second credential editor |
-| `/admin` requested | Render Admin directly without public bootstrap or navigation |
+| `/xizi2333` requested | Render Admin directly without public bootstrap or navigation |
+| `/admin` requested | Never mount Admin; resolve through the normal unknown public path behavior |
 
 ### 5. Good/Base/Bad Cases
 
@@ -139,6 +140,8 @@ Automation's independent network search may still use `xi-ai-web-search-service`
 
 Assistant launch uses `xi-ai-web-assistant-launch` with `{ version, assistantId, starterPrompt?, requestedAt }`. Chat consumes it only after conversation hydration, removes it before creating state, validates an exact enabled public assistant, creates one independent conversation, and leaves all existing conversation bindings unchanged. The legacy `aistudio-selected-assistant` key is read once for compatibility and removed. Invalid, stale, disabled, or missing IDs are reported and never rebound to the first assistant.
 
+Ordinary Chat conversations use `assistantId: ""` as the explicit neutral binding. Fresh and manually created conversations show no Assistant badge and omit `assistantId` from their Provider request. Only Assistant-library launch creates a non-empty binding; existing non-empty bindings must continue to resolve exactly or fail visibly.
+
 ## Scenario: Saved Chat Session Settings
 
 ### 1. Scope / Trigger
@@ -155,12 +158,12 @@ type PersistedSessionSettings = Omit<SessionSettingsSnapshot, "skillIds">;
 ### 3. Contracts
 
 - Persist only in `window.sessionStorage`; never use `localStorage`, IndexedDB, server settings, URLs, or bootstrap payloads.
-- Persist only UI/session fields: assistant avatar, user avatar data URL, message style, temperature, Top-P, context-window size, referenced-history message count, optional maximum-output state/value, stream output, and tool mode.
+- Persist only UI/session fields: assistant avatar, user avatar data URL, message style, temperature, Top-P, context-window size, referenced-history message count, optional maximum-output state/value, stream output, and tool mode. The composer referenced-history menu updates its visible state and this record immediately; it is not part of the Session Settings draft/Cancel transaction.
 - Context selection applies both saved limits: cap to the latest configured message count, then remove older messages until the estimated history fits the selected 4K through 1M Token window after output/system reserves.
 - A null referenced-history count means unlimited messages before Token-window trimming. A disabled maximum-output setting omits `maxTokens` from the request; the saved manual value remains available if the user enables it later.
 - Do not persist per-conversation Skill selections in this record. Skill IDs stay on each conversation's `SessionUiState`.
 - Persisted select values must be sanitized against the same constants that render their `<option>` elements.
-- Save writes the record. Cancel restores the in-memory snapshot and does not update the record.
+- Session Settings Save writes its draft fields. Cancel restores that dialog's in-memory snapshot and does not update the record; it must not roll back referenced-history changes made through the composer menu.
 
 ### 4. Validation & Error Matrix
 
@@ -180,7 +183,7 @@ type PersistedSessionSettings = Omit<SessionSettingsSnapshot, "skillIds">;
 
 ### 6. Tests Required
 
-- E2E asserts the record is in `sessionStorage`, absent from `localStorage`, survives reload, and restores visible controls.
+- E2E asserts the record is in `sessionStorage`, absent from `localStorage`, survives reload, and restores visible controls. The composer history-menu test must also assert immediate persistence and the next request's projected history IDs.
 - Chat request tests assert saved `temperature`, `topP`, `maxTokens`, message-count capping, Token-budget trimming, and tool-mode behavior reach the outbound request path.
 - Static contracts assert the storage key, `sessionStorage` usage, select-option sanitizers, and no Markdown fallback for unrelated generated artifacts.
 
@@ -218,6 +221,7 @@ restoreWorkspaceArchive(envelope, mode: "merge" | "replace"): Promise<void>;
 - Legacy localStorage and `cherry-web-knowledge-db` data migrate once under `meta.legacyMigrationV1`.
 - Legacy sources are cleared only after the unified migration transaction commits.
 - API URL/Key and admin data are never workspace datasets and never enter an export.
+- Image generation ETA is server-global operational metadata. `ImageStudio` must not read or write `imageGenerationHistory`; legacy archive records remain schema-compatible only and do not influence estimates.
 - Restore suspends new writes, waits for queued writes, commits all stores atomically, then reloads the page.
 - Import rejects duplicate IDs/keys before IndexedDB writes can collapse records.
 
@@ -365,6 +369,71 @@ if (!compatibility.compatible) reject(compatibility.reason);
 - Shared dialogs: the dialog root owns scrolling and temporarily suspends background owner attributes, including lazy owners mounted during the overlay.
 
 Do not remove or restore parent attributes from a feature mount effect. That creates a lazy-load race and transiently exposes the wrong owner.
+
+## Scenario: Homepage Temporary Progress Sync
+
+### 1. Scope / Trigger
+
+- Trigger: the public shell exposes one-time desktop/mobile workspace transfer without accounts, permanent pairing, or real-time synchronization.
+- `WorkspaceDataDialog` remains file backup/restore only. `TopBar` renders one icon-only sync action beside workspace data and theme controls when `settings.progressSync.enabled !== false`; it is not a navigation destination and must not consume workspace canvas height.
+
+### 2. Signatures
+
+- Frontend entry: `onOpenProgressSync(mode: "send" | "receive")`.
+- QR handoff: same-origin `/chat#sync=<six decimal digits>` when the scanning device receives, or `/chat#sync-send=<six decimal digits>` when it sends.
+- Server rendezvous: `POST /api/progress-sync/sessions`, `POST /api/progress-sync/sessions/join`, authenticated `status/approve/reject/payload/claim`, and `DELETE` cancellation.
+
+### 3. Contracts
+
+- Authorization codes are exactly six decimal digits and are rendezvous identifiers only. High-entropy creator/join tokens, ECDH transcript fingerprint comparison, sender approval, expiry, one pending receiver, and attempt limits remain authoritative.
+- Parse only `^#sync=(\d{6})$` and `^#sync-send=(\d{6})$`. Remove either fragment immediately with `history.replaceState`; the first prefills receive mode and the second prefills send mode. Both require an explicit user click and never auto-join, capture, upload, claim, or restore from URL state.
+- QR generation is local. The encoded value may contain only origin, `/chat`, the direction marker, and the six-digit fragment; no API Key, role token, public/private key, nonce, ciphertext, workspace data, or derived key.
+- Progress-sync authorization follows semantic roles, not connection order. Omitted `creatorRole` preserves the legacy sender-created flow; receiver-created reverse QR sessions still allow only the semantic sender to approve/reject/upload and only the semantic receiver to claim/restore.
+- Desktop send mode must visibly identify the QR workflow before session creation. Use `生成手机同步二维码` for the primary action and replace the instructional placeholder with the generated QR plus six-digit fallback code; mobile send mode keeps the code-only flow because a phone cannot scan its own display.
+- Sender/receiver ephemeral keys, role tokens, code, fingerprint, ciphertext, and decrypted preview stay in mounted component memory only. Refresh or close cancels the attempt.
+- Stable workspace data continues to come from IndexedDB. Optional API Key transfer starts unchecked, requires a second confirmation, stays inside encrypted payload bytes, and is written to `sessionStorage` only after atomic workspace restore succeeds.
+- Resume accepts only the canonical public route for its declared module. Do not restore Admin, knowledge-account, query-string, hash, in-flight request, attachment draft, or open-dialog state.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| Admin disables temporary sync | Hide every shell sync icon, remove a valid handoff fragment, and do not open the dialog |
+| Fragment is absent or not exactly six digits | Do not start or prefill synchronization |
+| Receiver opens QR URL | Clear the fragment, show prefilled receive UI, and wait for explicit confirmation |
+| Phone opens a reverse QR URL | Clear the fragment, show send confirmation, and make no session/join/upload request until the phone explicitly confirms |
+| Fingerprints differ or sender rejects | Cancel; never upload, claim, or restore |
+| Receiver revision changes after preview | Refresh the local revision warning and require confirmation again |
+| Restore or optional-Key write fails | Roll back the workspace and preserve the previous session provider |
+
+### 5. Good/Base/Bad Cases
+
+- Good: either direction begins with a desktop-generated local QR; phone receive mode confirms a prefilled code, while phone send mode explicitly confirms capture, and both compare the fingerprint before one encrypted snapshot moves.
+- Base: phone shows a six-digit code and desktop enters it through `从手机同步`.
+- Bad: QR embeds an API Key, the code is used as an AES key, scanning auto-joins, disabled Admin state still opens the dialog, sync is duplicated inside `WorkspaceDataDialog`, or a launcher card consumes Chat workspace height.
+
+### 6. Tests Required
+
+- Server tests: exact six-digit generation/validation, attempt limits, token hashing, no-store responses, configured raw payload limit, approval binding, one-time claim, and opaque storage.
+- Playwright cross-device test: desktop-to-phone QR, phone-to-desktop reverse QR, phone-code manual fallback, identical fingerprints, sender approval, optional-Key second confirmation, route/model resume, no pre-confirm request, and actual IndexedDB restore.
+- Workspace-data test: Admin-disabled launcher is absent, valid fragment is removed without opening sync, and file export/import remains available.
+- Mobile layout test: launcher/dialog controls are at least 44px and stay inside 360/390/412px viewports.
+
+### 7. Wrong vs Correct
+
+```ts
+// Wrong: URL possession immediately joins a sync session.
+if (location.hash.startsWith("#sync=")) join(location.hash.slice(6));
+
+// Correct: accept only six digits, clear URL state, prefill, then wait for user confirmation.
+const receiveCode = /^#sync=(\d{6})$/u.exec(location.hash)?.[1];
+const sendCode = /^#sync-send=(\d{6})$/u.exec(location.hash)?.[1];
+history.replaceState(history.state, "", `${location.pathname}${location.search}`);
+if (progressSyncEnabled && receiveCode) openProgressSync("receive", receiveCode);
+if (progressSyncEnabled && sendCode) openProgressSync("send", sendCode);
+```
+
+- A replace confirmation must leave exactly one visible shared dialog. Preserve the restore callback outside the hidden panel for the confirmed operation; cancellation must never apply the snapshot.
 
 ## Common Mistakes
 

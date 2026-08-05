@@ -1,5 +1,7 @@
 import type { FormEventHandler } from "react";
 import { Bot, Plus, Save, Trash2 } from "lucide-react";
+import { AssistantAvatar } from "../assistants/AssistantAvatar";
+import { assistantAvatarOptions } from "../assistants/assistantAvatars";
 import type { Assistant } from "../../types";
 import type { AssistantDraft } from "./adminConsoleConfig";
 
@@ -87,6 +89,21 @@ export function AdminAssistantsSection({
             onChange={(event) => onChange({ tags: event.target.value })}
             placeholder="写作, 营销, 润色"
           />
+        </label>
+        <label className="admin-assistant-avatar-picker">
+          助手头像
+          <span>
+            <AssistantAvatar avatar={form.avatar} color={form.color} />
+            <select
+              aria-label="助手头像"
+              value={form.avatar}
+              onChange={(event) => onChange({ avatar: event.target.value })}
+            >
+              {assistantAvatarOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </span>
         </label>
         <label>
           颜色

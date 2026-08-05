@@ -11,7 +11,7 @@ import {
 } from "./support/app-fixture";
 
 async function openAdminModels(page: Parameters<typeof documentOverflow>[0], projectName: string) {
-  await page.goto("/admin");
+  await page.goto("/xizi2333");
   await expect(page.locator(".admin-console-layout")).toBeVisible({ timeout: 20_000 });
   if (isMobileProject(projectName)) {
     await page.locator(".admin-mobile-section-picker select").selectOption("models");
@@ -22,18 +22,19 @@ async function openAdminModels(page: Parameters<typeof documentOverflow>[0], pro
   await navigation.getByRole("button", { name: "模型目录", exact: true }).click();
 }
 
-test("admin route renders an isolated login shell", async ({ page, apiHarness }) => {
+test("private admin route renders a username and password login shell", async ({ page, apiHarness }) => {
   apiHarness.setAdminStatus({
     authRequired: true,
     authenticated: false,
     adminConfigured: true
   });
 
-  await page.goto("/admin");
+  await page.goto("/xizi2333");
 
-  await expect(page).toHaveURL(/\/admin$/);
+  await expect(page).toHaveURL(/\/xizi2333$/);
   await expect(page).toHaveTitle("Admin - xi-ai-web");
   await expect(page.getByRole("main")).toBeVisible();
+  await expect(page.getByLabel("管理员用户名", { exact: true })).toBeVisible();
   await expect(
     page.getByLabel("\u7ba1\u7406\u5458\u5bc6\u7801", { exact: true })
   ).toBeVisible({ timeout: 20_000 });
@@ -47,6 +48,45 @@ test("admin route renders an isolated login shell", async ({ page, apiHarness })
   expect(overflow.bodyWidth).toBeLessThanOrEqual(overflow.viewportWidth + 1);
 });
 
+test("legacy admin path never mounts the Admin portal", async ({ page }) => {
+  await page.goto("/admin");
+  await expect(page.locator(".admin-portal")).toHaveCount(0);
+  await expect(page.getByTestId("chat-module")).toBeVisible({ timeout: 20_000 });
+});
+
+test("site settings rotate Admin credentials and return to login", async ({ page, apiHarness }, testInfo) => {
+  apiHarness.setAdminStatus({
+    authRequired: true,
+    authenticated: true,
+    adminConfigured: true
+  });
+
+  await page.goto("/xizi2333");
+  await expect(page.locator(".admin-console-layout")).toBeVisible({ timeout: 20_000 });
+  if (isMobileProject(testInfo.project.name)) {
+    await page.locator(".admin-mobile-section-picker select").selectOption("site");
+  } else {
+    await page.locator('.admin-nav-group-toggle[aria-controls="admin-nav-items-system"]').click();
+    await page.locator("#admin-nav-items-system button").first().click();
+  }
+
+  await page.getByLabel("新管理员用户名", { exact: true }).fill("new-operator");
+  await page.getByLabel("当前密码", { exact: true }).fill("current-admin-password");
+  const newPassword = page.getByLabel("新密码", { exact: true });
+  const confirmedPassword = page.getByLabel("确认新密码", { exact: true });
+  await newPassword.fill("discarded-admin-password");
+  await confirmedPassword.fill("discarded-admin-password");
+  await newPassword.fill("");
+  await expect(confirmedPassword).toHaveValue("");
+  await newPassword.fill("new-admin-password-2026");
+  await confirmedPassword.fill("new-admin-password-2026");
+  await page.getByRole("button", { name: "更新登录凭据", exact: true }).click();
+
+  await expect(page.getByLabel("管理员用户名", { exact: true })).toHaveValue("new-operator");
+  await expect(page.getByText("管理员凭据已更新，请使用新用户名和密码重新登录。", { exact: true })).toBeVisible();
+  expect(apiHarness.requests).toContain("PATCH /api/admin/credentials");
+});
+
 test("authenticated admin console keeps responsive navigation and one scroll owner", async ({ page, apiHarness }, testInfo) => {
   apiHarness.setAdminStatus({
     authRequired: true,
@@ -54,7 +94,7 @@ test("authenticated admin console keeps responsive navigation and one scroll own
     adminConfigured: true
   });
 
-  await page.goto("/admin");
+  await page.goto("/xizi2333");
 
   await expect(page.locator(".admin-console-layout")).toBeVisible({ timeout: 20_000 });
   await expect(page.locator(".admin-console")).toHaveAttribute("data-scroll-owner", "true");
@@ -275,7 +315,7 @@ test("all admin destinations share the responsive wide content boundary", async 
   if (testInfo.project.name === "desktop-1440") {
     await page.setViewportSize({ width: 1920, height: 1000 });
   }
-  await page.goto("/admin");
+  await page.goto("/xizi2333");
   await expect(page.locator(".admin-console-layout")).toBeVisible({ timeout: 20_000 });
 
   const sectionIds = [
@@ -351,7 +391,7 @@ test("admin model names keep the short label in front of the stable request ID",
   });
   await seedReadyProvider(page);
 
-  await page.goto("/admin");
+  await page.goto("/xizi2333");
   await expect(page.locator(".admin-console-layout")).toBeVisible({ timeout: 20_000 });
   if (isMobileProject(testInfo.project.name)) {
     await page.locator(".admin-mobile-section-picker select").selectOption("models");
@@ -421,7 +461,7 @@ test("admin media-only models show dedicated image routes instead of chat protoc
     adminConfigured: true
   });
 
-  await page.goto("/admin");
+  await page.goto("/xizi2333");
   await expect(page.locator(".admin-console-layout")).toBeVisible({ timeout: 20_000 });
   if (isMobileProject(testInfo.project.name)) {
     await page.locator(".admin-mobile-section-picker select").selectOption("models");
@@ -473,7 +513,7 @@ test("admin model catalog groups configured models and presets by vendor", async
     adminConfigured: true
   });
 
-  await page.goto("/admin");
+  await page.goto("/xizi2333");
   await expect(page.locator(".admin-console-layout")).toBeVisible({ timeout: 20_000 });
   if (isMobileProject(testInfo.project.name)) {
     await page.locator(".admin-mobile-section-picker select").selectOption("models");
@@ -773,7 +813,7 @@ test("admin assistant editor exposes the public library metadata contract", asyn
     adminConfigured: true
   });
 
-  await page.goto("/admin");
+  await page.goto("/xizi2333");
   await expect(page.locator(".admin-console-layout")).toBeVisible({ timeout: 20_000 });
   if (isMobileProject(testInfo.project.name)) {
     await page.locator(".admin-mobile-section-picker select").selectOption("assistants");
@@ -788,5 +828,8 @@ test("admin assistant editor exposes the public library metadata contract", asyn
   await expect(section.getByLabel("助手分类", { exact: true })).toHaveValue("通用效率");
   await expect(section.getByLabel("助手标签", { exact: true })).toHaveValue("战略, 拆解");
   await expect(section.getByLabel("助手开场问题", { exact: true })).toHaveValue(/帮我把一个模糊目标拆成行动计划/);
+  await expect(section.getByLabel("助手头像", { exact: true })).toHaveValue("sparkles");
+  await section.getByLabel("助手头像", { exact: true }).selectOption("presentation");
+  await expect(section.locator('[data-assistant-avatar="presentation"]')).toBeVisible();
   await expect(section.getByRole("checkbox", { name: "前台启用", exact: true })).toBeChecked();
 });

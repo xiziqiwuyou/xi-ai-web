@@ -46,11 +46,17 @@ const workflowGraph = await importTsSource(
 const chatCommands = await importTsSource(
   fs.readFileSync(path.join(rootDir, "src/features/chat/chatCommands.ts"), "utf8")
 );
+const chatSessionSettings = await importTsSource(
+  fs.readFileSync(path.join(rootDir, "src/features/chat/chatSessionSettings.ts"), "utf8")
+);
 const workflowRuntime = await importTsSource(
   fs.readFileSync(path.join(rootDir, "src/features/automation/workflowRuntime.ts"), "utf8")
 );
 
 const now = "2026-06-13T13:50:00.000Z";
+assert.equal(chatSessionSettings.defaultChatSessionSettings.messageFontSize, 13, "new Chat sessions must default to 13px message text");
+assert.equal(chatSessionSettings.sanitizeChatSessionSettings({ messageFontSize: 18 }).messageFontSize, 18, "saved valid Chat message sizes must be preserved");
+assert.equal(chatSessionSettings.sanitizeChatSessionSettings({ messageFontSize: 12 }).messageFontSize, 13, "invalid saved Chat message sizes must fall back to the current default");
 const conversation = {
   id: "thread-1",
   title: "NextChat local thread",
@@ -341,12 +347,22 @@ const chatModule = [
   "src/features/chat/ChatSessionBlock.tsx"
 ].map((relativePath) => fs.readFileSync(path.join(rootDir, relativePath), "utf8")).join("\n");
 const chatSettingsDialog = fs.readFileSync(path.join(rootDir, "src/features/chat/ChatSessionSettingsDialog.tsx"), "utf8");
+const localConversationStore = fs.readFileSync(path.join(rootDir, "src/features/chat/localConversationStore.ts"), "utf8");
+const types = fs.readFileSync(path.join(rootDir, "src/types.ts"), "utf8");
 const studioModule = [
   "src/features/studio/StudioModule.tsx",
   "src/features/studio/studioShared.tsx",
   "src/features/studio/ImageStudio.tsx",
   "src/features/studio/PptStudio.tsx",
+  "src/features/studio/pptPresets.ts",
+  "src/features/studio/PptDeckPreview.tsx",
+  "src/features/generation/pptDeck.ts",
   "src/features/studio/MindmapStudio.tsx",
+  "src/features/studio/mindmapPresets.ts",
+  "src/features/mindmap/mindmapDocument.ts",
+  "src/features/mindmap/mindmapLayout.ts",
+  "src/features/mindmap/mindmapExport.ts",
+  "src/features/mindmap/MindmapTreeCanvas.tsx",
   "src/features/studio/AssistantsStudio.tsx",
   "src/features/studio/TranslateStudio.tsx"
 ].map((file) => fs.readFileSync(path.join(rootDir, file), "utf8")).join("\n");
@@ -376,10 +392,15 @@ for (const exactCopy of [
   assert(chatModule.includes(exactCopy), `Chat must include exact Figma copy: ${exactCopy}`);
 }
 assert(chatModule.includes("commitConversations((current) => [conversation, ...current])"), "new Chat sessions must be added at the top");
+assert(chatModule.includes("你好，今天想从哪里开始？可以直接提问、整理资料，或一起完成一项具体任务。"), "empty Chat sessions must keep the single welcome message");
+assert(!chatModule.includes("帮我梳理一份关于生成式 AI 在企业落地的简短介绍。"), "empty Chat sessions must not render a sample user question");
+assert(!chatModule.includes("生成式 AI 正在成为企业的创造力基础设施"), "empty Chat sessions must not render a sample assistant answer");
+assert(localConversationStore.includes('assistantId: assistant?.id || ""'), "ordinary local Chat conversations must use the neutral empty Assistant binding");
+assert(!chatModule.includes("defaultAssistantId") && chatModule.includes('assistantId: assistant?.id || ""'), "ordinary Chat requests must not fall back to the first Assistant");
 assert(chatModule.includes("collapsed: true"), "new Chat sessions must fold older sessions");
 assert(chatModule.includes("[conversation.id]: defaultSessionUi(false)"), "new Chat sessions must start expanded");
-assert(chatModule.includes("ChatSkillManagerDialog"), "Chat must own the local Skill manager");
-assert(chatSettingsDialog.includes("管理本地 Skill"), "Chat settings must retain local Skill management");
+assert(!chatModule.includes("ChatSkillManagerDialog"), "Chat must keep the local Skill manager out of Session Settings");
+assert(!chatSettingsDialog.includes("管理本地 Skill") && !chatSettingsDialog.includes('id: "skills"'), "Chat settings must keep Skill controls hidden");
 assert(!chatModule.includes('figma-heading-action-label">Skill'), "Chat heading must not promote Skill management");
 assert(chatModule.includes("skillInstructions: selectedSkills.map"), "Chat must send resolved Skill instructions with its request");
 assert(chatModule.includes("ChatCommandPalette"), "Chat must expose the inline command palette");
@@ -400,6 +421,25 @@ assert(chatModule.includes("conversation.assistantId && item.enabled !== false")
 assert(chatModule.includes("figma-session-assistant"), "Chat sessions must expose their bound assistant identity");
 assert(studioModule.includes("queueAssistantLaunch(selected.id, selectedStarterPrompt)"), "Assistant library must launch the exact selected assistant and optional visible starter");
 assert(!studioModule.includes("assistantProfiles"), "Assistant library must not map decorative hard-coded profiles onto backend assistants");
+assert(types.includes("export type MindmapDocument") && types.includes("mindmap?: MindmapDocument"), "Mind Map generation results must expose the shared document contract");
+assert(studioModule.includes("function MindmapTreeCanvas(") && studioModule.includes("layoutMindmapDocument(document, collapsedNodeIds)"), "Mind Map must render the normalized tree through MindmapTreeCanvas");
+assert(
+  studioModule.includes('runAiOperation("generate")')
+    && studioModule.includes('runAiOperation("expand")')
+    && studioModule.includes('runAiOperation("reorganize")')
+    && studioModule.includes('currentDocument: operation === "generate" ? undefined : mindmap'),
+  "Mind Map AI actions must use real generate, expand, and reorganize requests"
+);
+for (const mindmapExport of [
+  "mindmapDocumentToMarkdown",
+  "mindmapDocumentToMermaid",
+  "mindmapDocumentToSvg",
+  "mindmapDocumentToPngBlob",
+  "copyMindmapText"
+]) {
+  assert(studioModule.includes(mindmapExport), `Mind Map current-document export is missing ${mindmapExport}`);
+}
+assert(!studioModule.includes("activeBranchId") && !studioModule.includes("branchSource") && !studioModule.includes("figma-map-branch"), "Mind Map must not restore decorative branch-card behavior");
 assert(assistantLaunch.includes('ASSISTANT_LAUNCH_STORAGE_KEY = "xi-ai-web-assistant-launch"'), "Assistant launch must use the versioned session handoff key");
 assert(assistantLaunch.includes("window.sessionStorage"), "Assistant launch must stay session-scoped");
 assert(!assistantLaunch.includes("localStorage"), "Assistant launch must never persist to localStorage");
@@ -410,6 +450,7 @@ for (const retiredToken of ["conversation-rail", "thread-main", "composer-status
 }
 
 const server = fs.readFileSync(path.join(rootDir, "server/index.mjs"), "utf8");
+assert(server.includes("getOptionalAssistant") && server.includes("assistant?.systemPrompt"), "the Chat server must allow a request without an Assistant prompt");
 const indexHtml = fs.readFileSync(path.join(rootDir, "index.html"), "utf8");
 const mainTsx = fs.readFileSync(path.join(rootDir, "src/main.tsx"), "utf8");
 assert.deepEqual(
@@ -432,6 +473,7 @@ assert(!server.includes("/api/conversations/share"), "must not add public share 
 assert(server.includes("displayContent"), "chat stream must separate model content from displayed user content");
 assert(server.includes("reasoningEffortAllowlist"), "server must normalize reasoning effort through an allowlist");
 assert(server.includes("reasoningEffort"), "server must forward reasoning effort to provider adapters");
+assert(server.includes('if (module === "mindmap")') && server.includes("mindmapGenerationMessages") && server.includes("mergeMindmapExpansion") && server.includes('if (module === "translate")'), "server must keep structured Mind Map operations separate from Translation");
 assert(server.includes("imageCount > 6") && server.includes("value.slice(0, 10)"), "server must retain the six-image hard limit while allowing bounded text attachments");
 assert(indexHtml.includes("/manifest.webmanifest"), "PWA manifest must be linked");
 assert(mainTsx.includes("serviceWorker.register"), "PWA service worker must be registered in production");

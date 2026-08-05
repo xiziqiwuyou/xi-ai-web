@@ -42,7 +42,7 @@ The main app Compose template already joins the `xi-ai` network. Restart xi-ai-w
 1. Build and test a Flow in the private Langflow editor.
 2. Create an API key in Langflow and put it in `LANGFLOW_API_KEY`.
 3. Copy the Flow ID.
-4. Open `http://your-xi-ai-web-host/admin`.
+4. Open `http://your-xi-ai-web-host/xizi2333`.
 5. Open the **工作流发布** section and add the Flow ID, public name, description, welcome message, and input placeholder.
 6. Enable the mapping and verify it appears under `/workflows`.
 

@@ -62,6 +62,8 @@ const chatModule = [
 ].map(readProjectFile).join("\n");
 const chatSettingsDialog = readProjectFile("src/features/chat/ChatSessionSettingsDialog.tsx");
 const app = readProjectFile("src/App.tsx");
+const adminPortal = readProjectFile("src/features/admin/AdminPortal.tsx");
+const adminBasicSections = readProjectFile("src/features/admin/AdminBasicSections.tsx");
 const publicModuleLoader = readProjectFile("src/app/publicModuleLoader.ts");
 const automationModule = [
   "src/features/automation/AutomationModule.tsx",
@@ -74,8 +76,18 @@ const studioModule = [
   "src/features/studio/StudioModule.tsx",
   "src/features/studio/studioShared.tsx",
   "src/features/studio/ImageStudio.tsx",
+  "src/features/studio/ImageResultGallery.tsx",
+  "src/features/studio/imageResultActions.ts",
   "src/features/studio/PptStudio.tsx",
+  "src/features/studio/pptPresets.ts",
+  "src/features/studio/PptDeckPreview.tsx",
+  "src/features/generation/pptDeck.ts",
   "src/features/studio/MindmapStudio.tsx",
+  "src/features/studio/mindmapPresets.ts",
+  "src/features/mindmap/mindmapDocument.ts",
+  "src/features/mindmap/mindmapLayout.ts",
+  "src/features/mindmap/mindmapExport.ts",
+  "src/features/mindmap/MindmapTreeCanvas.tsx",
   "src/features/studio/AssistantsStudio.tsx",
   "src/features/studio/TranslateStudio.tsx"
 ].map(readProjectFile).join("\n");
@@ -102,6 +114,7 @@ const responsiveCss = readProjectFile("src/styles/rednote-flat-v2.responsive.css
 const activeCss = [tokensCss, shellCss, chatCss, workbenchCss, adminCss, modalCss, responsiveCss].join("\n");
 const styles = readCssWithImports("src/styles.css");
 const server = readProjectFile("server/index.mjs");
+const imageTimingStore = readProjectFile("server/image-generation-timing.mjs");
 
 const routePairs = [...publicRoutes.matchAll(/\{\s*id:\s*"([^"]+)",\s*path:\s*"([^"]+)"\s*\}/g)]
   .map((match) => ({ id: match[1], path: match[2] }));
@@ -219,8 +232,8 @@ assert(!sharedMenuOptionsBlock.includes("ChevronRight"), "Unselected shared menu
 assert(sharedMenuOptionsBlock.includes("<Check") && sharedMenuOptionsBlock.includes('className="figma-menu-option-mark"'), "Shared menu options must keep selected checks and stable empty marks");
 assert(chatModule.includes("event.shiftKey"), "Chat composer must reserve Shift+Enter for line breaks");
 assert(chatModule.includes("event.nativeEvent.isComposing"), "Chat composer must guard IME composition");
-assert(chatSettingsDialog.includes('className="figma-chat-skill-selection"'), "Chat settings must expose Skill selection");
-assert(chatSettingsDialog.includes("管理本地 Skill"), "Chat settings must retain local Skill management");
+assert(!chatSettingsDialog.includes('className="figma-chat-skill-selection"'), "Chat settings must keep Skill selection hidden");
+assert(!chatSettingsDialog.includes("管理本地 Skill") && !chatSettingsDialog.includes('id: "skills"'), "Chat settings must not expose a Skill category or manager entry");
 assert(!chatModule.includes('figma-heading-action-label">Skill'), "Chat heading must not promote Skill management");
 assert(chatModule.includes("skillInstructions: selectedSkills.map"), "Chat must inject only selected Skill instructions");
 assert(chatModule.includes('className="figma-reasoning-menu"'), "Chat must expose the reasoning menu in its composer toolbar");
@@ -304,7 +317,7 @@ for (const requiredSettingsContract of [
   'className="figma-personal-avatar"',
   "TOP-P",
   "\u6a21\u578b\u4e0a\u4e0b\u6587\u7a97\u53e3",
-  "\u5f15\u7528\u5386\u53f2\u6d88\u606f",
+  "\u663e\u793a Token \u7edf\u8ba1",
   "\u6700\u5927 Token \u6570",
   "\u6d41\u5f0f\u8f93\u51fa",
   "\u5de5\u5177\u8c03\u7528\u65b9\u5f0f",
@@ -350,6 +363,8 @@ const studioPageContracts = [
       'className="figma-image-control-deck figma-image-parameters"',
       "\u521b\u4f5c\u53c2\u6570",
       'className="figma-image-parameter-grid"',
+      'className="figma-image-output-pane"',
+      'className="figma-image-loading-spinner"',
       "\u7075\u611f\u7011\u5e03\u6d41",
       'className="figma-inspiration-waterfall"'
     ]
@@ -359,17 +374,18 @@ const studioPageContracts = [
     snippets: [
       'className="figma-module-view figma-ppt-page"',
       "06 / AUTO-DECK",
-      "\u4e00\u53e5\u4e3b\u9898\uff0c",
-      "\u4e00\u4efd\u597d PPT\u3002",
-      'className="figma-ppt-creator"',
-      'className="figma-ppt-input-panel"',
-      'className="figma-ppt-options"',
+      "AI \u4e00\u952e PPT",
+      'className="figma-ppt-workbench"',
+      'className="figma-ppt-config-panel"',
+      "\u6f14\u793a\u8bbe\u7f6e",
+      'className="figma-ppt-option-grid"',
       'ariaLabel="PPT \u751f\u6210\u6a21\u578b"',
-      "\u8ba9 AI \u5f00\u59cb\u521b\u4f5c",
-      'className="figma-ppt-stages"',
-      "WHAT AI CREATES",
-      'className="figma-ppt-ideas"',
-      "PROMPT IDEAS"
+      'ariaLabel="\u4e3b\u9898\u6a21\u677f"',
+      'className="figma-ppt-config-actions"',
+      'className="figma-ppt-preview-panel"',
+      'className="figma-ppt-thumbnails"',
+      'className="figma-ppt-stage-frame"',
+      'className="figma-ppt-fullscreen-dialog"'
     ]
   },
   {
@@ -381,12 +397,10 @@ const studioPageContracts = [
       "\u53d8\u6210\u6e05\u6670\u8def\u5f84\u3002",
       'className="figma-map-command"',
       'ariaLabel="\u601d\u7ef4\u5bfc\u56fe\u751f\u6210\u6a21\u578b"',
-      'className="figma-map-canvas"',
-      'className="figma-map-stage"',
-      'className="figma-map-center-node"',
-      "figma-map-branch branch-",
-      'className="figma-map-zoom"',
-      'className="figma-map-capabilities"'
+      'className="figma-map-workspace"',
+      'className="figma-map-toolbar"',
+      "<MindmapTreeCanvas",
+      'className="figma-map-inspector"'
     ]
   },
   {
@@ -426,19 +440,8 @@ for (const exactStudioCopy of [
   "\u4e00\u5ea7\u6f02\u6d6e\u5728\u6df1\u6d77\u4e2d\u7684\u672a\u6765\u56fe\u4e66\u9986\uff0c\u84dd\u7d2b\u8272\u751f\u7269\u8367\u5149\uff0c\u7535\u5f71\u611f",
   "\u6362\u4e00\u6279 \u2192",
   "\u751f\u6210\u5f0f AI \u5982\u4f55\u91cd\u5851\u4f01\u4e1a\u521b\u65b0",
-  "\u9884\u8ba1 40 \u79d2 \u00b7 \u7ea6 8 \u9875\u5185\u5bb9 \u00b7 \u652f\u6301\u5bfc\u51fa PPTX",
-  "\u53d1\u73b0\u53d9\u4e8b\u4e3b\u7ebf",
-  "\u751f\u6210\u9875\u9762\u7ed3\u6784",
-  "\u5339\u914d\u89c6\u89c9\u7d20\u6750",
-  "\u6da6\u8272\u5173\u952e\u8868\u8fbe",
-  "\u6784\u5efa AI \u9a71\u52a8\u7684\u4ea7\u54c1\u589e\u957f\u4f53\u7cfb",
-  "\u7528\u6237\u6d1e\u5bdf",
-  "\u4ef7\u503c\u4e3b\u5f20",
-  "\u4ea7\u54c1\u7b56\u7565",
-  "\u589e\u957f\u5b9e\u9a8c",
-  "\u4e00\u952e\u5c55\u5f00",
-  "AI \u91cd\u7ec4",
-  "\u5bfc\u51fa\u56fe\u7247",
+  "\u6f14\u793a\u9884\u89c8",
+  "\u4e0b\u8f7d PPT",
   "\u81ea\u7136\u4e13\u4e1a",
   "\u7b80\u6d01",
   "\u8425\u9500\u611f",
@@ -452,28 +455,56 @@ for (const authoredMenuLabel of [
   "\u56fe\u50cf\u751f\u6210\u6a21\u578b",
   "\u56fe\u50cf\u5c3a\u5bf8",
   "\u751f\u6210\u8d28\u91cf",
-  "\u751f\u6210\u6570\u91cf",
+  "PPT \u751f\u6210\u6a21\u578b",
+  "\u6f14\u793a\u7c7b\u578b",
   "\u76ee\u6807\u53d7\u4f17",
+  "\u6f14\u793a\u9875\u6570",
   "\u6f14\u793a\u65f6\u957f",
+  "\u53d9\u4e8b\u65b9\u5f0f",
+  "\u5185\u5bb9\u5bc6\u5ea6",
+  "\u6f14\u793a\u8bed\u8a00",
   "\u89c6\u89c9\u6c14\u8d28",
+  "\u4e3b\u9898\u6a21\u677f",
+  "\u601d\u7ef4\u5bfc\u56fe\u7c7b\u578b",
+  "\u601d\u7ef4\u5bfc\u56fe\u6700\u5927\u5c42\u7ea7",
+  "\u601d\u7ef4\u5bfc\u56fe\u5185\u5bb9\u5bc6\u5ea6",
   "\u6e90\u8bed\u8a00",
   "\u76ee\u6807\u8bed\u8a00"
 ]) {
   assert(studioModule.includes(`ariaLabel="${authoredMenuLabel}"`), `Studio menu button is missing ${authoredMenuLabel}`);
 }
-for (const removedImageMenu of ["\u753b\u9762\u6bd4\u4f8b", "\u56fe\u50cf\u5206\u8fa8\u7387", "\u80cc\u666f", "\u8f93\u51fa\u683c\u5f0f", "\u538b\u7f29\u8d28\u91cf"]) {
+for (const removedImageMenu of ["\u751f\u6210\u6570\u91cf", "\u753b\u9762\u6bd4\u4f8b", "\u56fe\u50cf\u5206\u8fa8\u7387", "\u80cc\u666f", "\u8f93\u51fa\u683c\u5f0f", "\u538b\u7f29\u8d28\u91cf"]) {
   assert(!studioModule.includes(`ariaLabel="${removedImageMenu}"`), `Removed image menu must stay hidden: ${removedImageMenu}`);
 }
-assert(!/<select[^>]+aria-label="(?:\u56fe\u50cf\u751f\u6210\u6a21\u578b|\u56fe\u50cf\u5c3a\u5bf8|\u751f\u6210\u8d28\u91cf|\u751f\u6210\u6570\u91cf|\u76ee\u6807\u53d7\u4f17|\u6f14\u793a\u65f6\u957f|\u89c6\u89c9\u6c14\u8d28|\u6e90\u8bed\u8a00|\u76ee\u6807\u8bed\u8a00)"/.test(studioModule), "Authored studio submenus must not fall back to visible native selects");
+assert(!/<select[^>]+aria-label="(?:\u56fe\u50cf\u751f\u6210\u6a21\u578b|\u56fe\u50cf\u5c3a\u5bf8|\u751f\u6210\u8d28\u91cf|\u76ee\u6807\u53d7\u4f17|\u6f14\u793a\u65f6\u957f|\u89c6\u89c9\u6c14\u8d28|\u6e90\u8bed\u8a00|\u76ee\u6807\u8bed\u8a00)"/.test(studioModule), "Authored studio submenus must not fall back to visible native selects");
 for (const zoomContract of ['aria-label="\u7f29\u5c0f"', 'aria-label="\u653e\u5927"', "Math.round(zoom * 100)"]) {
   assert(studioModule.includes(zoomContract), `Mind Map zoom contract is missing ${zoomContract}`);
 }
-assert(studioModule.includes('import { exportPptxFromMarkdown } from "../generation/pptxExport";'), "PPT must import the real PPTX exporter");
-assert(studioModule.includes("await exportPptxFromMarkdown(result.text, topic.trim() || result.title)"), "PPT download must create a real PPTX file");
+assert(studioModule.includes("exportPptxFromDeck") && studioModule.includes("exportPptxFromMarkdown") && studioModule.includes('from "../generation/pptxExport"'), "PPT must import structured and Markdown-compatible PPTX exporters");
+assert(studioModule.includes("await exportPptxFromDeck(deck)") && studioModule.includes("await exportPptxFromMarkdown(result.text, topic.trim() || result.title)"), "PPT download must prefer structured decks and preserve Markdown fallback");
+assert(studioModule.includes('options: { ppt: pptOptions }') && studioModule.includes("pptDeckFromResult"), "PPT generation must send structured options and normalize structured or Markdown results");
 assert(studioModule.includes("\u4e0b\u8f7d PPT") && !studioModule.includes("downloadOutline"), "PPT UI must expose PPT download and avoid Markdown-outline fallback");
-assert(studioModule.includes("const [activeBranchId, setActiveBranchId]"), "Mind Map must preserve branch selection by ID");
-assert(studioModule.includes("const branchSource = useMemo"), "Mind Map branches must come from one normalized source");
-assert(!studioModule.includes("activeBranchIndex"), "Mind Map must not use rotated visual index as branch identity");
+assert(types.includes("export type MindmapDocument") && types.includes("mindmap?: MindmapDocument"), "Mind Map results must use the shared versioned MindmapDocument contract");
+assert(studioModule.includes("function MindmapTreeCanvas(") && studioModule.includes("layoutMindmapDocument(document, collapsedNodeIds)"), "Mind Map must render the complete document through MindmapTreeCanvas");
+for (const operationContract of [
+  'runAiOperation("generate")',
+  'runAiOperation("expand")',
+  'runAiOperation("reorganize")',
+  'targetNodeId: operation === "expand" ? selectedNode.id : undefined',
+  'currentDocument: operation === "generate" ? undefined : mindmap'
+]) {
+  assert(studioModule.includes(operationContract), `Mind Map AI operation contract is missing ${operationContract}`);
+}
+for (const exportContract of [
+  "export function mindmapDocumentToMarkdown",
+  "export function mindmapDocumentToMermaid",
+  "export function mindmapDocumentToSvg",
+  "export async function mindmapDocumentToPngBlob",
+  "copyMindmapText(mindmapDocumentToMarkdown(mindmap))"
+]) {
+  assert(studioModule.includes(exportContract), `Mind Map export contract is missing ${exportContract}`);
+}
+assert(!studioModule.includes("activeBranchId") && !studioModule.includes("branchSource") && !studioModule.includes("figma-map-branch"), "Mind Map must not restore decorative branch-card state");
 
 for (const imageUiContract of [
   "\u6587\u751f\u56fe",
@@ -489,21 +520,22 @@ for (const imageUiContract of [
   'accept="image/png,image/jpeg,image/webp"',
   'accept="image/png"',
   'ariaLabel="\u56fe\u50cf\u5c3a\u5bf8"',
-  'ariaLabel="\u751f\u6210\u6570\u91cf"',
   'ariaLabel="\u751f\u6210\u8d28\u91cf"',
   "const imageSizePresets = [",
   'const fixedImageOutputFormat: ImageOutputFormat = "png";',
   '"1:1": "2880x2880"',
   "generationAbortRef.current?.abort()",
-  'status: requestSucceeded ? "completed" : requestCancelled ? "cancelled" : "failed"'
+  "api.imageTimingEstimate(timingKey"
 ]) {
   assert(studioModule.includes(imageUiContract), `Image generation/editing UI contract is missing ${imageUiContract}`);
 }
 assert(figmaMenu.includes('placement?: FigmaMenuPlacement;') && figmaMenu.includes('requestedPlacement === "auto"'), "FigmaMenu must keep an opt-in placement override without changing the default adaptive behavior");
-assert((studioModule.match(/placement="up"/g) || []).length >= 4, "All four image parameter menus must open upward");
-assert(workbenchCss.includes("grid-template-columns: repeat(4, minmax(0, 1fr));"), "Desktop image parameter menus must use four equal columns");
+assert((studioModule.match(/placement="up"/g) || []).length >= 3, "All three image parameter menus must open upward");
+assert(workbenchCss.includes("grid-template-columns: repeat(3, minmax(0, 1fr));"), "Desktop image parameter menus must use three equal columns");
 assert(workbenchCss.includes(".figma-image-parameter-grid .figma-menu-popover") && workbenchCss.includes("width: 100%;") && workbenchCss.includes("@keyframes figma-image-menu-popover-in"), "Image parameter popovers must match trigger width and use the shared entrance motion");
-assert(studioModule.includes('const [count, setCount] = useState("1");'), "Image generation must default to one image per request");
+assert(studioModule.includes("count: 1") && !studioModule.includes("imageCountOptions") && !studioModule.includes('ariaLabel="\u751f\u6210\u6570\u91cf"'), "Image Studio must keep one image per request without a quantity menu");
+assert(workbenchCss.includes("grid-template-columns: minmax(0, 1.18fr) minmax(340px, 0.82fr);") && workbenchCss.includes("@keyframes figma-image-loading-spin"), "Image Studio must use the split workbench and in-frame rotating loader");
+assert(!studioModule.includes("figma-image-progress") && !studioModule.includes("figma-image-eta"), "Image Studio must not restore the former ETA pill or progress rail");
 for (const imageTypeContract of [
   'export type ImageGenerationMode = "generate" | "edit";',
   'export type ImageAspectRatio = "1:1" | "3:2" | "2:3" | "16:9" | "9:16";',
@@ -525,7 +557,7 @@ const imageRequestBlock = studioModule.slice(imageRequestStart, imageRequestEnd)
 assert(imageRequestStart >= 0 && imageRequestEnd > imageRequestStart, "Image generation request block is missing");
 for (const typedImageOption of [
   "mode,",
-  "count: Number(count)",
+  "count: 1",
   "aspectRatio: selectedSizePreset.aspectRatio",
   "imageSize: selectedSizePreset.resolution",
   "size: imageRequestSize(selectedSizePreset.aspectRatio, selectedSizePreset.resolution)",
@@ -540,14 +572,38 @@ for (const typedImageOption of [
 }
 assert(!imageRequestBlock.includes("outputCompression"), "Fixed PNG image requests must not send compression options");
 assert(!imageRequestBlock.includes("background:"), "Removed image background controls must not leak hidden request parameters");
-assert(studioModule.includes('result?.assets?.filter((asset) => asset.type === "image") || []'), "Image results must retain every image asset");
-assert(studioModule.includes("resultImages.map((asset, index) => ("), "Image results must render every returned asset");
+assert(studioModule.includes('filter((asset): asset is ImageResultAsset => asset.type === "image") || []'), "Image results must retain every image asset with a typed image projection");
+assert(studioModule.includes("assets.map((asset, index) => ("), "Image results must render every returned asset");
+for (const imageResultAction of [
+  "向左旋转",
+  "向右旋转",
+  "水平翻转",
+  "垂直翻转",
+  "缩小图片",
+  "放大图片",
+  "重新生成",
+  "编辑图片",
+  "复制图片",
+  "下载图片"
+]) {
+  assert(studioModule.includes(imageResultAction), `Image result preview is missing ${imageResultAction}`);
+}
+assert(studioModule.includes("transformedImageBlob") && studioModule.includes('canvas.toBlob') && studioModule.includes('"image/png"'), "Image result transforms must export through the PNG canvas pipeline");
+assert(studioModule.includes("imageFormRef.current?.requestSubmit()"), "Image regeneration must reuse the existing image form request path");
+assert(studioModule.includes('setMode("edit")') && studioModule.includes("setInputImages([image])") && studioModule.includes("api.importImageResult(asset.url)"), "Image editing must hand local and CORS-blocked results to image-to-image mode");
+assert(server.includes('"/api/image/import"') && server.includes("importPublicImageAsset"), "Image editing must expose the guarded same-origin image importer");
 assert(studioModule.includes("item.assets") && studioModule.includes(".forEach((asset, index) =>"), "Saved multi-asset image generations must be flattened into the waterfall");
 assert(server.includes("for (const item of data)"), "Server image extraction must iterate every OpenAI data item");
 assert(server.includes("for (const candidate of candidates)") && server.includes("for (const part of parts)"), "Server image extraction must iterate every Gemini candidate part");
 assert(server.includes("const choices = Array.isArray(json?.choices)") && server.includes("part?.image_url?.url"), "Server image extraction must read BotCF Gemini Chat image_url assets");
 assert(server.includes("referenceImageUrlsFrom(options.referenceImageUrls, 4)"), "Server image route must validate BotCF HTTPS reference URLs");
-assert(server.includes('extractAssets(json, "image", fallbackMimeType).slice(0, requestedCount)'), "Image responses must retain all assets up to the requested count");
+assert(server.includes("requestImageBatch(requestedCount)") && server.includes("requestImageBatch(1)"), "Image responses must complete partial Provider results with bounded single-image requests");
+assert(server.includes("Image provider returned only") && server.includes("providerRequestCount"), "Image responses must never report an incomplete requested count as completed");
+assert(studioModule.includes("api.imageTimingEstimate(timingKey") && studioModule.includes("nextResult.timingEstimate"), "Image ETA must load and refresh from the server-global estimate");
+assert(studioModule.includes("基于服务端最近") && studioModule.includes("最多 10 次"), "Image ETA must explain its recent-10 server sample source");
+assert(!studioModule.includes("loadImageGenerationHistory") && !studioModule.includes("saveImageGenerationTiming"), "Image ETA must not depend on browser-local timing records");
+assert(server.includes('app.get("/api/image/timing-estimate"') && server.includes("timingEstimate"), "Image routes must expose the global timing estimate contract");
+assert(imageTimingStore.includes("defaultSampleLimit = 10") && imageTimingStore.includes("sourceRecords.slice(-boundedSampleLimit)"), "Image timing store must cap estimates to the newest 10 samples");
 
 for (const requiredSelector of [
   ".figma-studio-shell",
@@ -577,12 +633,20 @@ for (const requiredSelector of [
   ".figma-menu-popover",
   ".figma-image-builder",
   ".figma-inspiration-waterfall",
-  ".figma-ppt-stages",
-  ".figma-ppt-ideas",
+  ".figma-ppt-workbench",
+  ".figma-ppt-config-panel",
+  ".figma-ppt-option-grid",
+  ".figma-ppt-preview-panel",
+  ".figma-ppt-thumbnails",
+  ".figma-ppt-stage-frame",
+  ".figma-ppt-fullscreen-dialog",
   ".figma-map-canvas",
+  ".figma-map-viewport",
+  ".figma-map-stage-frame",
   ".figma-map-stage",
-  ".figma-map-branch",
+  ".figma-map-tree-node",
   ".figma-map-zoom",
+  ".figma-map-inspector",
   ".figma-agent-filters",
   ".figma-agent-grid",
   ".figma-agent-dialog",
@@ -639,6 +703,9 @@ assert(dialog.includes('event.key === "Escape"') && dialog.includes("event.stopP
 assert(dialog.includes("canClose && closeOnScrim"), "Dialog scrims must only expose a close action when dismissal is available");
 
 assert(!apiClient.includes("/api/conversations"), "Public conversation CRUD client should remain removed");
+assert(app.includes('normalizedPath === "/xizi2333"') && !app.includes('normalizedPath === "/admin"'), "The Admin page must use only the private /xizi2333 entry route");
+assert(adminPortal.includes('id="admin-username"') && adminPortal.includes('autoComplete="username"'), "Admin login must require an authored username field");
+assert(adminBasicSections.includes("admin-credential-form") && adminBasicSections.includes("currentPassword"), "Site Settings must expose secure Admin credential rotation");
 assert(server.includes('app.get("/api/conversations"'), "Server must keep 410 compatibility for public conversation list route");
 assert(server.includes('app.get("/api/conversations/:id"'), "Server must keep 410 compatibility for public conversation detail route");
 assert(server.includes("publicConversationGone"), "Server must keep the public conversation compatibility handler");
@@ -646,10 +713,12 @@ assert(!styles.includes("var(--text)"), "Styles contain unresolved var(--text) r
 assert(styles.includes("touch-action: manipulation"), "Buttons should opt into touch-action manipulation");
 assert(styles.includes("overscroll-behavior: contain"), "Modal and workspace layers should contain overscroll");
 assert(tokensCss.includes('--font-ui: "Plus Jakarta Sans", "PingFang SC", "Microsoft YaHei UI"'), "UI font stack must keep a Chinese-optimized Windows fallback");
+assert(tokensCss.includes('--font-ui: "Segoe UI Variable Text", "Segoe UI", "PingFang SC", "Microsoft YaHei UI"'), "Dark UI must prefer the screen-optimized system font stack");
 assert(tokensCss.includes('--font-mono: "DM Mono", "SFMono-Regular", "PingFang SC", "Microsoft YaHei UI"'), "Metadata font stack must not fall back to a generic CJK monospace face");
 assert(!styles.includes('font-family: "DM Mono", monospace'), "Active styles must use the shared metadata font stack");
-assert(tokensCss.includes("--xhs-muted: #93a3bf"), "Dark muted text contrast regressed");
-assert(tokensCss.includes("--xhs-faint: #7887a3"), "Dark faint text contrast regressed");
+assert(tokensCss.includes("--xhs-muted: #a7b5cd"), "Dark muted text contrast regressed");
+assert(tokensCss.includes("--xhs-faint: #8798b7"), "Dark faint text contrast regressed");
+assert(tokensCss.includes("-webkit-font-smoothing: auto;") && tokensCss.includes("text-rendering: optimizeLegibility;"), "Global text rendering must preserve native glyph smoothing and legibility");
 assert(tokensCss.includes("--xhs-range-track-border: #637493"), "Dark range track border token is missing");
 assert(tokensCss.includes("--xhs-scrollbar-active: rgba(101, 115, 141, 0.42)") && tokensCss.includes("--xhs-scrollbar-active: rgba(147, 163, 191, 0.46)"), "Model scrollbar soft-contrast tokens are missing");
 assert(tokensCss.includes("--xhs-primary-fill: #2368e8") && tokensCss.includes("--xhs-on-primary: #ffffff"), "Filled-primary text contrast tokens are missing");
@@ -657,6 +726,11 @@ assert(!/font-size:\s*(?:8|9)px/.test(activeCss), "Active UI metadata must not r
 assert(shellCss.includes("@keyframes figma-module-enter") && shellCss.includes("@keyframes figma-module-progress"), "Public module transitions must keep the authored entry and progress motion");
 assert(shellCss.includes("@media (prefers-reduced-motion: reduce)") && shellCss.includes(".figma-module-transition-rail > i"), "Public module transitions must honor reduced-motion preferences");
 assert(chatCss.includes('height: 24px;') && chatCss.includes('background: color-mix(in srgb, var(--xhs-range-track) 68%, var(--xhs-surface));'), "Chat range controls must keep the quiet track geometry");
+assert(chatCss.includes("--figma-message-font-size: 13px;") && chatCss.includes("line-height: 1.75;"), "Chat messages must default to compact 13px text with proportional leading");
+assert(chatCss.includes(".figma-session-controls {\n  position: relative;\n  z-index: 3;") && chatCss.includes("background: var(--xhs-surface);"), "Chat composer menus must stack above the scrollable message history");
+assert(responsiveCss.includes("font-size: var(--figma-message-font-size);") && !responsiveCss.includes(".figma-message-bubble {\n    max-width: calc(100% - 48px);\n    padding: 12px 13px;\n    font-size: 12px;"), "Mobile Chat messages must preserve the selected message size");
+assert(responsiveCss.includes('.figma-session-tools:has(.figma-menu[data-open="true"])') && responsiveCss.includes("overflow: visible;"), "Open mobile Chat tool menus must escape the horizontal toolbar scroller");
+assert(chatSettings.includes("messageFontSize: 13") && chatSettingsDialog.includes("defaultChatSessionSettings.messageFontSize"), "Chat settings must share the 13px default without a stale control fallback");
 assert(chatCss.includes('min-height: 0;') && chatCss.includes('padding: 0;') && chatCss.includes('box-shadow: none;'), "Chat range inputs must reset legacy field chrome");
 assert(chatCss.includes('.figma-range-track > i') && chatCss.includes('width: var(--range-progress);'), "Chat range controls must expose a visible progress segment");
 assert(chatCss.includes('width: 16px;') && chatCss.includes('background: var(--xhs-surface);') && chatCss.includes('border: 2px solid color-mix(in srgb, var(--xhs-red) 62%, var(--xhs-line-strong));'), "Chat range thumbs must keep their restrained surface-and-border treatment");
@@ -664,7 +738,11 @@ assert(chatSettingsDialog.includes('aria-labelledby="figma-temperature-label"') 
 assert(chatSettingsDialog.includes('<output htmlFor="figma-temperature-range">') && chatSettingsDialog.includes('<output htmlFor="figma-top-p-range">'), "Chat range values must use semantic outputs");
 assert(chatSettingsDialog.includes('<FigmaMenu') && chatSettingsDialog.includes('figma-setting-row figma-setting-menu ${className}'), "Chat model choices must use the authored menu instead of native select popups");
 assert(!chatSettingsDialog.includes("<select"), "Chat Session Settings must not use native select popups");
-assert(chatSettingsDialog.includes('id="figma-context-window-range"') && chatSettingsDialog.includes('id="figma-context-message-count-range"') && chatSettingsDialog.includes("figma-output-token-setting"), "Chat context and output limits must use the authored slider and manual-input controls");
+assert(chatSettingsDialog.includes('id="figma-context-window-range"') && !chatSettingsDialog.includes('id="figma-context-message-count-range"') && chatSettingsDialog.includes("figma-output-token-setting"), "Chat model context and output limits must keep their authored controls without duplicating the composer history selector");
+assert(chatModule.includes('ariaLabel="引用上下文条数"') && chatModule.includes("figma-token-usage-summary"), "Chat composer must expose referenced-history and Token usage controls above the input");
+assert(!chatModule.includes("figma-message-usage"), "Chat message bubbles must not render inconsistent per-message Token usage copy");
+assert(chatCss.includes(".figma-token-usage-summary") && chatCss.includes("background: transparent;") && chatCss.includes("padding: 0;"), "Chat Token usage must render as plain text without pill chrome");
+assert(!chatModule.includes("<Gauge") && !chatModule.includes("Gauge,"), "Chat Token usage must not render a decorative icon");
 assert(chatSettingsDialog.includes("ConfirmationDialog") && chatSettingsDialog.includes("setMaxTokenConfirmationOpen(true)"), "Enabling a manual output limit must show the context-limit warning");
 assert(chatSettingsDialog.includes('className="figma-tool-mode-menu"') && chatSettingsDialog.includes("toolInvocationOptions"), "Tool invocation must use one right-side authored menu");
 assert(chatModule.includes('data-scroll-active={modelListScrolling ? "true" : "false"}') && chatModule.includes("handleModelListScroll"), "Chat model scrolling must expose a transient visual state");

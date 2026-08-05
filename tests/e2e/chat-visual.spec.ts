@@ -41,6 +41,7 @@ test("Chat renders the exact Figma stacked-session structure and copy", async ({
     "\u7f51\u7edc\u641c\u7d22",
     "\u56fe\u7247\u8f93\u5165",
     "\u601d\u7ef4\u94fe \u00b7 \u9ed8\u8ba4",
+    "上下文 · 最近 16 条",
     "\u6e05\u9664\u6d88\u606f"
   ]);
   await expect(activeSession.getByRole("button", { name: "配置联网搜索服务", exact: true })).toHaveCount(0);
@@ -92,6 +93,188 @@ test("Chat workspace responds to the mouse wheel over message content", async ({
   await page.mouse.wheel(0, 320);
 
   await expect.poll(() => workspace.evaluate((element) => element.scrollTop)).toBeGreaterThan(before.scrollTop);
+});
+
+test("Chat message history reveals its scrollbar only during scrolling", async ({ page }, testInfo) => {
+  test.skip(isMobileProject(testInfo.project.name), "Desktop scrollbar visibility contract");
+
+  const session = page.locator(".figma-chat-session:not(.collapsed)");
+  const history = session.locator(".figma-message-history");
+  const scrollbarVisual = () => history.evaluate((element) => ({
+    width: element.getBoundingClientRect().width,
+    contentWidth: element.querySelector<HTMLElement>(".figma-message-track")?.getBoundingClientRect().width || 0,
+    color: getComputedStyle(element).scrollbarColor
+  }));
+
+  await session.getByLabel("消息内容", { exact: true }).fill("scroll overflow ".repeat(220));
+  await session.getByRole("button", { name: "发送", exact: true }).click();
+  await expect(history).toContainText("Deterministic assistant response.");
+  await expect.poll(() => history.evaluate((element) => element.scrollHeight > element.clientHeight)).toBeTruthy();
+  await expect(history).toHaveAttribute("data-scroll-active", "false", { timeout: 2_000 });
+  const idle = await scrollbarVisual();
+  expect(idle.color).toMatch(/transparent|rgba\(0, 0, 0, 0\)/);
+
+  await history.hover();
+  expect(await scrollbarVisual()).toEqual(idle);
+
+  const previousScrollTop = await history.evaluate((element) => element.scrollTop);
+  expect(previousScrollTop).toBeGreaterThan(0);
+  await history.evaluate((element) => {
+    element.scrollTop = Math.max(0, element.scrollTop - 80);
+  });
+  await expect.poll(() => history.evaluate((element) => element.scrollTop)).toBeLessThan(previousScrollTop);
+  await expect(history).toHaveAttribute("data-scroll-active", "true");
+  const active = await scrollbarVisual();
+  expect(Math.abs(active.width - idle.width)).toBeLessThanOrEqual(0.5);
+  expect(Math.abs(active.contentWidth - idle.contentWidth)).toBeLessThanOrEqual(0.5);
+  expect(active.color).not.toBe(idle.color);
+  await expect(history).toHaveAttribute("data-scroll-active", "false", { timeout: 2_000 });
+  expect(await scrollbarVisual()).toEqual(idle);
+});
+
+test("Chat follows delayed streaming tokens at the message-history bottom", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-1440", "One deterministic delayed-stream pass is sufficient");
+
+  await page.evaluate(() => {
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const requestUrl = typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.href
+          : input.url;
+      if (!requestUrl.endsWith("/api/chat/stream")) return originalFetch(input, init);
+
+      const payload = JSON.parse(String(init?.body || "{}")) as {
+        content?: string;
+        displayContent?: string;
+        modelId?: string;
+        conversation?: {
+          id: string;
+          title: string;
+          assistantId?: string;
+          pinned?: boolean;
+          messageCount: number;
+          preview: string;
+          createdAt: string;
+          updatedAt: string;
+        };
+      };
+      const createdAt = "2026-08-02T00:00:00.000Z";
+      const conversation = payload.conversation || {
+        id: "stream-follow-chat",
+        title: "Stream follow chat",
+        pinned: false,
+        messageCount: 0,
+        preview: "",
+        createdAt,
+        updatedAt: createdAt
+      };
+      const displayContent = payload.displayContent || payload.content || "stream follow";
+      const chunks = Array.from({ length: 14 }, (_, index) => (
+        `\n\n${index + 1}. ${"progressive streaming content ".repeat(12)}[STREAM-TOKEN-${index + 1}]`
+      ));
+      const responseContent = chunks.join("");
+      const encoder = new TextEncoder();
+      const eventChunk = (event: string, data: unknown) => encoder.encode(
+        `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
+      );
+      const streamWindow = window as Window & { __emitNextChatStreamEvent?: () => void };
+
+      return new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(eventChunk("meta", {
+            conversation: {
+              ...conversation,
+              messageCount: conversation.messageCount + 2,
+              preview: displayContent,
+              updatedAt: createdAt
+            },
+            userMessage: {
+              id: "stream-follow-user",
+              role: "user",
+              content: displayContent,
+              createdAt
+            },
+            assistantMessageId: "stream-follow-assistant"
+          }));
+          let chunkIndex = 0;
+          const emitNext = () => {
+            if (chunkIndex < chunks.length) {
+              const token = chunks[chunkIndex];
+              controller.enqueue(eventChunk("token", { token }));
+              chunkIndex += 1;
+              return;
+            }
+            controller.enqueue(eventChunk("done", {
+              conversation: {
+                ...conversation,
+                messageCount: conversation.messageCount + 2,
+                preview: displayContent,
+                updatedAt: createdAt
+              },
+              message: {
+                id: "stream-follow-assistant",
+                role: "assistant",
+                content: responseContent,
+                model: payload.modelId,
+                providerId: payload.modelId,
+                status: "done",
+                createdAt
+              }
+            }));
+            controller.close();
+            delete streamWindow.__emitNextChatStreamEvent;
+          };
+          streamWindow.__emitNextChatStreamEvent = emitNext;
+        },
+        cancel() {
+          delete streamWindow.__emitNextChatStreamEvent;
+        }
+      }), {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream; charset=utf-8" }
+      });
+    }) as typeof window.fetch;
+  });
+
+  const session = page.locator(".figma-chat-session:not(.collapsed)");
+  const history = session.locator(".figma-message-history");
+  const workspace = page.locator(".figma-workspace");
+  const workspaceScrollTop = await workspace.evaluate((element) => element.scrollTop);
+  await session.getByLabel("消息内容", { exact: true }).fill("验证逐字输出滚动");
+  await session.getByRole("button", { name: "发送", exact: true }).click();
+  await expect(history).toContainText("验证逐字输出滚动");
+  await expect(history.locator(".figma-typing")).toBeVisible();
+  await expect.poll(() => page.evaluate(() => typeof (window as Window & {
+    __emitNextChatStreamEvent?: () => void;
+  }).__emitNextChatStreamEvent)).toBe("function");
+
+  const emitNextStreamEvent = () => page.evaluate(() => {
+    const emitNext = (window as Window & { __emitNextChatStreamEvent?: () => void }).__emitNextChatStreamEvent;
+    if (!emitNext) throw new Error("Delayed Chat stream is not ready");
+    emitNext();
+  });
+  let observedOverflow = false;
+  for (let index = 0; index < 14; index += 1) {
+    await emitNextStreamEvent();
+    await expect(history).toContainText(`[STREAM-TOKEN-${index + 1}]`);
+    const streamingGeometry = await history.evaluate((element) => ({
+      bottomDistance: element.scrollHeight - element.scrollTop - element.clientHeight,
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight
+    }));
+    observedOverflow ||= streamingGeometry.scrollHeight > streamingGeometry.clientHeight;
+    expect(streamingGeometry.bottomDistance, `token batch ${index + 1} should remain bottom-followed`).toBeLessThanOrEqual(2);
+    expect(
+      await workspace.evaluate((element) => element.scrollTop),
+      `token batch ${index + 1} should not move the outer workspace`
+    ).toBe(workspaceScrollTop);
+  }
+  expect(observedOverflow).toBeTruthy();
+
+  await emitNextStreamEvent();
+  await expect(session.getByRole("button", { name: "发送", exact: true })).toBeVisible();
 });
 
 test("expanded Chat composer stays inside desktop viewport bounds", async ({ page }, testInfo) => {
@@ -453,6 +636,11 @@ test("new Chat sessions open at the top and fold older sessions", async ({ page 
   await expect(newestSession).not.toHaveClass(/collapsed/);
   await expect(newestSession.locator(".figma-session-toggle")).toHaveAttribute("aria-expanded", "true");
   await expect(newestSession.locator(".figma-message-history")).toBeVisible();
+  await expect(newestSession.locator(".figma-message")).toHaveCount(1);
+  await expect(newestSession.locator(".figma-message.assistant .figma-message-bubble")).toHaveText(
+    "你好，今天想从哪里开始？可以直接提问、整理资料，或一起完成一项具体任务。"
+  );
+  await expect(newestSession.getByText("帮我梳理一份关于生成式 AI 在企业落地的简短介绍。", { exact: true })).toHaveCount(0);
 
   await expect(olderSession).toHaveClass(/collapsed/);
   await expect(olderSession.locator(".figma-session-toggle")).toHaveAttribute("aria-expanded", "false");

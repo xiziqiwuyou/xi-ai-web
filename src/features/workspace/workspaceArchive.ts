@@ -223,7 +223,7 @@ export function sanitizeWorkspaceConversation(value: unknown): Conversation | nu
   const source = recordFrom(value);
   const id = cleanText(source?.id, 120);
   const assistantId = cleanText(source?.assistantId, 120);
-  if (!id || !assistantId) return null;
+  if (!id) return null;
   const messages = Array.isArray(source?.messages)
     ? source.messages.map(sanitizeWorkspaceMessage).filter((item): item is Conversation["messages"][number] => Boolean(item))
     : [];

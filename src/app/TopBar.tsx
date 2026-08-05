@@ -10,6 +10,7 @@ import {
   Languages,
   Menu,
   MessageSquare,
+  MonitorSmartphone,
   Moon,
   Presentation,
   Server,
@@ -19,6 +20,7 @@ import {
   X
 } from "lucide-react";
 import { saveWorkspaceThemePreference } from "../features/workspace/workspaceRepository";
+import { cleanMenuLabel } from "./moduleRegistry";
 import type { MenuItem, ModuleId } from "../types";
 
 type TopBarProps = {
@@ -31,6 +33,8 @@ type TopBarProps = {
   onModuleChange: (moduleId: ModuleId) => void;
   onModuleIntent: (moduleId: ModuleId) => void;
   onOpenWorkspaceData: () => void;
+  progressSyncEnabled: boolean;
+  onOpenProgressSync: () => void;
   onOpenApiConfig: () => void;
   onWorkspaceError: (message: string) => void;
   navigationScrollActive: boolean;
@@ -72,6 +76,7 @@ function ThemeButton({ dark, onToggle }: { dark: boolean; onToggle: () => void }
       onClick={onToggle}
       aria-label="切换日夜主题"
       title="切换日夜主题"
+      data-tooltip="切换日夜主题"
     >
       {dark ? <Sun size={16} /> : <Moon size={16} />}
     </button>
@@ -86,8 +91,24 @@ function WorkspaceDataButton({ onOpen }: { onOpen: () => void }) {
       onClick={onOpen}
       aria-label="管理工作区数据"
       title="管理工作区数据"
+      data-tooltip="管理工作区数据"
     >
       <DatabaseBackup size={16} />
+    </button>
+  );
+}
+
+function ProgressSyncButton({ onOpen }: { onOpen: () => void }) {
+  return (
+    <button
+      type="button"
+      className="figma-icon-button"
+      onClick={onOpen}
+      aria-label="跨设备同步"
+      title="跨设备同步"
+      data-tooltip="跨设备同步"
+    >
+      <MonitorSmartphone size={16} />
     </button>
   );
 }
@@ -110,6 +131,8 @@ function TopBar({
   onModuleChange,
   onModuleIntent,
   onOpenWorkspaceData,
+  progressSyncEnabled,
+  onOpenProgressSync,
   onOpenApiConfig,
   onWorkspaceError,
   navigationScrollActive,
@@ -203,6 +226,7 @@ function TopBar({
         const meta = navigationMeta[item.id];
         if (!meta) return null;
         const Icon = meta.icon;
+        const label = cleanMenuLabel(item.id, item.label || meta.label);
         const active = item.id === (pendingModule || activeModule);
         const pending = item.id === pendingModule;
         return (
@@ -226,11 +250,11 @@ function TopBar({
               }
             }}
             aria-current={active ? "page" : undefined}
-            aria-label={meta.label}
+            aria-label={label}
           >
             <Icon size={16} />
             <span>
-              <strong>{meta.label}</strong>
+              <strong>{label}</strong>
               <small>{meta.note}</small>
             </span>
           </button>
@@ -245,6 +269,7 @@ function TopBar({
         <Brand />
         <div className="figma-mobile-actions">
           <WorkspaceDataButton onOpen={onOpenWorkspaceData} />
+          {progressSyncEnabled ? <ProgressSyncButton onOpen={onOpenProgressSync} /> : null}
           <ThemeButton dark={dark} onToggle={() => setDark((value) => !value)} />
           <button
             type="button"
@@ -291,6 +316,7 @@ function TopBar({
             </span>
             <span className="figma-access-actions">
               <WorkspaceDataButton onOpen={onOpenWorkspaceData} />
+              {progressSyncEnabled ? <ProgressSyncButton onOpen={onOpenProgressSync} /> : null}
               <ThemeButton dark={dark} onToggle={() => setDark((value) => !value)} />
             </span>
           </div>

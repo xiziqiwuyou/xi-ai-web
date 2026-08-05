@@ -105,6 +105,9 @@ export function normalizeAdminBootstrapPayload<T extends Partial<AdminBootstrapP
 
   return {
     ...payload,
+    adminUsername: typeof payload.adminUsername === "string" && payload.adminUsername.trim()
+      ? payload.adminUsername.trim()
+      : "xizi2333",
     menuItems: Array.isArray(payload.menuItems) ? payload.menuItems : [],
     modelVendors: normalizedModelVendors(declaredVendors, modelCatalog),
     modelCatalog,

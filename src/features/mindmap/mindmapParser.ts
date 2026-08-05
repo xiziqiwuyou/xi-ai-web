@@ -1,8 +1,6 @@
-export type MindmapNode = {
-  id: string;
-  label: string;
-  children: MindmapNode[];
-};
+import type { MindmapNode } from "../../types";
+
+export type { MindmapNode } from "../../types";
 
 type StackEntry = {
   level: number;
@@ -14,6 +12,7 @@ function cleanLabel(value: string) {
     .replace(/^[-*+]\s+/, "")
     .replace(/^#+\s*/, "")
     .replace(/^\d+\.\s+/, "")
+    .replace(/^root\s*\(\((.*)\)\)$/i, "$1")
     .replace(/^\(\((.*)\)\)$/, "$1")
     .replace(/^\((.*)\)$/, "$1")
     .replace(/^\[(.*)\]$/, "$1")
@@ -21,9 +20,15 @@ function cleanLabel(value: string) {
     .trim();
 }
 
-function extractMermaid(markdown: string) {
-  const match = markdown.match(/```(?:mermaid)?\s*([\s\S]*?)```/i);
-  const block = match?.[1] || markdown;
+function extractMermaid(markdown: string): string[] | null {
+  const labelledFence = markdown.match(/```mermaid\s*([\s\S]*?)```/i);
+  const genericFence = markdown.match(/```\s*([\s\S]*?)```/i);
+  const genericBody = genericFence?.[1]?.trim();
+  const bareBody = markdown.trim();
+  const block = labelledFence?.[1]
+    || (genericBody && /^mindmap\b/i.test(genericBody) ? genericBody : "")
+    || (/^mindmap\b/i.test(bareBody) ? bareBody : "");
+  if (!block) return null;
   return block
     .split(/\r?\n/)
     .map((line) => line.replace(/\t/g, "  "))
@@ -42,6 +47,12 @@ function parseLines(lines: string[], fallbackTitle = "思维导图"): MindmapNod
   let index = 0;
 
   for (const line of lines) {
+    const note = line.trim().match(/^>\s*(.+)$/)?.[1]?.trim();
+    if (note) {
+      const current = stack.at(-1)?.node;
+      if (current && current !== root) current.note = note;
+      continue;
+    }
     const label = cleanLabel(line.trim());
     if (!label || /^graph\b|^flowchart\b/i.test(label)) continue;
     const level = lineLevel(line);
@@ -59,12 +70,16 @@ function parseLines(lines: string[], fallbackTitle = "思维导图"): MindmapNod
 
 export function parseMindmap(markdown: string, fallbackTitle = "思维导图"): MindmapNode {
   const mermaidLines = extractMermaid(markdown);
-  const usefulMermaid = mermaidLines.filter((line) => line.trim() && !line.includes("```"));
+  const usefulMermaid = mermaidLines?.filter((line) => line.trim() && !line.includes("```")) || [];
   if (usefulMermaid.length >= 2) return parseLines(usefulMermaid, fallbackTitle);
 
   const markdownLines = markdown
     .split(/\r?\n/)
-    .filter((line) => /^\s*[-*+]\s+/.test(line) || /^#+\s/.test(line.trim()) || /^\s*\d+\.\s+/.test(line));
+    .filter((line) => (
+      /^\s*[-*+]\s+/.test(line)
+      || /^#+\s/.test(line.trim())
+      || /^\s*\d+\.\s+/.test(line)
+      || /^\s*>\s+/.test(line)
+    ));
   return parseLines(markdownLines.length ? markdownLines : [fallbackTitle], fallbackTitle);
 }
-

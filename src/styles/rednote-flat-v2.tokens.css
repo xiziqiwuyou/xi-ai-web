@@ -77,6 +77,8 @@
 :root.dark,
 :root[data-studio-theme="dark"] {
   color-scheme: dark;
+  --font-ui: "Segoe UI Variable Text", "Segoe UI", "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", "Plus Jakarta Sans", sans-serif;
+  --font-mono: "Cascadia Mono", "Cascadia Code", "SFMono-Regular", "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", "DM Mono", Consolas, monospace;
   --xhs-bg: #080c14;
   --xhs-page: #080c14;
   --xhs-surface: #0f1623;
@@ -85,9 +87,9 @@
   --xhs-soft-3: #162032;
   --xhs-line: rgba(222, 232, 250, 0.13);
   --xhs-line-strong: rgba(222, 232, 250, 0.28);
-  --xhs-ink: #edf3ff;
-  --xhs-muted: #93a3bf;
-  --xhs-faint: #7887a3;
+  --xhs-ink: #f2f6ff;
+  --xhs-muted: #a7b5cd;
+  --xhs-faint: #8798b7;
   --xhs-primary: #4f8dff;
   --xhs-red: var(--xhs-primary);
   --xhs-red-hover: #72a4ff;
@@ -124,9 +126,12 @@ body {
   color: var(--xhs-ink);
   font-family: var(--font-ui);
   font-size: 14px;
+  -webkit-font-smoothing: auto;
+  -moz-osx-font-smoothing: auto;
   font-kerning: normal;
   font-optical-sizing: auto;
   line-height: 1.55;
+  text-rendering: optimizeLegibility;
 }
 
 button,

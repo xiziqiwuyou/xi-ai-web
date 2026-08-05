@@ -19,9 +19,13 @@ services:
       NODE_ENV: production
       PORT: 8787
       DATA_DIR: /app/data
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-xizi2333}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env before starting}
       UPSTREAM_BASE_URL: https://api.xi-ai.cn
       TRUST_PROXY_HOPS: 1
+      PROGRESS_SYNC_ENABLED: ${PROGRESS_SYNC_ENABLED:-false}
+      PROGRESS_SYNC_TTL_SECONDS: ${PROGRESS_SYNC_TTL_SECONDS:-600}
+      PROGRESS_SYNC_MAX_PAYLOAD_MB: ${PROGRESS_SYNC_MAX_PAYLOAD_MB:-32}
       KNOWLEDGE_ENABLED: "false"
       LANGFLOW_ENABLED: "false"
     ports:

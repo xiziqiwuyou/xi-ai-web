@@ -7,6 +7,7 @@ import { AdminConsole } from "./AdminConsole";
 function AdminPortal() {
   const [status, setStatus] = useState<AdminStatus | null>(null);
   const [bootstrap, setBootstrap] = useState<AdminBootstrapPayload | null>(null);
+  const [username, setUsername] = useState("xizi2333");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [initializing, setInitializing] = useState(true);
@@ -40,8 +41,9 @@ function AdminPortal() {
     setBusy(true);
     setError("");
     try {
-      await api.adminLogin(password);
+      await api.adminLogin({ username, password });
       setPassword("");
+      setNotice("");
       await loadAdmin();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "登录失败");
@@ -57,6 +59,15 @@ function AdminPortal() {
     await loadAdmin();
   };
 
+  const credentialsChanged = (nextUsername: string) => {
+    setUsername(nextUsername);
+    setPassword("");
+    setBootstrap(null);
+    setStatus({ authRequired: true, authenticated: false, adminConfigured: true });
+    setError("");
+    setNotice("管理员凭据已更新，请使用新用户名和密码重新登录。");
+  };
+
   if (status?.authenticated && bootstrap) {
     return (
       <main className="admin-portal is-authenticated">
@@ -69,6 +80,7 @@ function AdminPortal() {
           onBootstrapChange={setBootstrap}
           onPublicRefresh={async () => undefined}
           onLogout={logout}
+          onCredentialsChanged={credentialsChanged}
         />
       </main>
     );
@@ -107,8 +119,21 @@ function AdminPortal() {
               <div className="admin-login-copy">
                 <span>ADMIN ACCESS</span>
                 <h1>管理员登录</h1>
-                <p>使用部署环境中配置的管理员密码。</p>
+                <p>使用管理员用户名和密码进入开发者后台。</p>
               </div>
+              <label htmlFor="admin-username">
+                管理员用户名
+                <input
+                  id="admin-username"
+                  type="text"
+                  value={username}
+                  onChange={(event) => setUsername(event.target.value)}
+                  autoFocus
+                  autoComplete="username"
+                  placeholder="输入管理员用户名"
+                  spellCheck={false}
+                />
+              </label>
               <label htmlFor="admin-password">
                 管理员密码
                 <input
@@ -116,15 +141,15 @@ function AdminPortal() {
                   type="password"
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
-                  autoFocus
                   autoComplete="current-password"
                   placeholder="输入管理员密码"
                 />
               </label>
-              <button type="submit" className="primary-action admin-login-submit" disabled={busy || !password}>
+              <button type="submit" className="primary-action admin-login-submit" disabled={busy || !username.trim() || !password}>
                 <KeyRound size={17} />
                 {busy ? "验证中" : "进入后台"}
               </button>
+              {notice ? <p className="admin-login-notice" role="status">{notice}</p> : null}
               {error ? <p className="form-error" role="alert">{error}</p> : null}
             </form>
           )}

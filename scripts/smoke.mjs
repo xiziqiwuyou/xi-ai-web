@@ -20,7 +20,7 @@ function assert(condition, message) {
 const root = await get("/");
 assert(root.text.includes('id="root"'), "Root HTML does not contain app root");
 
-const admin = await get("/admin");
+const admin = await get("/xizi2333");
 assert(admin.text.includes('id="root"'), "Admin HTML does not contain app root");
 
 const health = JSON.parse((await get("/api/health")).text);

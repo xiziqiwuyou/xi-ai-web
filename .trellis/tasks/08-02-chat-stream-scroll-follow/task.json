@@ -1,0 +1,37 @@
+{
+  "id": "chat-stream-scroll-follow",
+  "name": "chat-stream-scroll-follow",
+  "title": "Chat streaming scroll behavior",
+  "description": "Fix hover-triggered Chat history scrollbars and keep delayed streaming output anchored to the message-history bottom boundary.",
+  "status": "in_progress",
+  "dev_type": "bugfix",
+  "scope": "Chat message-history scrollbar visibility and streaming bottom-follow behavior",
+  "package": "web",
+  "priority": "P2",
+  "creator": "xiziqiwuyou",
+  "assignee": "xiziqiwuyou",
+  "createdAt": "2026-08-02",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "Implementation and verification complete; changes remain uncommitted with the preceding image-result task.",
+  "meta": {
+    "verification": {
+      "typecheck": "passed",
+      "build": "passed",
+      "uiContract": "passed",
+      "chatLocalContracts": "passed",
+      "featureAudit": "passed",
+      "chatVisualPlaywright": "27 passed, 13 conditionally skipped across all four projects",
+      "streamingBatches": "14 of 14 remained bottom-followed before done",
+      "diffCheck": "passed"
+    }
+  }
+}

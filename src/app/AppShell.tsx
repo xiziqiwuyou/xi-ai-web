@@ -1,12 +1,15 @@
-import type { ReactNode } from "react";
+import { useLayoutEffect, useRef, type ReactNode } from "react";
 import { CircleAlert, LoaderCircle, LockKeyhole, RotateCcw } from "lucide-react";
 import TopBar from "./TopBar";
 import { useShellScrollActivity } from "./useShellScrollActivity";
 import type { MenuItem, ModuleId } from "../types";
 
+export type ModuleCanvasPhase = "idle" | "exiting" | "entering";
+
 type AppShellProps = {
   menuItems: MenuItem[];
   activeModule: ModuleId;
+  moduleCanvasPhase: ModuleCanvasPhase;
   pendingModule: ModuleId | null;
   moduleTransitionPending: boolean;
   pendingModuleLabel: string;
@@ -19,6 +22,8 @@ type AppShellProps = {
   onModuleIntent: (moduleId: ModuleId) => void;
   onRetryModule: () => void;
   onOpenWorkspaceData: () => void;
+  progressSyncEnabled: boolean;
+  onOpenProgressSync: () => void;
   onOpenApiConfig: () => void;
   onWorkspaceError: (message: string) => void;
   children: ReactNode;
@@ -27,6 +32,7 @@ type AppShellProps = {
 function AppShell({
   menuItems,
   activeModule,
+  moduleCanvasPhase,
   pendingModule,
   moduleTransitionPending,
   pendingModuleLabel,
@@ -39,11 +45,22 @@ function AppShell({
   onModuleIntent,
   onRetryModule,
   onOpenWorkspaceData,
+  progressSyncEnabled,
+  onOpenProgressSync,
   onOpenApiConfig,
   onWorkspaceError,
   children
 }: AppShellProps) {
   const shellScroll = useShellScrollActivity();
+  const workspaceRef = useRef<HTMLElement>(null);
+
+  useLayoutEffect(() => {
+    const workspace = workspaceRef.current;
+    if (!workspace) return;
+
+    workspace.scrollTop = 0;
+    workspace.scrollLeft = 0;
+  }, [activeModule]);
 
   return (
     <div
@@ -64,12 +81,15 @@ function AppShell({
         onModuleChange={onModuleChange}
         onModuleIntent={onModuleIntent}
         onOpenWorkspaceData={onOpenWorkspaceData}
+        progressSyncEnabled={progressSyncEnabled}
+        onOpenProgressSync={onOpenProgressSync}
         onOpenApiConfig={onOpenApiConfig}
         onWorkspaceError={onWorkspaceError}
         navigationScrollActive={shellScroll.activeOwner === "navigation"}
         onNavigationScroll={() => shellScroll.markActive("navigation")}
       />
       <main
+        ref={workspaceRef}
         id="workspace-main"
         className="figma-workspace"
         data-scroll-owner="public-workspace"
@@ -96,6 +116,7 @@ function AppShell({
           key={activeModule}
           className="figma-workspace-canvas"
           data-module-canvas={activeModule}
+          data-transition-phase={moduleCanvasPhase}
           aria-busy={moduleTransitionPending}
         >
           {children}

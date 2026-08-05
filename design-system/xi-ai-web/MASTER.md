@@ -63,7 +63,7 @@ Public routes and visible order are exact:
 7. `助手库` -> `/assistants`
 8. `翻译` -> `/translate`
 
-`/` canonicalizes to `/chat`. `/admin` is address-only and never appears in the public shell.
+`/` canonicalizes to `/chat`. `/xizi2333` is address-only and never appears in the public shell; `/admin` is treated as an unknown public path.
 
 ## Chat Contract
 

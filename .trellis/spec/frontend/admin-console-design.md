@@ -1,6 +1,6 @@
 # Admin Console Design System
 
-> Executable layout and interaction rules for the address-only `/admin` application.
+> Executable layout and interaction rules for the address-only `/xizi2333` application.
 
 ## Information Architecture
 

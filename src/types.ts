@@ -23,12 +23,21 @@ export type MenuItem = {
   order: number;
 };
 
+export type ProgressSyncSettings = {
+  enabled: boolean;
+  ttlSeconds: number;
+  maxPayloadMb: number;
+  maxIpJoinAttempts: number;
+  maxSessionJoinAttempts: number;
+};
+
 export type SiteSettings = {
   siteName: string;
   theme: "rednote";
   allowGuestChat: boolean;
   defaultModule: ModuleId;
   upstreamBaseUrl: string;
+  progressSync: ProgressSyncSettings;
 };
 
 export type LangflowStatus = {
@@ -142,6 +151,7 @@ export type Assistant = {
   category: string;
   tags: string[];
   starterPrompts: string[];
+  avatar?: string;
   color: string;
   systemPrompt: string;
   enabled: boolean;
@@ -206,6 +216,7 @@ export type PublicBootstrapPayload = {
 };
 
 export type AdminBootstrapPayload = {
+  adminUsername: string;
   settings: SiteSettings;
   menuItems: MenuItem[];
   modelVendors: ModelVendorEntry[];
@@ -222,6 +233,18 @@ export type AdminStatus = {
   authRequired: boolean;
   authenticated: boolean;
   adminConfigured: boolean;
+};
+
+export type AdminCredentialUpdate = {
+  currentPassword: string;
+  username: string;
+  password: string;
+};
+
+export type AdminCredentialUpdateResult = {
+  ok: boolean;
+  username: string;
+  reauthenticationRequired: boolean;
 };
 
 export type KnowledgeRegistrationMode = "disabled" | "invite_only" | "open";
@@ -787,7 +810,7 @@ export type OpenAIResponseVerbosity = "default" | "low" | "medium" | "high";
 export type ChatStreamPayload = {
   conversation?: ConversationSummary;
   history?: Message[];
-  assistantId: string;
+  assistantId?: string;
   connection: UserConnectionConfig;
   modelId: string;
   temperature: number;
@@ -837,6 +860,107 @@ export type ImageOutputFormat = "png" | "jpeg" | "webp";
 
 export type ImageBackground = "auto" | "opaque" | "transparent";
 
+export type PptSlideType =
+  | "cover"
+  | "section"
+  | "content"
+  | "two-column"
+  | "timeline"
+  | "data"
+  | "quote"
+  | "summary";
+
+export type PptPresentationType =
+  | "business-report"
+  | "product-launch"
+  | "pitch-deck"
+  | "project-plan"
+  | "course"
+  | "annual-review"
+  | "data-analysis"
+  | "industry-research";
+
+export type PptNarrative = "pyramid" | "problem-solution" | "timeline" | "story" | "data-first";
+
+export type PptContentDensity = "concise" | "balanced" | "detailed";
+
+export type PptLanguage = "zh-CN" | "en-US" | "bilingual";
+
+export type PptThemeId = "red-note" | "business-blue" | "midnight";
+
+export type PptGenerationOptions = {
+  presentationType: PptPresentationType;
+  audience: string;
+  duration: string;
+  slideCount: number;
+  narrative: PptNarrative;
+  contentDensity: PptContentDensity;
+  language: PptLanguage;
+  visualTone: string;
+  themeId: PptThemeId;
+  mustInclude?: string;
+  avoidContent?: string;
+};
+
+export type PptSlide = {
+  id: string;
+  type: PptSlideType;
+  title: string;
+  subtitle?: string;
+  bullets: string[];
+  leftContent?: string[];
+  rightContent?: string[];
+  visualDescription?: string;
+  speakerNotes?: string;
+};
+
+export type PptDeck = {
+  version: 1;
+  title: string;
+  subtitle?: string;
+  summary?: string;
+  themeId: PptThemeId;
+  aspectRatio: "16:9";
+  slides: PptSlide[];
+};
+
+export type MindmapPresetId =
+  | "brainstorm"
+  | "meeting-action"
+  | "project-plan"
+  | "learning-notes"
+  | "product-planning"
+  | "content-outline"
+  | "problem-analysis"
+  | "decision-comparison";
+
+export type MindmapDensity = "concise" | "balanced" | "detailed";
+
+export type MindmapOperation = "generate" | "expand" | "reorganize";
+
+export type MindmapNode = {
+  id: string;
+  label: string;
+  note?: string;
+  children: MindmapNode[];
+};
+
+export type MindmapDocument = {
+  version: 1;
+  title: string;
+  summary?: string;
+  root: MindmapNode;
+};
+
+export type MindmapGenerationOptions = {
+  presetId: MindmapPresetId;
+  maxDepth: 2 | 3 | 4 | 5;
+  density: MindmapDensity;
+  operation?: MindmapOperation;
+  targetNodeId?: string;
+  currentDocument?: MindmapDocument;
+};
+
 export type ImageInputPayload = {
   dataUrl: string;
   name?: string;
@@ -875,6 +999,8 @@ export type GenerationPayload = {
     quality?: string;
     duration?: string;
     cameraMotion?: string;
+    ppt?: PptGenerationOptions;
+    mindmap?: MindmapGenerationOptions;
   };
 };
 
@@ -901,6 +1027,23 @@ export type KnowledgeDocument = {
   updatedAt: string;
 };
 
+export type ImageGenerationTimingKey = {
+  modelId: string;
+  mode: ImageGenerationMode;
+  resolution: ImageResolution;
+  aspectRatio: ImageAspectRatio;
+  count: number;
+};
+
+export type ImageGenerationTimingEstimate = {
+  estimatedMs: number;
+  sampleCount: number;
+  sampleLimit: 10;
+  source: "global" | "baseline";
+  scope: "exact" | "model-mode" | "model" | "baseline";
+  updatedAt: string | null;
+};
+
 export type GenerationResult = {
   id: string;
   module: GenerationModuleId;
@@ -913,6 +1056,9 @@ export type GenerationResult = {
     label?: string;
   }>;
   raw?: unknown;
+  deck?: PptDeck;
+  mindmap?: MindmapDocument;
+  timingEstimate?: ImageGenerationTimingEstimate;
   createdAt: string;
 };
 
@@ -924,13 +1070,8 @@ export type GalleryItem = GenerationResult & {
   tags?: string[];
 };
 
-export type ImageGenerationTimingRecord = {
+export type ImageGenerationTimingRecord = ImageGenerationTimingKey & {
   id: string;
-  modelId: string;
-  mode: ImageGenerationMode;
-  resolution: ImageResolution;
-  aspectRatio: ImageAspectRatio;
-  count: number;
   status: "completed" | "failed" | "cancelled";
   startedAt: string;
   completedAt: string;

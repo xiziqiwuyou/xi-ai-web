@@ -182,16 +182,17 @@ try {
   const bootstrapResponse = await fetch(`${appBaseUrl}/api/public/bootstrap`);
   const bootstrap = await bootstrapResponse.json();
   assert.equal(bootstrapResponse.status, 200);
-  assert.equal(bootstrap.assistants.length, 12, "version-6 metadata must receive the curated assistant catalog once");
+  assert.equal(bootstrap.assistants.length, 30, "legacy metadata must receive the version-13 curated assistant catalog once");
   assert.deepEqual(
     [...new Set(bootstrap.assistants.map((assistant) => assistant.category))].sort(),
-    ["内容创作", "商业办公", "学习研究", "生活创意", "编程开发", "通用效率"].sort()
+    ["内容创作", "商业办公", "学习研究", "生活创意", "编程开发", "通用效率", "营销增长"].sort()
   );
   const migratedLegacyAssistant = bootstrap.assistants.find((assistant) => assistant.id === "legacy-general-assistant");
   assert.deepEqual(migratedLegacyAssistant.tags, ["问答", "规划", "执行"]);
   assert.equal(migratedLegacyAssistant.enabled, true);
+  assert.equal(migratedLegacyAssistant.avatar, "sparkles");
   assert.equal(migratedLegacyAssistant.updatedAt, legacyCreatedAt, "normalization must preserve update timestamps");
-  assert.equal(JSON.parse(fs.readFileSync(path.join(dataDir, "app-data.json"), "utf8")).version, 12);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dataDir, "app-data.json"), "utf8")).version, 13);
   const migratedOpenAi = bootstrap.modelCatalog.find((model) => model.id === "openai-gpt-4-1-mini");
   const migratedKimi = bootstrap.modelCatalog.find((model) => model.id === "kimi-k3");
   const migratedQwenFlash = bootstrap.modelCatalog.find((model) => model.id === "qwen3-6-flash");
@@ -386,6 +387,26 @@ try {
   assert(providerRequests[4].body.messages[0].content.includes("Visible skill contract"));
   assert(providerRequests[4].body.messages[0].content.includes("BEGIN UNTRUSTED EXTERNAL DATA: WEB SEARCH"));
   assert.equal(providerRequests[4].body.tools, undefined, "Chat search must stay outside the selected model adapter");
+
+  const responsesChatResponse = await fetch(`${appBaseUrl}/api/chat/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    signal: AbortSignal.timeout(10_000),
+    body: JSON.stringify({
+      connection,
+      modelId: "openai-gpt-4-1-mini",
+      assistantId: "legacy-general-assistant",
+      content: "Project the selected assistant through Responses.",
+      displayContent: "Project the selected assistant through Responses."
+    })
+  });
+  const responsesChatStream = await responsesChatResponse.text();
+  assert.equal(responsesChatResponse.status, 200, responsesChatStream);
+  assert.match(responsesChatStream, /Inline automation completed\./);
+  assert.equal(providerRequests.length, 6);
+  assert.equal(providerRequests[5].url, "/v1/responses");
+  assert(providerRequests[5].body.instructions.includes("Legacy system prompt"));
+  assert.equal(providerRequests[5].body.input[0].role, "user");
 
   console.log("Automation request contracts passed");
 } finally {

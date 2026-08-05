@@ -107,7 +107,7 @@ Database URLs, passwords, COS credentials, cookies, session values, and BYOK key
 
 ## Operations Runbook
 
-Admin operations live only under `/admin` and require the existing Admin session plus exact-origin mutation checks. Public navigation must not link to these routes.
+Knowledge Admin APIs live under `/api/admin/knowledge`; the Admin page is available only at `/xizi2333` and requires the existing Admin session plus exact-origin mutation checks. Public navigation must not link to the page.
 
 Operational endpoints:
 

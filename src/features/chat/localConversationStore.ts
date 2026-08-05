@@ -50,12 +50,12 @@ export async function saveLocalConversations(conversations: Conversation[]) {
   await saveWorkspaceConversations(sanitized);
 }
 
-export function createLocalConversation(assistant: Assistant, title = "新对话"): Conversation {
+export function createLocalConversation(assistant?: Assistant, title = "新对话"): Conversation {
   const createdAt = new Date().toISOString();
   return {
     id: createClientId(),
     title,
-    assistantId: assistant.id,
+    assistantId: assistant?.id || "",
     pinned: false,
     messageCount: 0,
     preview: "",

@@ -31,7 +31,7 @@ git diff --check
 - Agent tests must assert catalog-before-editor navigation, category/tag round trip, exact workflow references after deletion, and selected local knowledge reaching `contextChunks` plus request-scoped `knowledge_search`.
 - Assistant tests must assert backend-driven categories, starter prompt draft behavior, exactly one new conversation, unchanged old conversations, visible bound identity, exact outbound `assistantId`, consumed launch storage, and fail-closed invalid IDs on desktop and mobile.
 - Admin model tests must assert expandable group semantics, one mounted child section, grouped mobile destination values, independent display/request-name validation, short-label public rendering, stable outbound `modelId`, mapped provider `model` dispatch, direct current-vendor drag/move model ordering with atomic full-catalog persistence, vendor/model footer creation and guarded deletion, six-row bounded vendor/model scrollers, stable 7px idle/active scrollbar geometry, readable responsive capability labels, and the absence of duplicate vendor/mapping controls in the inspector.
-- Public navigation tests assert canonical routes, Back/Forward behavior, server order, no `/admin` link, pointer/keyboard intent preloading without route mutation, a gated cold import, stable shell geometry while pending, reduced-motion behavior, failed-import rollback/retry, and last-request-wins rapid navigation.
+- Public navigation tests assert canonical routes, Back/Forward behavior, server order, no `/admin` or `/xizi2333` link, pointer/keyboard intent preloading without route mutation, a gated cold import, stable shell geometry while pending, reduced-motion behavior, failed-import rollback/retry, and last-request-wins rapid navigation.
 
 Vite must ignore `**/reports/**`. Playwright writes traces and screenshots there; watching that directory reloads concurrent test pages and produces `ERR_ABORTED` or destroyed execution contexts.
 
@@ -136,7 +136,7 @@ saveMigrationCheckpoint({ localId, cloudDocumentId, state: stage });
 
 - No `any`, suppressed TypeScript errors, debug logging, or ignored failed promises in changed code.
 - No API Key or Shell handoff JWT persistence in backend files, `localStorage`, query strings, logs, analytics, IndexedDB, or workspace exports.
-- No public Admin entry. `/admin` is address-only and isolated from public bootstrap.
+- No public Admin entry. `/xizi2333` is address-only and isolated from public bootstrap; `/admin` must not mount Admin UI.
 - No fake tabs, project-authored explanatory copy absent from Figma, nested styling cards, persistent glass effects, or gradients outside `.figma-brand-mark`, `.figma-ppt-stages`, and `.figma-map-canvas`.
 - No direct feature writes to localStorage for conversations, gallery, knowledge, media jobs, agent data, memories, or backup state; theme localStorage is only a first-paint mirror of the IndexedDB preference.
 - No silent fallback from an explicit missing/disabled Assistant ID to another assistant, in either Chat or the server runtime.

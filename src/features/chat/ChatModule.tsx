@@ -46,8 +46,7 @@ import {
   selectChatHistory,
   type ChatSessionSettings
 } from "./chatSessionSettings";
-import ChatSkillManagerDialog from "../automation/ChatSkillManagerDialog";
-import { loadAutomationSkills, saveAgentSkills } from "../automation/automationRepository";
+import { loadAutomationSkills } from "../automation/automationRepository";
 import {
   skillCompatibility,
   toolSetCompatibility
@@ -128,12 +127,6 @@ function ChatModule({
   const [chatSettings, setChatSettings] = useState<ChatSessionSettings>(loadChatSessionSettings);
   const [settingsDraft, setSettingsDraft] = useState<ChatSessionSettings>(chatSettings);
   const [chatSkills, setChatSkills] = useState<AgentSkillDefinition[]>([]);
-  const [settingsSkillIds, setSettingsSkillIds] = useState<string[]>([]);
-  const [settingsConversationId, setSettingsConversationId] = useState("");
-  const [skillsLoading, setSkillsLoading] = useState(true);
-  const [skillManagerOpen, setSkillManagerOpen] = useState(false);
-  const [returnFocusToSkillManager, setReturnFocusToSkillManager] = useState(false);
-  const [defaultAssistantId, setDefaultAssistantId] = useState(assistants[0]?.id || "");
   const [streamingConversationId, setStreamingConversationId] = useState("");
   const [clearConversationId, setClearConversationId] = useState("");
   const knowledgeCatalog = useKnowledgeCatalog();
@@ -183,9 +176,7 @@ function ChatModule({
   }, []);
 
   const createConversation = useCallback(() => {
-    const assistant = assistants.find((item) => item.id === defaultAssistantId) || assistants[0];
-    if (!assistant) return null;
-    const conversation = createLocalConversation(assistant);
+    const conversation = createLocalConversation();
     commitConversations((current) => [conversation, ...current]);
     setSessionUi((current) => {
       const collapsed = Object.fromEntries(
@@ -194,7 +185,7 @@ function ChatModule({
       return { ...collapsed, [conversation.id]: defaultSessionUi(false) };
     });
     return conversation;
-  }, [assistants, commitConversations, defaultAssistantId]);
+  }, [commitConversations]);
 
   useEffect(() => {
     conversationsRef.current = conversationList;
@@ -251,18 +242,11 @@ function ChatModule({
       })
       .catch((error: unknown) => {
         if (alive) setPersistenceError(error instanceof Error ? error.message : "无法读取本地 Skill。");
-      })
-      .finally(() => {
-        if (alive) setSkillsLoading(false);
       });
     return () => {
       alive = false;
     };
   }, []);
-
-  useEffect(() => {
-    if (!defaultAssistantId && assistants[0]) setDefaultAssistantId(assistants[0].id);
-  }, [assistants, defaultAssistantId]);
 
   const consumePendingAssistantLaunch = useCallback(() => {
     if (!conversationsHydrated) return false;
@@ -278,7 +262,6 @@ function ChatModule({
       return false;
     }
     pendingAssistantHandledRef.current = true;
-    setDefaultAssistantId(assistant.id);
     const conversation = createLocalConversation(assistant);
     commitConversations((current) => [conversation, ...current]);
     setSessionUi((current) => ({
@@ -308,12 +291,11 @@ function ChatModule({
       initializedRef.current ||
       !conversationsHydrated ||
       pendingAssistantHandledRef.current ||
-      conversationList.length ||
-      !assistants.length
+      conversationList.length
     ) return;
     initializedRef.current = true;
     createConversation();
-  }, [assistants.length, conversationList.length, conversationsHydrated, createConversation]);
+  }, [conversationList.length, conversationsHydrated, createConversation]);
 
   useEffect(() => {
     setSessionUi((current) => {
@@ -339,13 +321,6 @@ function ChatModule({
     },
     [chatModels, sessionUi, userProvider.lastModelId]
   );
-  const settingsModel = modelForSession(
-    settingsConversationId ||
-      displayedConversations.find((conversation) => !sessionUi[conversation.id]?.collapsed)?.id ||
-      displayedConversations[0]?.id ||
-      ""
-  );
-
   const handleStreamEvent = useCallback(
     (
       conversationId: string,
@@ -505,9 +480,12 @@ function ChatModule({
       onRequestApiConfig();
       return;
     }
-    const assistant = assistants.find((item) => item.id === conversation.assistantId && item.enabled !== false);
-    if (!assistant) {
-      patchSessionUi(conversation.id, { notice: "当前没有可用助手。" });
+    const assistant = assistants.find((item) =>
+      item.id === conversation.assistantId &&
+      Boolean(conversation.assistantId && item.enabled !== false)
+    );
+    if (conversation.assistantId && !assistant) {
+      patchSessionUi(conversation.id, { notice: "当前会话绑定的助手已停用或不存在。" });
       return;
     }
 
@@ -525,7 +503,7 @@ function ChatModule({
     const requestConversation: Conversation = {
       ...conversation,
       title: conversation.messages.length ? conversation.title : makeConversationTitle(displayContent),
-      assistantId: assistant.id,
+      assistantId: assistant?.id || "",
       updatedAt: new Date().toISOString()
     };
     if (
@@ -553,7 +531,7 @@ function ChatModule({
         {
           conversation: conversationSummary(requestConversation),
           history: chatHistoryWithoutAttachments(selectedHistory),
-          assistantId: assistant.id,
+          ...(assistant ? { assistantId: assistant.id } : {}),
           modelId: selectedModel.id,
           temperature: chatSettings.temperature,
           topP: chatSettings.topP,
@@ -778,31 +756,17 @@ function ChatModule({
       : item));
   };
 
-  const openSettings = (conversationId?: string) => {
-    const targetConversationId = conversationId ||
-      displayedConversations.find((conversation) => !sessionUi[conversation.id]?.collapsed)?.id ||
-      displayedConversations[0]?.id ||
-      "";
-    const targetSkillIds = targetConversationId
-      ? sessionUi[targetConversationId]?.skillIds || []
-      : [];
-    setSettingsConversationId(targetConversationId);
-    setSettingsSkillIds([...targetSkillIds]);
+  const openSettings = () => {
     setSettingsDraft(chatSettings);
     setSettingsOpen(true);
   };
 
   const cancelSettings = () => {
     setSettingsDraft(chatSettings);
-    setSettingsConversationId("");
-    setReturnFocusToSkillManager(false);
     setSettingsOpen(false);
   };
 
   const saveSettings = () => {
-    if (settingsConversationId) {
-      patchSessionUi(settingsConversationId, { skillIds: [...settingsSkillIds] });
-    }
     setSessionUi((current) => Object.fromEntries(
       Object.entries(current).map(([conversationId, ui]) => {
         if (imageAttachmentCount(ui.attachments) <= settingsDraft.maxImageAttachments) return [conversationId, ui];
@@ -815,9 +779,14 @@ function ChatModule({
     ));
     setChatSettings(settingsDraft);
     saveChatSessionSettings(settingsDraft);
-    setSettingsConversationId("");
-    setReturnFocusToSkillManager(false);
     setSettingsOpen(false);
+  };
+
+  const updateContextMessageCount = (contextMessageCount: ChatSessionSettings["contextMessageCount"]) => {
+    const nextSettings = { ...chatSettings, contextMessageCount };
+    setChatSettings(nextSettings);
+    setSettingsDraft((current) => ({ ...current, contextMessageCount }));
+    saveChatSessionSettings(nextSettings);
   };
 
   const topModel = displayedConversations[0] ? modelForSession(displayedConversations[0].id) : undefined;
@@ -877,7 +846,7 @@ function ChatModule({
               userAvatarUrl={userAvatarUrl}
               streaming={streamingConversationId === conversation.id}
               onCreateConversation={createConversation}
-              onOpenSettings={() => openSettings(conversation.id)}
+              onOpenSettings={openSettings}
               onToggle={() => toggleConversation(conversation, ui)}
               onTogglePinned={() => toggleConversationPinned(conversation)}
               onDraftChange={(draft) => patchSessionUi(conversation.id, { draft })}
@@ -911,6 +880,7 @@ function ChatModule({
                 reasoningEffort,
                 notice: ""
               })}
+              onContextMessageCountChange={updateContextMessageCount}
               onImageInput={(event) => void attachImage(conversation.id, event)}
               onLongPaste={(text) => void attachPastedText(conversation.id, text)}
               onRemoveImage={(attachmentId) => patchSessionUi(conversation.id, {
@@ -926,40 +896,12 @@ function ChatModule({
       </div>
 
       <ChatSessionSettingsDialog
-        open={settingsOpen && !skillManagerOpen}
+        open={settingsOpen}
         settings={settingsDraft}
-        skills={chatSkills}
-        selectedSkillIds={settingsSkillIds}
-        skillsLoading={skillsLoading}
-        tools={toolSettings}
-        model={settingsModel}
         models={chatModels}
-        searchReady={searchReady}
-        returnFocusToSkillManager={returnFocusToSkillManager}
         onSettingsChange={(patch) => setSettingsDraft((current) => ({ ...current, ...patch }))}
-        onSelectedSkillIdsChange={setSettingsSkillIds}
-        onOpenSkillManager={() => {
-          setReturnFocusToSkillManager(true);
-          setSkillManagerOpen(true);
-        }}
         onCancel={cancelSettings}
         onSave={saveSettings}
-      />
-
-      <ChatSkillManagerDialog
-        open={skillManagerOpen}
-        skills={chatSkills}
-        tools={toolSettings}
-        onClose={() => setSkillManagerOpen(false)}
-        onSave={async (skills) => {
-          await saveAgentSkills(skills);
-          setChatSkills(skills);
-          setSettingsSkillIds((current) => current.filter((id) => skills.some((skill) => skill.id === id)));
-          setSessionUi((current) => Object.fromEntries(Object.entries(current).map(([id, ui]) => [
-            id,
-            { ...ui, skillIds: (ui.skillIds || []).filter((skillId) => skills.some((skill) => skill.id === skillId)) }
-          ])));
-        }}
       />
 
       <ConfirmationDialog

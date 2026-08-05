@@ -205,7 +205,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 4px;
   margin-bottom: 12px;
   padding-bottom: 12px;
   border-bottom: 1px solid var(--xhs-line);
@@ -213,29 +213,60 @@
 
 .figma-access-actions {
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
 }
 
 .figma-access-actions .figma-icon-button {
-  width: 34px;
-  min-width: 34px;
-  height: 34px;
-  border-radius: 12px;
+  position: relative;
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  border-radius: 10px;
+}
+
+.figma-access-actions .figma-icon-button::after {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  z-index: 20;
+  padding: 5px 8px;
+  border: 1px solid var(--xhs-line);
+  border-radius: 8px;
+  background: var(--xhs-ink);
+  color: var(--xhs-bg);
+  content: attr(data-tooltip);
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 14px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 4px);
+  transition: opacity 120ms ease, transform 120ms ease;
+  white-space: nowrap;
+}
+
+.figma-access-actions .figma-icon-button:hover::after,
+.figma-access-actions .figma-icon-button:focus-visible::after {
+  opacity: 1;
+  transform: translate(-50%, 0);
 }
 
 .figma-service-status {
   display: inline-flex;
-  min-height: 24px;
+  min-height: 22px;
+  flex: 0 0 auto;
   align-items: center;
-  gap: 7px;
-  padding: 3px 10px;
+  gap: 4px;
+  padding: 3px 6px;
   border: 1px solid color-mix(in srgb, var(--xhs-warning) 24%, transparent);
   border-radius: 999px;
   background: color-mix(in srgb, var(--xhs-warning) 10%, transparent);
   color: var(--xhs-warning);
   font-size: 10px;
   font-weight: 700;
+  white-space: nowrap;
 }
 
 .figma-service-status i {
@@ -434,6 +465,15 @@
   width: 100%;
   min-height: calc(100dvh - 108px);
   flex: 1 0 auto;
+  animation: none;
+  will-change: opacity, transform;
+}
+
+.figma-workspace-canvas[data-transition-phase="exiting"] {
+  animation: figma-module-exit 60ms ease-in both;
+}
+
+.figma-workspace-canvas[data-transition-phase="entering"] {
   animation: figma-module-enter 160ms ease-out both;
 }
 
@@ -551,6 +591,17 @@
   }
 }
 
+@keyframes figma-module-exit {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0.96;
+    transform: translateY(-2px);
+  }
+}
+
 @keyframes figma-module-progress {
   from {
     transform: translateX(-110%);
@@ -607,4 +658,23 @@
   .figma-nav-item.pending > svg {
     animation: none;
   }
+}
+.assistant-avatar-glyph {
+  display: grid;
+  overflow: hidden;
+  flex: 0 0 auto;
+  place-items: center;
+  color: #fff;
+}
+
+.assistant-avatar-glyph > svg {
+  width: 48%;
+  height: 48%;
+  stroke-width: 2;
+}
+
+.assistant-avatar-image {
+  display: block;
+  flex: 0 0 auto;
+  object-fit: cover;
 }

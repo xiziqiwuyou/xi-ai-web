@@ -505,7 +505,8 @@
   text-align: left;
 }
 
-.figma-session-preview img {
+.figma-session-preview img,
+.figma-session-preview .figma-session-avatar {
   width: 46px;
   height: 46px;
   border-radius: 16px;
@@ -560,13 +561,17 @@
 }
 
 .figma-message-history {
-  --figma-message-font-size: 15px;
+  --figma-message-font-size: 13px;
   height: calc(100dvh - 340px);
   min-height: 400px;
   overflow-y: auto;
   overscroll-behavior-y: auto;
   scrollbar-width: thin;
   scrollbar-color: transparent transparent;
+}
+
+.figma-message-history[data-scroll-active="true"] {
+  scrollbar-color: var(--xhs-scrollbar-active) transparent;
 }
 
 @media (min-width: 1024px) {
@@ -633,10 +638,6 @@
   white-space: nowrap;
 }
 
-.figma-message-history:hover {
-  scrollbar-color: color-mix(in srgb, var(--xhs-muted) 38%, transparent) transparent;
-}
-
 .figma-message-track {
   display: grid;
   width: min(100%, 1024px);
@@ -659,9 +660,11 @@
 }
 
 .figma-message-avatar {
+  display: grid;
   width: 40px;
   height: 40px;
   flex: 0 0 40px;
+  place-items: center;
   border-radius: 16px;
   object-fit: cover;
 }
@@ -696,7 +699,7 @@
   background: var(--xhs-soft-3);
   color: var(--xhs-ink);
   font-size: var(--figma-message-font-size);
-  line-height: 28px;
+  line-height: 1.75;
   overflow-wrap: anywhere;
 }
 
@@ -900,14 +903,6 @@
   white-space: pre-wrap;
 }
 
-.figma-message-usage {
-  display: block;
-  margin-top: 8px;
-  color: color-mix(in srgb, currentColor 62%, transparent);
-  font-size: 10px;
-  line-height: 1.5;
-}
-
 .figma-inline-code {
   padding: 0.14em 0.38em;
   border-radius: 5px;
@@ -959,7 +954,10 @@
 }
 
 .figma-session-controls {
+  position: relative;
+  z-index: 3;
   border-top: 1px solid var(--xhs-line);
+  background: var(--xhs-surface);
   padding: 20px;
 }
 
@@ -1002,7 +1000,8 @@
 }
 
 .figma-search-provider-menu,
-.figma-reasoning-menu {
+.figma-reasoning-menu,
+.figma-context-count-menu {
   position: relative;
   display: block;
   min-width: 0;
@@ -1010,7 +1009,8 @@
 }
 
 .figma-search-provider-menu .figma-menu-label,
-.figma-reasoning-menu .figma-menu-label {
+.figma-reasoning-menu .figma-menu-label,
+.figma-context-count-menu .figma-menu-label {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -1021,7 +1021,8 @@
 }
 
 .figma-search-provider-menu .figma-menu-trigger,
-.figma-reasoning-menu .figma-menu-trigger {
+.figma-reasoning-menu .figma-menu-trigger,
+.figma-context-count-menu .figma-menu-trigger {
   width: auto;
   min-height: 27px;
   padding: 6px 8px;
@@ -1035,25 +1036,48 @@
 .figma-search-provider-menu .figma-menu-trigger[aria-expanded="true"],
 .figma-search-provider-menu.active .figma-menu-trigger,
 .figma-reasoning-menu .figma-menu-trigger:hover:not(:disabled),
-.figma-reasoning-menu .figma-menu-trigger[aria-expanded="true"] {
+.figma-reasoning-menu .figma-menu-trigger[aria-expanded="true"],
+.figma-context-count-menu .figma-menu-trigger:hover:not(:disabled),
+.figma-context-count-menu .figma-menu-trigger[aria-expanded="true"] {
   border-color: transparent;
   background: var(--xhs-soft-3);
   color: var(--xhs-red);
 }
 
 .figma-search-provider-menu .figma-menu-trigger-value,
-.figma-reasoning-menu .figma-menu-trigger-value {
+.figma-reasoning-menu .figma-menu-trigger-value,
+.figma-context-count-menu .figma-menu-trigger-value {
   gap: 6px;
 }
 
 .figma-search-provider-menu .figma-menu-trigger-value strong,
-.figma-reasoning-menu .figma-menu-trigger-value strong {
+.figma-reasoning-menu .figma-menu-trigger-value strong,
+.figma-context-count-menu .figma-menu-trigger-value strong {
   font-size: 10px;
   font-weight: 500;
 }
 
 .figma-reasoning-menu .figma-menu-popover {
   min-width: 230px;
+}
+
+.figma-context-count-menu .figma-menu-popover {
+  min-width: 190px;
+}
+
+.figma-token-usage-summary {
+  display: inline-block;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--xhs-muted);
+  font-family: var(--font-ui);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 27px;
+  white-space: nowrap;
 }
 
 .figma-search-provider-menu .figma-menu-popover {
@@ -2118,7 +2142,8 @@
 @media (max-width: 760px) {
   .figma-session-tools > button,
   .figma-search-provider-menu .figma-menu-trigger,
-  .figma-reasoning-menu .figma-menu-trigger {
+  .figma-reasoning-menu .figma-menu-trigger,
+  .figma-context-count-menu .figma-menu-trigger {
     min-height: 44px;
   }
 
@@ -2262,108 +2287,6 @@
   padding: 18px;
   color: var(--xhs-muted);
   text-align: center;
-}
-
-.figma-chat-skill-selection {
-  margin: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-}
-
-.figma-chat-skill-selection > legend {
-  padding: 0 5px;
-  color: var(--xhs-ink);
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.figma-chat-skill-selection-toolbar {
-  display: flex;
-  justify-content: flex-end;
-  margin: -2px 0 10px;
-}
-
-.figma-chat-skill-selection-toolbar button {
-  display: inline-flex;
-  min-height: 34px;
-  align-items: center;
-  gap: 5px;
-  padding: 0 9px;
-  border: 1px solid var(--xhs-line);
-  border-radius: 9px;
-  background: var(--xhs-surface);
-  color: var(--xhs-muted);
-  cursor: pointer;
-  font-size: 10px;
-}
-
-.figma-chat-skill-selection-toolbar button:hover,
-.figma-chat-skill-selection-toolbar button:focus-visible {
-  border-color: color-mix(in srgb, var(--xhs-red) 45%, var(--xhs-line));
-  color: var(--xhs-red);
-}
-
-.figma-chat-skill-selection-list {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.figma-chat-skill-selection-list > p {
-  grid-column: 1 / -1;
-  margin: 0;
-  color: var(--xhs-muted);
-  font-size: 11px;
-}
-
-.figma-chat-skill-selection-list label {
-  display: flex;
-  min-height: 48px;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  border: 1px solid var(--xhs-line);
-  border-radius: 11px;
-  background: var(--xhs-surface);
-  cursor: pointer;
-}
-
-.figma-chat-skill-selection-list label.disabled {
-  opacity: 0.48;
-  cursor: not-allowed;
-}
-
-.figma-chat-skill-selection-list input {
-  width: 15px;
-  height: 15px;
-  accent-color: var(--xhs-red);
-}
-
-.figma-chat-skill-selection-list span {
-  min-width: 0;
-}
-
-.figma-chat-skill-selection-list strong,
-.figma-chat-skill-selection-list small {
-  display: block;
-}
-
-.figma-chat-skill-selection-list strong {
-  overflow: hidden;
-  color: var(--xhs-ink);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.figma-chat-skill-selection-list small {
-  margin-top: 2px;
-  overflow: hidden;
-  color: var(--xhs-muted);
-  font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .ui-dialog.figma-chat-skill-dialog {
@@ -2662,11 +2585,6 @@
     justify-content: center;
   }
 
-  .figma-chat-skill-selection-toolbar button {
-    min-height: 44px;
-  }
-
-  .figma-chat-skill-selection-list,
   .figma-chat-skill-dialog-body,
   .figma-chat-skill-tools {
     grid-template-columns: minmax(0, 1fr);
@@ -3131,16 +3049,6 @@
 
 .figma-setting-switch i {
   left: 8px;
-}
-
-.figma-chat-skill-selection-list strong {
-  font-size: 13px;
-}
-
-.figma-chat-skill-selection-list small,
-.figma-chat-skill-selection-list > p {
-  font-size: 12px;
-  line-height: 1.5;
 }
 
 .figma-session-settings > footer {

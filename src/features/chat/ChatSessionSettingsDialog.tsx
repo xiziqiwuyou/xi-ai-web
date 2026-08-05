@@ -1,14 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ChangeEvent, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
-import { Check, Code2, Keyboard, MessageSquareText, Paintbrush, Puzzle, Settings2, Sigma, SlidersHorizontal, X } from "lucide-react";
+import { Check, Code2, Keyboard, MessageSquareText, Paintbrush, Settings2, Sigma, SlidersHorizontal, X } from "lucide-react";
 import { ConfirmationDialog, Dialog, FigmaMenu, type FigmaMenuOption } from "../../components/ui";
 import { compactModelLabel } from "../../components/workbench";
-import type { AgentSkillDefinition, ModelCatalogEntry, ToolSetting } from "../../types";
-import { skillCompatibility } from "../automation/toolCompatibility";
+import type { ModelCatalogEntry } from "../../types";
 import {
   assistantAvatarPresets,
   chatCodeThemeValues,
   chatContextSizeValues,
-  chatContextMessageCountValues,
   chatImageAttachmentLimitValues,
   chatMaxTokenMaximum,
   chatMessageFontSizeValues,
@@ -17,6 +15,7 @@ import {
   chatTitleSummaryMessageCountValues,
   chatToolInvocationModes,
   cleanSettingChoice,
+  defaultChatSessionSettings,
   personalAvatarPresets,
   type ChatSessionSettings
 } from "./chatSessionSettings";
@@ -24,17 +23,8 @@ import {
 type ChatSessionSettingsDialogProps = {
   open: boolean;
   settings: ChatSessionSettings;
-  skills: AgentSkillDefinition[];
-  selectedSkillIds: string[];
-  skillsLoading: boolean;
-  tools: ToolSetting[];
-  model?: ModelCatalogEntry;
   models: ModelCatalogEntry[];
-  searchReady: boolean;
-  returnFocusToSkillManager: boolean;
   onSettingsChange: (patch: Partial<ChatSessionSettings>) => void;
-  onSelectedSkillIdsChange: (ids: string[]) => void;
-  onOpenSkillManager: () => void;
   onCancel: () => void;
   onSave: () => void;
 };
@@ -237,10 +227,6 @@ function MaxTokenSetting({ enabled, value, onEnabledChange, onValueChange }: Max
 }
 
 const contextOptions = chatContextSizeValues.map((value) => ({ value, label: value === "1024" ? "1M tokens" : `${value}K tokens` }));
-const contextMessageCountOptions = [
-  ...chatContextMessageCountValues.map((value) => ({ value, label: `最近 ${value} 条` })),
-  { value: null, label: "不限" }
-] as const;
 const imageAttachmentLimitOptions = chatImageAttachmentLimitValues.map((value) => ({ value: String(value), label: `${value} 张` }));
 const toolInvocationOptions = [
   { value: "prompt", label: "使用提示词" },
@@ -263,7 +249,6 @@ const sendShortcutOptions = [
 ] as const satisfies readonly FigmaMenuOption[];
 const settingsNavigation = [
   { id: "appearance", label: "外观设置", description: "头像与消息布局", Icon: Paintbrush },
-  { id: "skills", label: "对话 Skill", description: "会话技能与兼容性", Icon: Puzzle },
   { id: "model", label: "模型设置", description: "采样、长度与工具", Icon: SlidersHorizontal },
   { id: "openai", label: "OpenAI 设置", description: "详细程度与用量", Icon: Settings2 },
   { id: "messages", label: "消息设置", description: "阅读与思考内容", Icon: MessageSquareText },
@@ -277,21 +262,11 @@ type SettingsSectionId = typeof settingsNavigation[number]["id"];
 export default function ChatSessionSettingsDialog({
   open,
   settings,
-  skills,
-  selectedSkillIds,
-  skillsLoading,
-  tools,
-  model,
   models,
-  searchReady,
-  returnFocusToSkillManager,
   onSettingsChange,
-  onSelectedSkillIdsChange,
-  onOpenSkillManager,
   onCancel,
   onSave
 }: ChatSessionSettingsDialogProps) {
-  const skillManagerTriggerRef = useRef<HTMLButtonElement | null>(null);
   const userAvatarInputRef = useRef<HTMLInputElement | null>(null);
   const settingsHeadingRef = useRef<HTMLElement | null>(null);
   const settingsReturnFocusRef = useRef<HTMLElement | null>(null);
@@ -323,11 +298,11 @@ export default function ChatSessionSettingsDialog({
 
   useEffect(() => {
     if (open) {
-      setActiveSection(returnFocusToSkillManager ? "skills" : "appearance");
+      setActiveSection("appearance");
     } else {
       setMaxTokenConfirmationOpen(false);
     }
-  }, [open, returnFocusToSkillManager]);
+  }, [open]);
 
   useLayoutEffect(() => {
     if (open && !settingsWasOpenRef.current && document.activeElement instanceof HTMLElement) {
@@ -376,7 +351,6 @@ export default function ChatSessionSettingsDialog({
       labelledBy="figma-session-settings-title"
       describedBy="figma-session-settings-description"
       className="figma-session-settings"
-      initialFocusRef={returnFocusToSkillManager ? skillManagerTriggerRef : undefined}
       returnFocusRef={settingsReturnFocusRef}
       onClose={onCancel}
     >
@@ -484,40 +458,6 @@ export default function ChatSessionSettingsDialog({
           </div>
         </SettingsSection>
 
-        <SettingsSection id="figma-skills-settings" title="对话 Skill" description="选择当前会话可显式触发的本地技能。" active={activeSection === "skills"}>
-          <fieldset className="figma-chat-skill-selection">
-            <legend className="figma-visually-hidden">对话 Skill</legend>
-            <div className="figma-chat-skill-selection-toolbar">
-              <button ref={skillManagerTriggerRef} type="button" onClick={onOpenSkillManager} disabled={skillsLoading}>
-                <Puzzle size={14} />
-                管理本地 Skill
-              </button>
-            </div>
-            <div className="figma-chat-skill-selection-list">
-              {skillsLoading ? <p>正在读取本地 Skill…</p> : skills.length ? skills.map((skill) => {
-                const compatibility = skillCompatibility(skill, tools, model, {
-                  searchReady,
-                  invocationMode: settings.toolInvocationMode
-                });
-                const checked = selectedSkillIds.includes(skill.id);
-                return (
-                  <label key={skill.id} className={!compatibility.compatible ? "disabled" : ""}>
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      disabled={!compatibility.compatible && !checked}
-                      onChange={(event) => onSelectedSkillIdsChange(event.target.checked
-                        ? [...new Set([...selectedSkillIds, skill.id])]
-                        : selectedSkillIds.filter((id) => id !== skill.id))}
-                    />
-                    <span><strong>{skill.name}</strong><small>{compatibility.compatible ? skill.description || "对话指令" : compatibility.reason}</small></span>
-                  </label>
-                );
-              }) : <p>暂无 Skill</p>}
-            </div>
-          </fieldset>
-        </SettingsSection>
-
         <SettingsSection id="figma-model-settings" title="模型设置" description="控制生成随机性、上下文、输出长度和工具调用。" active={activeSection === "model"}>
           <div className="figma-settings-grid">
             <label className="figma-range-control">
@@ -543,14 +483,6 @@ export default function ChatSessionSettingsDialog({
               value={settings.contextSize}
               options={contextOptions}
               onChange={(value) => onSettingsChange({ contextSize: cleanSettingChoice(value, chatContextSizeValues, "16") })}
-            />
-            <DiscreteRangeSetting
-              id="figma-context-message-count-range"
-              label="引用历史消息"
-              description="限制送入模型的最近消息条数，不限仍受上下文窗口约束"
-              value={settings.contextMessageCount}
-              options={contextMessageCountOptions}
-              onChange={(value) => onSettingsChange({ contextMessageCount: value })}
             />
             <MaxTokenSetting
               enabled={settings.maxTokensEnabled}
@@ -621,7 +553,7 @@ export default function ChatSessionSettingsDialog({
               options={responseVerbosityOptions}
               onChange={(responseVerbosity) => onSettingsChange({ responseVerbosity: cleanSettingChoice(responseVerbosity, chatResponseVerbosityValues, "default") })}
             />
-            <SettingToggle label="显示 OpenAI 用量" description="在回答下显示输入、输出和总 Token 用量" checked={settings.showUsage} onChange={(showUsage) => onSettingsChange({ showUsage })} />
+            <SettingToggle label="显示 Token 统计" description="在输入框上方显示最新响应的实际用量，接口未返回时显示上下文估算" checked={settings.showUsage} onChange={(showUsage) => onSettingsChange({ showUsage })} />
           </div>
         </SettingsSection>
 
@@ -634,7 +566,7 @@ export default function ChatSessionSettingsDialog({
             <SettingToggle label="显示消息大纲" description="在消息区顶部显示可跳转的会话锚点" checked={settings.showMessageOutline} onChange={(showMessageOutline) => onSettingsChange({ showMessageOutline })} />
             <label className="figma-setting-font-size">
               <span><strong>消息字体大小</strong><small>{settings.messageFontSize}px</small></span>
-              <input aria-label="消息字体大小" type="range" min="13" max="18" step="1" value={settings.messageFontSize} onChange={(event) => onSettingsChange({ messageFontSize: cleanSettingChoice(Number(event.target.value), chatMessageFontSizeValues, 15) })} />
+              <input aria-label="消息字体大小" type="range" min="13" max="18" step="1" value={settings.messageFontSize} onChange={(event) => onSettingsChange({ messageFontSize: cleanSettingChoice(Number(event.target.value), chatMessageFontSizeValues, defaultChatSessionSettings.messageFontSize) })} />
             </label>
           </div>
         </SettingsSection>

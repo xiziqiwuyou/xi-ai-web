@@ -1,4 +1,5 @@
 import type PptxGenJS from "pptxgenjs";
+import type { PptDeck, PptThemeId } from "../../types";
 
 type ParsedSlide = {
   title: string;
@@ -10,22 +11,29 @@ type ParsedDeck = {
   title: string;
   summary: string[];
   slides: ParsedSlide[];
+  themeId: PptThemeId;
 };
 
 const DECK_W = 13.333;
 const DECK_H = 7.5;
 const MAX_POINTS_PER_SLIDE = 7;
 
-const colors = {
-  ink: "201F24",
-  muted: "766F76",
-  soft: "FFF3F4",
-  paper: "FFFCFC",
-  pink: "FF2442",
-  pinkDeep: "D91937",
-  pinkPale: "FFE8EC",
-  line: "F1CDD3"
-};
+const themeColors = {
+  "red-note": {
+    ink: "201F24", muted: "766F76", soft: "FFF3F4", paper: "FFFCFC",
+    surface: "FFFFFF", pink: "FF2442", pinkDeep: "D91937", pinkPale: "FFE8EC", line: "F1CDD3"
+  },
+  "business-blue": {
+    ink: "12233F", muted: "60708A", soft: "EFF5FF", paper: "F8FAFD",
+    surface: "FFFFFF", pink: "2F6BFF", pinkDeep: "1D4ED8", pinkPale: "DBEAFE", line: "D8E2F1"
+  },
+  midnight: {
+    ink: "F4F7FB", muted: "B5C0D1", soft: "171E2B", paper: "0F1520",
+    surface: "171E2B", pink: "FF4D67", pinkDeep: "FF7588", pinkPale: "3B2330", line: "2D3748"
+  }
+} as const;
+
+type DeckColors = (typeof themeColors)[PptThemeId];
 
 function stripMarkdown(input: string) {
   return input
@@ -233,11 +241,12 @@ export function parsePptMarkdown(markdown: string, topic?: string): ParsedDeck {
   return {
     title,
     summary: unique(summary).slice(0, 4),
-    slides: slides.slice(0, 16)
+    slides: slides.slice(0, 16),
+    themeId: "red-note"
   };
 }
 
-function addFooter(slide: PptxGenJS.Slide, index: number, total: number) {
+function addFooter(slide: PptxGenJS.Slide, index: number, total: number, colors: DeckColors) {
   slide.addShape("rect", {
     x: 0.72,
     y: 6.93,
@@ -245,15 +254,6 @@ function addFooter(slide: PptxGenJS.Slide, index: number, total: number) {
     h: 0.01,
     fill: { color: colors.line, transparency: 18 },
     line: { color: colors.line, transparency: 45 }
-  });
-  slide.addText("xi-ai-web", {
-    x: 0.72,
-    y: 7.03,
-    w: 2.4,
-    h: 0.18,
-    fontFace: "Microsoft YaHei",
-    fontSize: 8.5,
-    color: "B89BA2"
   });
   slide.addText(`${index}/${total}`, {
     x: 11.76,
@@ -267,16 +267,16 @@ function addFooter(slide: PptxGenJS.Slide, index: number, total: number) {
   });
 }
 
-function addTitleSlide(pptx: PptxGenJS, deck: ParsedDeck, total: number) {
+function addTitleSlide(pptx: PptxGenJS, deck: ParsedDeck, total: number, colors: DeckColors) {
   const slide = pptx.addSlide();
-  slide.background = { color: "FFF8F9" };
+  slide.background = { color: colors.soft };
   slide.addShape("roundRect", {
     x: 0.72,
     y: 0.58,
     w: 2.35,
     h: 0.38,
-    fill: { color: "FFFFFF", transparency: 8 },
-    line: { color: "FFFFFF", transparency: 10 },
+    fill: { color: colors.surface, transparency: 8 },
+    line: { color: colors.surface, transparency: 10 },
     shadow: { type: "outer", color: colors.pink, opacity: 0.08, blur: 2, angle: 45, offset: 1 }
   });
   slide.addText("AI PPT", {
@@ -337,8 +337,8 @@ function addTitleSlide(pptx: PptxGenJS, deck: ParsedDeck, total: number) {
     y: 1.28,
     w: 2.82,
     h: 4.95,
-    fill: { color: "FFFFFF", transparency: 8 },
-    line: { color: "FFFFFF", transparency: 8 },
+    fill: { color: colors.surface, transparency: 8 },
+    line: { color: colors.surface, transparency: 8 },
     shadow: { type: "outer", color: colors.pink, opacity: 0.1, blur: 4, angle: 45, offset: 2 }
   });
   deck.summary.slice(0, 3).forEach((item, index) => {
@@ -355,10 +355,10 @@ function addTitleSlide(pptx: PptxGenJS, deck: ParsedDeck, total: number) {
       margin: 0.02
     });
   });
-  addFooter(slide, 1, total);
+  addFooter(slide, 1, total, colors);
 }
 
-function addContentSlide(pptx: PptxGenJS, item: ParsedSlide, index: number, total: number) {
+function addContentSlide(pptx: PptxGenJS, item: ParsedSlide, index: number, total: number, colors: DeckColors) {
   const slide = pptx.addSlide();
   slide.background = { color: colors.paper };
   slide.addShape("rect", {
@@ -396,8 +396,8 @@ function addContentSlide(pptx: PptxGenJS, item: ParsedSlide, index: number, tota
     y: 1.35,
     w: 11.9,
     h: 5.32,
-    fill: { color: "FFFFFF", transparency: 4 },
-    line: { color: "FFFFFF", transparency: 5 },
+    fill: { color: colors.surface, transparency: 4 },
+    line: { color: colors.surface, transparency: 5 },
     shadow: { type: "outer", color: colors.pink, opacity: 0.06, blur: 3, angle: 45, offset: 1 }
   });
 
@@ -435,7 +435,7 @@ function addContentSlide(pptx: PptxGenJS, item: ParsedSlide, index: number, tota
 
   const notes = unique([...item.notes, ...overflowNotes]).join("\n");
   if (notes) slide.addNotes(notes);
-  addFooter(slide, index, total);
+  addFooter(slide, index, total, colors);
 }
 
 function safeFileName(input: string) {
@@ -447,11 +447,29 @@ function safeFileName(input: string) {
   return `${base || "presentation"}.pptx`;
 }
 
-export async function buildPptxFromMarkdown(markdown: string, topic?: string) {
-  const deck = parsePptMarkdown(markdown, topic);
+function parsedDeckFromPptDeck(deck: PptDeck): ParsedDeck {
+  const contentSlides = deck.slides.filter((slide, index) => index > 0 || slide.type !== "cover");
+  return {
+    title: deck.title,
+    summary: unique([deck.subtitle || "", deck.summary || ""].filter(Boolean)).slice(0, 4),
+    slides: contentSlides.map((slide) => ({
+      title: slide.title,
+      points: unique([
+        ...slide.bullets,
+        ...(slide.leftContent || []),
+        ...(slide.rightContent || [])
+      ]),
+      notes: slide.speakerNotes ? [slide.speakerNotes] : []
+    })),
+    themeId: deck.themeId
+  };
+}
+
+async function buildPptx(deck: ParsedDeck) {
   const { default: PptxGen } = await import("pptxgenjs");
   const pptx = new PptxGen();
   const total = deck.slides.length + 1;
+  const colors = themeColors[deck.themeId];
 
   pptx.layout = "LAYOUT_WIDE";
   pptx.author = "xi-ai-web";
@@ -463,15 +481,31 @@ export async function buildPptxFromMarkdown(markdown: string, topic?: string) {
     bodyFontFace: "Microsoft YaHei"
   };
 
-  addTitleSlide(pptx, deck, total);
-  deck.slides.forEach((slide, index) => addContentSlide(pptx, slide, index + 2, total));
+  addTitleSlide(pptx, deck, total, colors);
+  deck.slides.forEach((slide, index) => addContentSlide(pptx, slide, index + 2, total, colors));
 
   return pptx;
+}
+
+export async function buildPptxFromMarkdown(markdown: string, topic?: string) {
+  return buildPptx(parsePptMarkdown(markdown, topic));
+}
+
+export async function buildPptxFromDeck(deck: PptDeck) {
+  return buildPptx(parsedDeckFromPptDeck(deck));
 }
 
 export async function exportPptxFromMarkdown(markdown: string, topic?: string) {
   const deck = parsePptMarkdown(markdown, topic);
   const pptx = await buildPptxFromMarkdown(markdown, topic);
+  await pptx.writeFile({
+    fileName: safeFileName(deck.title),
+    compression: true
+  });
+}
+
+export async function exportPptxFromDeck(deck: PptDeck) {
+  const pptx = await buildPptxFromDeck(deck);
   await pptx.writeFile({
     fileName: safeFileName(deck.title),
     compression: true

@@ -7,7 +7,7 @@ The public app does not require user registration. The address-only Admin consol
 ## Current Capabilities
 
 - Public modules: AI Chat, Image Generation, Agents, Workflows, AI PPT, Mind Map, Assistants, and Translation.
-- Address-only Admin route: `/admin`. It is not rendered in public navigation.
+- Address-only Admin route: `/xizi2333`. It is not rendered in public navigation; legacy `/admin` opens the public app.
 - Session-only BYOK: the API Key is stored in `sessionStorage` and sent only with user-initiated requests.
 - Developer-managed model catalog: each entry can have a short display name and a separate real request model name.
 - Provider adapters: OpenAI, Anthropic Claude, Google Gemini, Kimi, DeepSeek, Qwen, and generic OpenAI-compatible endpoints.
@@ -23,7 +23,7 @@ The public app does not require user registration. The address-only Admin consol
 - Main public workspace data lives in the browser through IndexedDB or `sessionStorage`.
 - The server stores only operator-managed metadata in JSON files under `DATA_DIR`.
 - Public API Keys are never written to server metadata, logs, exports, or Admin configuration. Caller-provided URLs never select an outbound target.
-- The Admin console uses an HttpOnly signed cookie after password login.
+- The Admin console uses an HttpOnly signed cookie after username/password login.
 - Cloud knowledge, when enabled, is a separate subsystem and the only part that needs PostgreSQL, pgvector, and Tencent COS.
 
 ## Requirements
@@ -43,10 +43,10 @@ npm run dev
 Open:
 
 - Public app: `http://localhost:8787`
-- Admin console: `http://localhost:8787/admin`
+- Admin console: `http://localhost:8787/xizi2333`
 - Health check: `http://localhost:8787/api/health`
 
-When `ADMIN_PASSWORD` is empty in local development, Admin APIs are unlocked for convenience. In production mode, Admin APIs are locked unless `ADMIN_PASSWORD` is set.
+Admin APIs remain locked until `ADMIN_PASSWORD` is configured. The default username is `xizi2333` and can be overridden with `ADMIN_USERNAME`.
 
 ## Production Deployment
 
@@ -61,6 +61,7 @@ npm ci
 ```bash
 PORT=8787
 DATA_DIR=/opt/xi-ai-web/data
+ADMIN_USERNAME=xizi2333
 ADMIN_PASSWORD=replace-with-a-strong-password
 UPSTREAM_BASE_URL=https://api.xi-ai.cn
 KNOWLEDGE_ENABLED=false
@@ -78,6 +79,7 @@ PowerShell example:
 ```powershell
 $env:PORT="8787"
 $env:DATA_DIR="C:\xi-ai-web\data"
+$env:ADMIN_USERNAME="xizi2333"
 $env:ADMIN_PASSWORD="replace-with-a-strong-password"
 $env:UPSTREAM_BASE_URL="https://api.xi-ai.cn"
 $env:KNOWLEDGE_ENABLED="false"
@@ -96,6 +98,7 @@ docker build -t xi-ai-web .
 docker run -d \
   --name xi-ai-web \
   -p 8787:8787 \
+  -e ADMIN_USERNAME=xizi2333 \
   -e ADMIN_PASSWORD=replace-with-a-strong-password \
   -e UPSTREAM_BASE_URL=https://api.xi-ai.cn \
   -e KNOWLEDGE_ENABLED=false \
@@ -117,6 +120,7 @@ Production-ready templates are available in [`deploy/app`](deploy/app). See [`de
 | `PORT` | `8787` | No | HTTP server port. |
 | `DATA_DIR` | `./data` | Recommended | Persistent JSON metadata, backups, and Admin audit directory. |
 | `TRUST_PROXY_HOPS` | `0` | No | Set to the exact trusted reverse-proxy hop count, normally `1` behind one Nginx/1Panel proxy. |
+| `ADMIN_USERNAME` | `xizi2333` | No | Bootstrap Admin username. A rotated username in `DATA_DIR/admin-credentials.json` takes precedence. |
 | `ADMIN_PASSWORD` | empty | Yes in production | Admin login password. Production Admin is locked when this is missing. |
 | `ADMIN_SESSION_SECRET` | derived fallback | No | Optional advanced override. By default a domain-separated signing secret is derived from `ADMIN_PASSWORD`. |
 | `UPSTREAM_BASE_URL` | `https://api.xi-ai.cn` | No | Administrator-managed provider gateway origin. Public requests ignore caller-provided URLs. |
@@ -133,7 +137,7 @@ See `.env.example` for the complete optional knowledge configuration.
 
 ## Admin Console
 
-Open `/admin` directly. The Admin console can manage:
+Open `/xizi2333` directly. The Admin console can manage:
 
 - public menu enabled and visible states;
 - model vendors, display names, real request model names, and capabilities;
@@ -146,19 +150,20 @@ Open `/admin` directly. The Admin console can manage:
 - optional Langflow workflow publication mappings.
 
 Admin configuration is operator metadata only. It is not a public user account system and does not store public BYOK credentials.
+The Site Settings page can rotate the Admin username and password. Rotated credentials are stored only as a salted `scrypt` hash in `DATA_DIR/admin-credentials.json`; deleting that file and restarting restores the environment-provided credentials.
 
 ## First Production Smoke Test
 
 After deployment:
 
 1. Open `/api/health` and confirm `"ok": true`, then open `/api/ready` and confirm `"ready": true`.
-2. Open `/admin` and log in with `ADMIN_PASSWORD`.
+2. Open `/xizi2333` and log in with `ADMIN_USERNAME` and `ADMIN_PASSWORD`.
 3. Confirm at least one enabled Chat-capable model exists in the Admin model catalog.
 4. Open `/chat` in a fresh browser session.
 5. Enter an API Key in the required BYOK dialog.
 6. Send one short Chat message with a known working model.
 7. Test one image model if image generation is part of the rollout.
-8. Export Admin metadata from `/admin` and verify it does not contain public BYOK credentials.
+8. Export Admin metadata from `/xizi2333` and verify it does not contain public BYOK credentials.
 
 ## Optional Cloud Knowledge
 

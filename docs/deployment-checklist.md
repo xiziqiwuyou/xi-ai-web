@@ -9,9 +9,12 @@ This checklist covers the no-account BYOK deployment path for xi-ai-web. It inte
 - Confirm the service will be served behind HTTPS for public access.
 - Keep `KNOWLEDGE_ENABLED=false` for the first rollout unless the cloud knowledge stack is already provisioned.
 - Keep `LANGFLOW_ENABLED=false` until the separate Langflow runtime has been secured and a published Flow has been tested.
+- Keep `PROGRESS_SYNC_ENABLED=false` until HTTPS, the persistent `DATA_DIR` volume,
+  and a reverse-proxy request limit of at least 68 MB have been verified.
 - Generate a unique `ADMIN_PASSWORD` of at least 16 characters. The bundled
   deployment derives a domain-separated session-signing secret from it; an
   explicit `ADMIN_SESSION_SECRET` remains an optional advanced override.
+- Set `ADMIN_USERNAME` (default `xizi2333`) and keep the private page path `/xizi2333` out of public navigation.
 - Decide the reverse-proxy trust boundary:
   - direct access: `TRUST_PROXY_HOPS=0`;
   - one trusted Nginx, 1Panel, or CDN-to-origin proxy: `TRUST_PROXY_HOPS=1`;
@@ -53,6 +56,7 @@ Minimum production environment:
 PORT=8787
 DATA_DIR=/opt/xi-ai-web/data
 TRUST_PROXY_HOPS=1
+ADMIN_USERNAME=xizi2333
 ADMIN_PASSWORD=replace-with-a-strong-password
 UPSTREAM_BASE_URL=https://api.xi-ai.cn
 KNOWLEDGE_ENABLED=false
@@ -60,6 +64,9 @@ LANGFLOW_ENABLED=false
 LANGFLOW_BASE_URL=http://langflow:7860
 LANGFLOW_API_KEY=
 LANGFLOW_WORKFLOW_PATH=/api/v2/workflows
+PROGRESS_SYNC_ENABLED=false
+PROGRESS_SYNC_TTL_SECONDS=600
+PROGRESS_SYNC_MAX_PAYLOAD_MB=32
 ```
 
 Public users provide only an API Key through the BYOK modal. They cannot select
@@ -88,13 +95,13 @@ Then verify:
 - `GET /api/health` returns `"ok": true` as a process liveness check.
 - `GET /api/ready` returns HTTP 200 with `"ready": true` only when production
   configuration and writable metadata storage are ready.
-- `/admin` requires the configured Admin password.
+- `/xizi2333` requires the configured Admin username and password.
 - `/chat` opens the public workspace and shows the required BYOK dialog when the
   API Key is missing.
 
 ## 5. Admin Metadata Setup
 
-In `/admin`:
+In `/xizi2333`:
 
 - Review menu visibility and enabled states.
 - Confirm the public menu does not contain Admin, Knowledge, Skill, Audio, Video, Apps, or Gallery unless intentionally restored in code.
@@ -106,6 +113,9 @@ In `/admin`:
   - capabilities;
   - enabled state.
 - Review assistants, app presets, prompt presets, and tool/search settings.
+- Review cross-device temporary sync under site settings. Enable it only behind
+  HTTPS; keep the code lifetime within 180-1800 seconds and ciphertext within
+  5-64 MB. The default is 600 seconds and 32 MB.
 - Export Admin metadata after setup and store the file outside the application container.
 
 ## 6. Public BYOK Flow
@@ -141,7 +151,7 @@ When the separate Langflow service is enabled:
 
 - keep the Langflow editor behind a private network or protected reverse proxy;
 - create a Langflow API key and set it only as `LANGFLOW_API_KEY` on xi-ai-web;
-- publish a Flow ID in `/admin` under `工作流发布`;
+- publish a Flow ID in `/xizi2333` under `工作流发布`;
 - open `/workflows` in a fresh browser session;
 - confirm the published name is visible, the user can select a model, and a short prompt returns a streamed result;
 - confirm the public bootstrap does not contain `flowId` or the Langflow API key;
@@ -153,6 +163,9 @@ When the separate Langflow service is enabled:
 - Workspace export must not contain public BYOK API Keys.
 - Server logs must not contain API keys.
 - `DATA_DIR` should contain only Admin metadata, backups, and audit records for the main no-account workspace.
+- When temporary sync is enabled, `DATA_DIR/progress-sync` may briefly contain
+  opaque AES-GCM ciphertext. It must never contain plaintext workspace data or
+  API Keys; expired/claimed/cancelled sessions are cleaned automatically.
 - Browser-private conversations, gallery items, agents, Skills, and workflows remain in IndexedDB.
 
 ## 10. Backup And Rollback
@@ -170,7 +183,10 @@ Rollback shape:
 2. Restore the previous artifact or Docker image.
 3. Keep the same `DATA_DIR` unless the rollback target explicitly requires a backup restore.
 4. Restart the service.
-5. Verify `/api/health`, `/api/ready`, `/admin`, and `/chat`.
+5. Verify `/api/health`, `/api/ready`, `/xizi2333`, and `/chat`.
+
+Active temporary synchronization codes are intentionally invalidated by a
+service restart. Users must create a new code after deploy or rollback.
 
 ## 11. Optional Cloud Knowledge Gate
 

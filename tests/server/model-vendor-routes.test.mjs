@@ -6,6 +6,9 @@ import path from "node:path";
 import test from "node:test";
 
 const rootDir = path.resolve(import.meta.dirname, "../..");
+const adminUsername = "xizi2333";
+const adminPassword = "model-vendor-test-password";
+const adminCookies = new Map();
 
 async function freePort() {
   const server = (await import("node:net")).createServer();
@@ -23,7 +26,9 @@ async function startServer(dataDir) {
       ...process.env,
       PORT: String(port),
       DATA_DIR: dataDir,
-      NODE_ENV: "development"
+      NODE_ENV: "development",
+      ADMIN_USERNAME: adminUsername,
+      ADMIN_PASSWORD: adminPassword
     },
     stdio: ["ignore", "pipe", "pipe"]
   });
@@ -36,7 +41,16 @@ async function startServer(dataDir) {
     if (child.exitCode !== null) throw new Error(`server exited early:\n${output}`);
     try {
       const response = await fetch(`${baseUrl}/api/health`);
-      if (response.ok) return { child, baseUrl };
+      if (response.ok) {
+        const login = await fetch(`${baseUrl}/api/admin/login`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ username: adminUsername, password: adminPassword })
+        });
+        if (!login.ok) throw new Error(`admin login failed with ${login.status}`);
+        adminCookies.set(baseUrl, String(login.headers.get("set-cookie") || "").split(";", 1)[0]);
+        return { child, baseUrl };
+      }
     } catch {}
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
@@ -55,9 +69,14 @@ async function stopServer(child) {
 }
 
 async function api(baseUrl, pathname, init = {}) {
+  const headers = new Headers(init.headers || {});
+  if (init.body && !headers.has("content-type")) headers.set("content-type", "application/json");
+  if (pathname.startsWith("/api/admin/") && adminCookies.get(baseUrl) && !headers.has("cookie")) {
+    headers.set("cookie", adminCookies.get(baseUrl));
+  }
   const response = await fetch(`${baseUrl}${pathname}`, {
     ...init,
-    headers: init.body ? { "content-type": "application/json", ...(init.headers || {}) } : init.headers
+    headers
   });
   const text = await response.text();
   const body = text ? JSON.parse(text) : null;
@@ -125,6 +144,25 @@ test("Admin model vendor API enforces contracts and survives metadata round trip
   assert.equal(Object.hasOwn(result.body, "modelVendors"), false);
   assert(result.body.modelCatalog.every((entry) => entry.vendorLabel));
   assert.equal(result.body.modelCatalog[0].id, reorderedFirstModelId);
+  const imageModel = result.body.modelCatalog.find((entry) => entry.capabilities.includes("image"));
+  const chatOnlyModel = result.body.modelCatalog.find((entry) => (
+    entry.capabilities.includes("chat") && !entry.capabilities.includes("image")
+  ));
+  assert(imageModel);
+  assert(chatOnlyModel);
+  let timing = await api(
+    runtime.baseUrl,
+    `/api/image/timing-estimate?modelId=${encodeURIComponent(imageModel.id)}&mode=generate&resolution=1K&aspectRatio=1%3A1&count=1`
+  );
+  assert.equal(timing.response.status, 200);
+  assert.equal(timing.body.sampleCount, 0);
+  assert.equal(timing.body.sampleLimit, 10);
+  assert.equal(timing.body.source, "baseline");
+  timing = await api(
+    runtime.baseUrl,
+    `/api/image/timing-estimate?modelId=${encodeURIComponent(chatOnlyModel.id)}&mode=generate&resolution=1K&aspectRatio=1%3A1&count=1`
+  );
+  assert.equal(timing.response.status, 400);
 
   result = await api(runtime.baseUrl, "/api/admin/model-vendors", {
     method: "POST",

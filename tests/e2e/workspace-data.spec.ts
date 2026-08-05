@@ -10,7 +10,8 @@ import {
   seedReadySearchService,
   test,
   waitForPublicModule,
-  publicDestinations
+  publicDestinations,
+  publicBootstrapFixture
 } from "./support/app-fixture";
 
 const now = "2026-07-20T12:00:00.000Z";
@@ -65,6 +66,30 @@ async function openWorkspaceDialog(page: Parameters<typeof readWorkspaceRecords>
 
 test.beforeEach(async ({ page }) => {
   await seedReadyProvider(page);
+});
+
+test("temporary sync entry stays hidden when the administrator disables it", async ({ page, apiHarness }) => {
+  const bootstrap = structuredClone(publicBootstrapFixture);
+  bootstrap.settings.progressSync.enabled = false;
+  apiHarness.setBootstrap(bootstrap);
+  await page.goto("/chat");
+  await waitForPublicModule(page, publicDestinations[0]);
+  await expect(page.getByRole("button", { name: "跨设备同步", exact: true })).toHaveCount(0);
+  const dialog = await openWorkspaceDialog(page);
+  await expect(dialog.getByRole("heading", { name: "跨设备同步", exact: true })).toHaveCount(0);
+  await expect(dialog.getByRole("button", { name: "导出工作区", exact: true })).toBeVisible();
+  await dialog.getByRole("button", { name: "关闭工作区数据", exact: true }).click();
+
+  await page.goto("/image");
+  await page.goto("/chat#sync=123456");
+  await waitForPublicModule(page, publicDestinations[0]);
+  await expect(page).toHaveURL(/\/chat$/u);
+  await expect(page.getByRole("dialog", { name: "跨设备同步", exact: true })).toHaveCount(0);
+
+  await page.goto("/chat#sync-send=123456");
+  await waitForPublicModule(page, publicDestinations[0]);
+  await expect(page).toHaveURL(/\/chat$/u);
+  await expect(page.getByRole("dialog", { name: "跨设备同步", exact: true })).toHaveCount(0);
 });
 
 test("legacy conversations migrate and exported workspace excludes BYOK credentials", async ({ page }) => {

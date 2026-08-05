@@ -208,6 +208,17 @@
   min-height: 42px;
 }
 
+.admin-login-notice {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(28, 143, 91, 0.2);
+  border-radius: 8px;
+  background: #f0faf5;
+  color: #176c49;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .admin-loading-card {
   display: flex;
   align-items: center;
@@ -1168,6 +1179,23 @@
 .provider-form > .admin-model-capability-field,
 .provider-form > .admin-form-actions {
   grid-column: 1 / -1;
+}
+
+.admin-assistant-avatar-picker > span {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+}
+
+.admin-assistant-avatar-picker .assistant-avatar-glyph {
+  width: 42px;
+  height: 42px;
+  border-radius: 13px;
+}
+
+.admin-assistant-avatar-picker select {
+  width: 100%;
 }
 
 .admin-model-endpoint-field > small {
@@ -3426,6 +3454,60 @@
   justify-content: flex-end;
 }
 
+.admin-credential-form {
+  display: grid;
+  gap: 14px;
+  margin-top: 4px;
+  padding-top: 20px;
+  border-top: 1px solid var(--xhs-line);
+}
+
+.admin-credential-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.admin-credential-heading > span {
+  display: inline-flex;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-icon);
+  background: var(--xhs-soft-2);
+  color: var(--xhs-red-deep);
+}
+
+.admin-credential-heading div {
+  display: grid;
+  gap: 3px;
+}
+
+.admin-credential-heading h3,
+.admin-credential-heading p {
+  margin: 0;
+}
+
+.admin-credential-heading h3 {
+  color: var(--xhs-ink);
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.admin-credential-heading p {
+  color: var(--xhs-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.admin-credential-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 14px;
+}
+
 .admin-model-dedicated-endpoint {
   display: grid;
   min-width: 0;
@@ -3892,6 +3974,10 @@
   }
 
   .admin-site-form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .admin-credential-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 

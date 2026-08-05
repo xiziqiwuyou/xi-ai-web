@@ -38,6 +38,80 @@ async function enableMaximumTokenLimit(dialog: Locator) {
   await expect(dialog).toBeVisible();
 }
 
+test("composer owns Token usage and referenced-history controls", async ({ page }) => {
+  const conversation: Conversation = {
+    id: "usage-toolbar",
+    title: "Token usage toolbar",
+    assistantId: "test-assistant",
+    pinned: false,
+    messageCount: 2,
+    preview: "usage response",
+    messages: [
+      {
+        id: "usage-user",
+        role: "user",
+        content: "统计这次请求",
+        status: "done",
+        createdAt: "2026-08-02T00:00:00.000Z"
+      },
+      {
+        id: "usage-assistant",
+        role: "assistant",
+        content: "这是带有接口用量的回答。",
+        usage: { inputTokens: 754, outputTokens: 66, totalTokens: 820 },
+        status: "done",
+        createdAt: "2026-08-02T00:00:01.000Z"
+      }
+    ],
+    createdAt: "2026-08-02T00:00:00.000Z",
+    updatedAt: "2026-08-02T00:00:01.000Z"
+  };
+  await seedChatConversations(page, [conversation]);
+  await page.goto("/chat");
+  await waitForPublicModule(page, publicDestinations[0]);
+
+  const session = page.locator(".figma-chat-session:not(.collapsed)");
+  await expect(session.locator(".figma-message-usage")).toHaveCount(0);
+  const usageSummary = session.getByLabel("Token 统计", { exact: true });
+  await expect(usageSummary).toHaveText("本轮 输入 754 · 输出 66 · 总计 820");
+  const usageStyle = await usageSummary.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      backgroundColor: style.backgroundColor,
+      borderTopWidth: style.borderTopWidth,
+      padding: style.padding,
+      iconCount: element.querySelectorAll("svg").length
+    };
+  });
+  expect(usageStyle).toEqual({
+    backgroundColor: "rgba(0, 0, 0, 0)",
+    borderTopWidth: "0px",
+    padding: "0px",
+    iconCount: 0
+  });
+
+  const contextTrigger = session.getByRole("button", { name: "引用上下文条数", exact: true });
+  await expect(contextTrigger).toContainText("最近 16 条");
+  await chooseSettingsMenuOption(session, "引用上下文条数", "最近 4 条");
+  await expect(contextTrigger).toContainText("最近 4 条");
+  expect(await page.evaluate((key) => JSON.parse(sessionStorage.getItem(key) || "{}").contextMessageCount, chatSettingsStorageKey)).toBe(4);
+
+  await page.getByRole("button", { name: "会话设置", exact: true }).first().click();
+  const dialog = page.getByRole("dialog", { name: "会话设置", exact: true });
+  await dialog.getByRole("tab", { name: "模型设置", exact: true }).click();
+  await expect(dialog.getByRole("slider", { name: "引用历史消息", exact: true })).toHaveCount(0);
+});
+
+test("composer shows a context Token estimate when provider usage is absent", async ({ page }) => {
+  await page.goto("/chat");
+  await waitForPublicModule(page, publicDestinations[0]);
+
+  const session = page.locator(".figma-chat-session:not(.collapsed)");
+  const usage = session.getByLabel("Token 统计", { exact: true });
+  await expect(usage).toContainText("上下文估算");
+  await expect(usage).toContainText("Token");
+});
+
 test("Chat selects a search provider and reuses the current BYOK connection", async ({ page, apiHarness }) => {
   await page.goto("/chat");
   await waitForPublicModule(page, publicDestinations[0]);
@@ -182,6 +256,7 @@ test("dark Chat settings keep crisp typography and legible range controls", asyn
     const rangeTrack = element.querySelector<HTMLElement>(".figma-range-track");
     const rangeProgress = element.querySelector<HTMLElement>(".figma-range-track > i");
     const rangeOutput = element.querySelector<HTMLOutputElement>(".figma-range-control output");
+    const message = document.querySelector<HTMLElement>(".figma-message-bubble");
 
     const luminance = (hex: string) => {
       const normalized = hex.trim().replace("#", "");
@@ -209,6 +284,8 @@ test("dark Chat settings keep crisp typography and legible range controls", asyn
     return {
       theme: document.documentElement.dataset.studioTheme,
       bodyFont: getComputedStyle(document.body).fontFamily,
+      bodyFontSmoothing: getComputedStyle(document.body).getPropertyValue("-webkit-font-smoothing"),
+      bodyTextRendering: getComputedStyle(document.body).textRendering,
       labelFont: rangeLabel ? getComputedStyle(rangeLabel).fontFamily : "",
       labelSize: rangeLabel ? Number.parseFloat(getComputedStyle(rangeLabel).fontSize) : 0,
       helpSize: rangeHelp ? Number.parseFloat(getComputedStyle(rangeHelp).fontSize) : 0,
@@ -224,12 +301,21 @@ test("dark Chat settings keep crisp typography and legible range controls", asyn
       progressRatio: rangeBounds && progressBounds ? progressBounds.width / rangeBounds.width : 0,
       rangeTrackBorder: rootStyle.getPropertyValue("--xhs-range-track-border").trim(),
       mutedContrast: contrast(muted, surface),
+      faintContrast: contrast(rootStyle.getPropertyValue("--xhs-faint").trim(), surface),
+      messageFontSize: message ? getComputedStyle(message).fontSize : "",
+      messageLineHeight: message ? Number.parseFloat(getComputedStyle(message).lineHeight) : 0,
+      messageOpacity: message ? getComputedStyle(message).opacity : "",
+      messageFilter: message ? getComputedStyle(message).filter : "",
+      messageTextShadow: message ? getComputedStyle(message).textShadow : "",
       primaryContrast: contrast(onPrimary, primaryFill)
     };
   });
 
   expect(metrics.theme).toBe("dark");
   expect(metrics.bodyFont).toContain("Microsoft YaHei UI");
+  expect(metrics.bodyFont.startsWith('"Segoe UI Variable Text"')).toBe(true);
+  expect(metrics.bodyFontSmoothing).toBe("auto");
+  expect(metrics.bodyTextRendering).toBe("optimizelegibility");
   expect(metrics.labelFont).toContain("Microsoft YaHei UI");
   expect(metrics.labelSize).toBeGreaterThanOrEqual(13);
   expect(metrics.helpSize).toBeGreaterThanOrEqual(12);
@@ -246,6 +332,13 @@ test("dark Chat settings keep crisp typography and legible range controls", asyn
   expect(metrics.progressRatio).toBeLessThan(0.75);
   expect(metrics.rangeTrackBorder).toBe("#637493");
   expect(metrics.mutedContrast).toBeGreaterThanOrEqual(6);
+  expect(metrics.faintContrast).toBeGreaterThanOrEqual(5.5);
+  expect(metrics.messageFontSize).toBe("13px");
+  expect(metrics.messageLineHeight).toBeGreaterThanOrEqual(22);
+  expect(metrics.messageLineHeight).toBeLessThanOrEqual(23);
+  expect(metrics.messageOpacity).toBe("1");
+  expect(metrics.messageFilter).toBe("none");
+  expect(metrics.messageTextShadow).toBe("none");
   expect(metrics.primaryContrast).toBeGreaterThanOrEqual(4.5);
 });
 
@@ -257,9 +350,11 @@ test("Chat settings expose categorized controls and preserve only saved changes"
   const dialog = page.getByRole("dialog", { name: "会话设置", exact: true });
   await trigger.click();
 
-  const sectionNames = ["外观设置", "对话 Skill", "模型设置", "OpenAI 设置", "消息设置", "数学公式", "代码块", "输入设置"];
+  const sectionNames = ["外观设置", "模型设置", "OpenAI 设置", "消息设置", "数学公式", "代码块", "输入设置"];
   const tabs = dialog.getByRole("tab");
-  await expect(tabs).toHaveCount(8);
+  await expect(tabs).toHaveCount(7);
+  await expect(dialog.getByRole("tab", { name: "对话 Skill", exact: true })).toHaveCount(0);
+  await expect(dialog.getByRole("button", { name: "管理本地 Skill", exact: true })).toHaveCount(0);
   const appearanceTab = dialog.getByRole("tab", { name: "外观设置", exact: true });
   await expect(appearanceTab).toHaveAttribute("aria-selected", "true");
   await appearanceTab.focus();
@@ -278,7 +373,7 @@ test("Chat settings expose categorized controls and preserve only saved changes"
   await expect(dialog.getByRole("button", { name: "发送快捷键", exact: true })).toContainText("Enter");
   await dialog.getByRole("tab", { name: "OpenAI 设置", exact: true }).click();
   await expect(dialog.getByRole("button", { name: "OpenAI 详细程度", exact: true })).toContainText("默认");
-  await expect(dialog.getByRole("button", { name: "显示 OpenAI 用量", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(dialog.getByRole("button", { name: "显示 Token 统计", exact: true })).toHaveAttribute("aria-pressed", "true");
   await dialog.getByRole("tab", { name: "消息设置", exact: true }).click();
   await expect(dialog.getByRole("button", { name: "显示用户提示词", exact: true })).toHaveAttribute("aria-pressed", "true");
   await expect(dialog.getByRole("button", { name: "自动折叠思考内容", exact: true })).toHaveAttribute("aria-pressed", "true");
@@ -312,25 +407,13 @@ test("Chat settings expose categorized controls and preserve only saved changes"
   const temperature = dialog.getByRole("slider", { name: "模型温度 · Temperature", exact: true });
   const topP = dialog.getByRole("slider", { name: "TOP-P", exact: true });
   const contextWindow = dialog.getByRole("slider", { name: "模型上下文窗口", exact: true });
-  const contextMessageCount = dialog.getByRole("slider", { name: "引用历史消息", exact: true });
   const maxTokens = dialog.getByRole("button", { name: "最大 Token 数", exact: true });
   const stream = dialog.getByRole("button", { name: "流式输出", exact: true });
   const toolMode = dialog.getByRole("button", { name: "工具调用方式", exact: true });
   await expect(temperature).toHaveValue("0.7");
   await expect(topP).toHaveValue("0.9");
   await expect(contextWindow).toHaveAttribute("aria-valuetext", "16K tokens");
-  await expect(contextMessageCount).toHaveAttribute("aria-valuetext", "最近 16 条");
-  if ((page.viewportSize()?.width || 0) > 760) {
-    const contextTracks = dialog.locator([
-      ".figma-discrete-range:has(#figma-context-window-range) .figma-range-track",
-      ".figma-discrete-range:has(#figma-context-message-count-range) .figma-range-track"
-    ].join(", "));
-    const trackTops = await contextTracks.evaluateAll((elements) =>
-      elements.map((element) => element.getBoundingClientRect().top)
-    );
-    expect(trackTops).toHaveLength(2);
-    expect(Math.abs(trackTops[0] - trackTops[1])).toBeLessThanOrEqual(1);
-  }
+  await expect(dialog.getByRole("slider", { name: "引用历史消息", exact: true })).toHaveCount(0);
   await expect(maxTokens).toHaveAttribute("aria-pressed", "false");
   await expect(dialog.getByRole("spinbutton", { name: "最大 Token 数值", exact: true })).toHaveCount(0);
   await expect(toolMode).toContainText("使用函数调用");
@@ -343,7 +426,6 @@ test("Chat settings expose categorized controls and preserve only saved changes"
   await temperature.fill("0.2");
   await topP.fill("0.4");
   await contextWindow.fill("2");
-  await contextMessageCount.fill("3");
   await enableMaximumTokenLimit(dialog);
   const maxTokenInput = dialog.getByRole("spinbutton", { name: "最大 Token 数值", exact: true });
   await maxTokenInput.fill("32768");
@@ -372,7 +454,6 @@ test("Chat settings expose categorized controls and preserve only saved changes"
   await expect(temperature).toHaveValue("0.7");
   await expect(topP).toHaveValue("0.9");
   await expect(contextWindow).toHaveAttribute("aria-valuetext", "16K tokens");
-  await expect(contextMessageCount).toHaveAttribute("aria-valuetext", "最近 16 条");
   await expect(maxTokens).toHaveAttribute("aria-pressed", "false");
   await expect(toolMode).toContainText("使用函数调用");
   await dialog.getByRole("tab", { name: "消息设置", exact: true }).click();
@@ -388,7 +469,6 @@ test("Chat settings expose categorized controls and preserve only saved changes"
   await temperature.fill("0.3");
   await topP.fill("0.6");
   await contextWindow.fill("7");
-  await contextMessageCount.fill("4");
   await enableMaximumTokenLimit(dialog);
   await dialog.getByRole("spinbutton", { name: "最大 Token 数值", exact: true }).fill("65536");
   await stream.click();
@@ -410,7 +490,6 @@ test("Chat settings expose categorized controls and preserve only saved changes"
   await expect(temperature).toHaveValue("0.3");
   await expect(topP).toHaveValue("0.6");
   await expect(contextWindow).toHaveAttribute("aria-valuetext", "1M tokens");
-  await expect(contextMessageCount).toHaveAttribute("aria-valuetext", "最近 64 条");
   await expect(maxTokens).toHaveAttribute("aria-pressed", "true");
   await expect(dialog.getByRole("spinbutton", { name: "最大 Token 数值", exact: true })).toHaveValue("65536");
   await expect(toolMode).toContainText("使用提示词");
@@ -484,8 +563,12 @@ test("context history count controls how many recent messages are sent", async (
   const dialog = page.getByRole("dialog", { name: "会话设置", exact: true });
   await dialog.getByRole("tab", { name: "模型设置", exact: true }).click();
   await dialog.getByRole("slider", { name: "模型上下文窗口", exact: true }).fill("7");
-  await dialog.getByRole("slider", { name: "引用历史消息", exact: true }).fill("0");
   await dialog.getByRole("button", { name: "保存设置", exact: true }).click();
+  await chooseSettingsMenuOption(
+    page.locator(".figma-chat-session:not(.collapsed)"),
+    "引用上下文条数",
+    "最近 4 条"
+  );
 
   await page.getByRole("textbox", { name: "消息内容", exact: true }).fill("验证历史消息条数");
   await page.getByRole("button", { name: "发送", exact: true }).click();
@@ -522,8 +605,12 @@ test("context window token budget further limits the selected history", async ({
   const dialog = page.getByRole("dialog", { name: "会话设置", exact: true });
   await dialog.getByRole("tab", { name: "模型设置", exact: true }).click();
   await dialog.getByRole("slider", { name: "模型上下文窗口", exact: true }).fill("0");
-  await dialog.getByRole("slider", { name: "引用历史消息", exact: true }).fill("7");
   await dialog.getByRole("button", { name: "保存设置", exact: true }).click();
+  await chooseSettingsMenuOption(
+    page.locator(".figma-chat-session:not(.collapsed)"),
+    "引用上下文条数",
+    "不限"
+  );
 
   await page.getByRole("textbox", { name: "消息内容", exact: true }).fill("验证 Token 预算");
   await page.getByRole("button", { name: "发送", exact: true }).click();
@@ -542,13 +629,17 @@ test("saved Chat settings are scoped to sessionStorage and survive reload", asyn
   await dialog.getByRole("slider", { name: "\u6a21\u578b\u6e29\u5ea6 \u00b7 Temperature", exact: true }).fill("0.2");
   await dialog.getByRole("slider", { name: "TOP-P", exact: true }).fill("0.5");
   await dialog.getByRole("slider", { name: "\u6a21\u578b\u4e0a\u4e0b\u6587\u7a97\u53e3", exact: true }).fill("7");
-  await dialog.getByRole("slider", { name: "\u5f15\u7528\u5386\u53f2\u6d88\u606f", exact: true }).fill("7");
   await chooseSettingsMenuOption(dialog, "标题总结模型", "Test Chat");
   await dialog.getByRole("slider", { name: "总结引用消息", exact: true }).fill("3");
   await enableMaximumTokenLimit(dialog);
   await dialog.getByRole("spinbutton", { name: "最大 Token 数值", exact: true }).fill("262144");
   await dialog.getByRole("button", { name: "\u6d41\u5f0f\u8f93\u51fa", exact: true }).click();
   await dialog.getByRole("button", { name: "\u4fdd\u5b58\u8bbe\u7f6e", exact: true }).click();
+  await chooseSettingsMenuOption(
+    page.locator(".figma-chat-session:not(.collapsed)"),
+    "引用上下文条数",
+    "不限"
+  );
 
   const storage = await page.evaluate((key) => ({
     session: window.sessionStorage.getItem(key),
@@ -578,6 +669,9 @@ test("saved Chat settings are scoped to sessionStorage and survive reload", asyn
 
   await page.reload();
   await waitForPublicModule(page, publicDestinations[0]);
+  await expect(
+    page.getByRole("button", { name: "引用上下文条数", exact: true })
+  ).toContainText("不限");
   await page.getByRole("button", { name: "\u4f1a\u8bdd\u8bbe\u7f6e", exact: true }).first().click();
   const reloadedDialog = page.getByRole("dialog", { name: "\u4f1a\u8bdd\u8bbe\u7f6e", exact: true });
   await expect(reloadedDialog.getByRole("button", { name: "\u5217\u8868\u5f0f", exact: true })).toHaveAttribute("aria-pressed", "true");
@@ -585,7 +679,7 @@ test("saved Chat settings are scoped to sessionStorage and survive reload", asyn
   await expect(reloadedDialog.getByRole("slider", { name: "\u6a21\u578b\u6e29\u5ea6 \u00b7 Temperature", exact: true })).toHaveValue("0.2");
   await expect(reloadedDialog.getByRole("slider", { name: "TOP-P", exact: true })).toHaveValue("0.5");
   await expect(reloadedDialog.getByRole("slider", { name: "\u6a21\u578b\u4e0a\u4e0b\u6587\u7a97\u53e3", exact: true })).toHaveAttribute("aria-valuetext", "1M tokens");
-  await expect(reloadedDialog.getByRole("slider", { name: "\u5f15\u7528\u5386\u53f2\u6d88\u606f", exact: true })).toHaveAttribute("aria-valuetext", "不限");
+  await expect(reloadedDialog.getByRole("slider", { name: "引用历史消息", exact: true })).toHaveCount(0);
   await expect(reloadedDialog.getByRole("button", { name: "标题总结模型", exact: true })).toContainText("Test Chat");
   await expect(reloadedDialog.getByRole("slider", { name: "总结引用消息", exact: true })).toHaveAttribute("aria-valuetext", "最近 8 条");
   await expect(reloadedDialog.getByRole("button", { name: "\u6700\u5927 Token \u6570", exact: true })).toHaveAttribute("aria-pressed", "true");

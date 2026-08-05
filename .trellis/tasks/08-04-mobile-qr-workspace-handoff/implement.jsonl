@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Workspace revision, credential and restore ownership contract"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Dialog, mobile, touch and workspace UI conventions"}
+{"file": ".trellis/spec/backend/public-ai-production-boundary.md", "reason": "Temporary sync API, crypto, storage and Admin limits"}

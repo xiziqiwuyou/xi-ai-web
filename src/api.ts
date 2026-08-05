@@ -2,6 +2,8 @@ import type {
   AdminAuditEntry,
   AdminBackupItem,
   AdminBootstrapPayload,
+  AdminCredentialUpdate,
+  AdminCredentialUpdateResult,
   AdminLangflowWorkflow,
   AdminOpsPayload,
   AdminStatus,
@@ -16,6 +18,9 @@ import type {
   GenerationModuleId,
   GenerationPayload,
   GenerationResult,
+  ImageGenerationTimingEstimate,
+  ImageGenerationTimingKey,
+  ImageInputPayload,
   KnowledgeAuthResponse,
   KnowledgeBase,
   KnowledgeCleanupJob,
@@ -121,10 +126,10 @@ export const api = {
   exchangeShellJwt,
 
   adminStatus: () => apiJson<AdminStatus>("/api/admin/status"),
-  adminLogin: (password: string) =>
+  adminLogin: (credentials: { username: string; password: string }) =>
     apiJson<{ ok: boolean }>("/api/admin/login", {
       method: "POST",
-      body: JSON.stringify({ password })
+      body: JSON.stringify(credentials)
     }),
   adminLogout: () =>
     apiJson<{ ok: boolean }>("/api/admin/logout", {
@@ -134,6 +139,11 @@ export const api = {
   adminBootstrap: () =>
     apiJson<Partial<AdminBootstrapPayload>>("/api/admin/bootstrap")
       .then(normalizeAdminBootstrapPayload),
+  updateAdminCredentials: (credentials: AdminCredentialUpdate) =>
+    apiJson<AdminCredentialUpdateResult>("/api/admin/credentials", {
+      method: "PATCH",
+      body: JSON.stringify(credentials)
+    }),
   updateSettings: (settings: Partial<SiteSettings>) =>
     apiJson<SiteSettings>("/api/admin/settings", {
       method: "PATCH",
@@ -150,6 +160,21 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
       signal
+    }),
+  imageTimingEstimate: (key: ImageGenerationTimingKey, signal?: AbortSignal) => {
+    const query = new URLSearchParams({
+      modelId: key.modelId,
+      mode: key.mode,
+      resolution: key.resolution,
+      aspectRatio: key.aspectRatio,
+      count: String(key.count)
+    });
+    return apiJson<ImageGenerationTimingEstimate>(`/api/image/timing-estimate?${query}`, { signal });
+  },
+  importImageResult: (url: string) =>
+    apiJson<Pick<ImageInputPayload, "dataUrl" | "mimeType">>("/api/image/import", {
+      method: "POST",
+      body: JSON.stringify({ url })
     }),
   optimizeImagePrompt: (payload: {
     connection: GenerationPayload["connection"];

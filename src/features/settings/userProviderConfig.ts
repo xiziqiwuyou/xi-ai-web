@@ -97,11 +97,13 @@ export function loadUserProviderConfig() {
 }
 
 export function saveUserProviderConfig(provider: UserProviderConfig) {
-  if (typeof window === "undefined") return;
+  if (typeof window === "undefined") return false;
 
   try {
     window.sessionStorage.setItem(storageKey, JSON.stringify(sanitizeUserProviderConfig(provider)));
+    return true;
   } catch {
     // Some browsers disable sessionStorage. In that case the in-memory state still works.
+    return false;
   }
 }

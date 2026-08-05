@@ -313,7 +313,7 @@ test("workflow makes no partial agent calls when the global cloud preflight fail
   expect(apiHarness.agentRequests.filter((request) => request.moduleId === "workflows")).toHaveLength(0);
 });
 
-test("Chat manages a local Skill and triggers it only for the selected conversation", async ({ page, apiHarness }, testInfo) => {
+test("Chat keeps Skill settings hidden and triggers stored Skills only for the selected conversation", async ({ page, apiHarness }, testInfo) => {
   await page.goto("/chat");
   await waitForPublicModule(page, publicDestinations[0]);
   const module = page.getByTestId("chat-module");
@@ -322,60 +322,8 @@ test("Chat manages a local Skill and triggers it only for the selected conversat
   await module.locator('button[aria-label="会话设置"]:visible').first().click();
   const settings = page.getByRole("dialog", { name: "会话设置", exact: true });
   await expect(settings).toBeVisible();
-  await settings.getByRole("tab", { name: "对话 Skill", exact: true }).click();
-  const manageSkills = settings.getByRole("button", { name: "管理本地 Skill", exact: true });
-  const manageSkillsBox = await manageSkills.boundingBox();
-  expect(manageSkillsBox?.height).toBeGreaterThanOrEqual(isMobileProject(testInfo.project.name) ? 44 : 34);
-  await manageSkills.click();
-  const manager = page.getByRole("dialog", { name: "对话 Skill", exact: true });
-  await expect(manager).toBeVisible();
-  await expect(settings).toHaveCount(0);
-  await expect(page.locator('[data-scroll-owner="dialog"]:visible')).toHaveCount(1);
-  const managerBox = await manager.boundingBox();
-  const viewport = page.viewportSize();
-  if (viewport && viewport.width >= 981) {
-    expect(managerBox?.width).toBeGreaterThanOrEqual(880);
-  }
-  const skillList = manager.locator(".figma-chat-skill-library > div");
-  await expect.poll(async () => skillList.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
-  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
-  await manager.getByRole("button", { name: "新建 Skill", exact: true }).click();
-  const skillName = manager.getByLabel("名称", { exact: true });
-  const skillInstructions = manager.getByLabel("Skill 指令", { exact: true });
-  await skillName.fill("发布检查");
-  await skillInstructions.fill("检查版本、回滚、监控和负责人，并输出缺口列表。");
-  await expect.poll(() => skillName.evaluate((element) => getComputedStyle(element).boxShadow)).toBe("none");
-  const idleSkillControlStyles = await skillName.evaluate((element) => {
-    const style = getComputedStyle(element);
-    return {
-      backgroundImage: style.backgroundImage,
-      boxShadow: style.boxShadow,
-      borders: [style.borderTopColor, style.borderRightColor, style.borderBottomColor, style.borderLeftColor]
-    };
-  });
-  const focusedSkillControlStyles = await skillInstructions.evaluate((element) => {
-    const style = getComputedStyle(element);
-    return {
-      backgroundImage: style.backgroundImage,
-      boxShadow: style.boxShadow,
-      outlineStyle: style.outlineStyle,
-      borders: [style.borderTopColor, style.borderRightColor, style.borderBottomColor, style.borderLeftColor]
-    };
-  });
-  expect(idleSkillControlStyles.backgroundImage).toBe("none");
-  expect(idleSkillControlStyles.boxShadow).toBe("none");
-  expect(new Set(idleSkillControlStyles.borders).size).toBe(1);
-  expect(focusedSkillControlStyles.backgroundImage).toBe("none");
-  expect(focusedSkillControlStyles.boxShadow).not.toBe("none");
-  expect(focusedSkillControlStyles.boxShadow).not.toContain("inset");
-  expect(focusedSkillControlStyles.outlineStyle).toBe("none");
-  expect(new Set(focusedSkillControlStyles.borders).size).toBe(1);
-  await manager.getByRole("checkbox", { name: /联网搜索/ }).check();
-  await manager.getByRole("button", { name: "保存 Skill", exact: true }).click();
-  await expect(manager.getByText("Skill 已保存到当前浏览器。", { exact: true })).toBeVisible();
-  await manager.getByRole("button", { name: "关闭对话 Skill", exact: true }).click();
-  await expect(settings).toBeVisible();
-  await expect(manageSkills).toBeFocused();
+  await expect(settings.getByRole("tab", { name: "对话 Skill", exact: true })).toHaveCount(0);
+  await expect(settings.getByRole("button", { name: "管理本地 Skill", exact: true })).toHaveCount(0);
   await settings.getByRole("button", { name: "取消", exact: true }).click();
 
   const composer = module.getByLabel("消息内容", { exact: true });
@@ -384,13 +332,13 @@ test("Chat manages a local Skill and triggers it only for the selected conversat
   await composer.press("Escape");
   await expect(module.getByRole("listbox", { name: "Skill命令", exact: true })).toHaveCount(0);
   await expect(composer).toHaveValue("$");
-  await composer.fill("$发布");
+  await composer.fill("$结构");
   const skillCommands = module.getByRole("listbox", { name: "Skill命令", exact: true });
   await expect(skillCommands).toBeVisible();
-  await expect(skillCommands.getByRole("option", { name: /发布检查/ })).toBeVisible();
+  await expect(skillCommands.getByRole("option", { name: /结构化简报/ })).toBeVisible();
   await composer.press("Enter");
-  await expect(module.getByLabel("已选择的对话能力").getByText("$发布检查", { exact: true })).toBeVisible();
-  const removeSkill = module.getByRole("button", { name: "移除 Skill 发布检查", exact: true });
+  await expect(module.getByLabel("已选择的对话能力").getByText("$结构化简报", { exact: true })).toBeVisible();
+  const removeSkill = module.getByRole("button", { name: "移除 Skill 结构化简报", exact: true });
   const removeSkillBox = await removeSkill.boundingBox();
   expect(removeSkillBox?.width).toBeGreaterThanOrEqual(isMobileProject(testInfo.project.name) ? 44 : 36);
   expect(removeSkillBox?.height).toBeGreaterThanOrEqual(isMobileProject(testInfo.project.name) ? 44 : 36);
@@ -400,13 +348,9 @@ test("Chat manages a local Skill and triggers it only for the selected conversat
   await expect(module.getByText("Deterministic assistant response.", { exact: true })).toBeVisible();
 
   expect(apiHarness.chatRequests.at(-1)?.skillInstructions).toEqual([
-    "发布检查: 检查版本、回滚、监控和负责人，并输出缺口列表。"
+    "结构化简报: 输出必须包含：核心结论、关键依据、主要风险、下一步行动。信息不足时明确列出缺口。"
   ]);
-  expect(apiHarness.chatRequests.at(-1)?.allowedTools).toEqual(["web_search"]);
-  expect(apiHarness.chatRequests.at(-1)?.searchService).toMatchObject({
-    provider: "glm",
-    apiKey: "e2e-session-key"
-  });
+  expect(apiHarness.chatRequests.at(-1)?.allowedTools).toEqual([]);
 
   await module.locator('button[aria-label="新对话"]:visible').first().click();
   const sessions = module.locator(".figma-chat-session");
@@ -421,11 +365,11 @@ test("Chat manages a local Skill and triggers it only for the selected conversat
   await newSession.getByRole("button", { name: "选择对话模型", exact: true }).click();
   await newSession.getByRole("option", { name: /OpenAI Fast/ }).click();
   await expect(newSession.getByRole("button", { name: "网络搜索", exact: true })).toBeEnabled();
-  await newSession.getByLabel("消息内容", { exact: true }).fill("$发布");
-  await expect(newSession.getByRole("option", { name: /发布检查/ })).toBeEnabled();
+  await newSession.getByLabel("消息内容", { exact: true }).fill("$结构");
+  await expect(newSession.getByRole("option", { name: /结构化简报/ })).toBeEnabled();
 
   const stored = await readWorkspaceRecords<AgentSkillDefinition>(page, "agentSkills");
-  expect(stored.some((skill) => skill.name === "发布检查" && skill.instructions.includes("回滚") && skill.allowedTools.includes("web_search"))).toBe(true);
+  expect(stored.some((skill) => skill.name === "结构化简报" && skill.instructions.includes("核心结论"))).toBe(true);
 });
 
 test("Chat invokes an enabled application with slash for one request", async ({ page, apiHarness }) => {

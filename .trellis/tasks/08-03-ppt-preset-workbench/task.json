@@ -1,0 +1,33 @@
+{
+  "id": "ppt-preset-workbench",
+  "name": "ppt-preset-workbench",
+  "title": "PPT preset workbench refinement",
+  "description": "Refine the PPT workbench geometry, add eight presentation presets, compose preset-aware generation prompts, and verify layout diversity across four viewports.",
+  "status": "completed",
+  "dev_type": "feature",
+  "scope": "ppt",
+  "package": "app",
+  "priority": "P1",
+  "creator": "xiziqiwuyou",
+  "assignee": "xiziqiwuyou",
+  "createdAt": "2026-08-03",
+  "completedAt": "2026-08-03",
+  "branch": null,
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "src/features/studio/PptStudio.tsx",
+    "src/features/studio/PptDeckPreview.tsx",
+    "server/ppt-deck.mjs",
+    "src/styles/rednote-flat-v2.workbench.css",
+    "tests/server/ppt-deck.test.mjs",
+    "tests/e2e/module-shell.spec.ts"
+  ],
+  "notes": "Trellis Python/CLI runtime is unavailable in this shell, so task metadata is maintained directly.",
+  "meta": {}
+}

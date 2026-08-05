@@ -29,7 +29,7 @@ test("knowledge Admin exposes six responsive control-plane destinations", async 
     authenticated: true,
     adminConfigured: true
   });
-  await page.goto("/admin");
+  await page.goto("/xizi2333");
   await expect(page.locator(".admin-console-layout")).toBeVisible({ timeout: 20_000 });
 
   const destinations = [
@@ -61,7 +61,7 @@ test("knowledge Admin account actions require a reason and show reset plaintext 
     authenticated: true,
     adminConfigured: true
   });
-  await page.goto("/admin");
+  await page.goto("/xizi2333");
   await expect(page.locator(".admin-console-layout")).toBeVisible({ timeout: 20_000 });
   await openKnowledgeSection(page, testInfo.project.name, "knowledge-accounts", "知识库账号");
 
@@ -96,7 +96,7 @@ test("knowledge Admin creates one-time invites and lists only status metadata", 
     authenticated: true,
     adminConfigured: true
   });
-  await page.goto("/admin");
+  await page.goto("/xizi2333");
   await expect(page.locator(".admin-console-layout")).toBeVisible({ timeout: 20_000 });
   await openKnowledgeSection(page, testInfo.project.name, "knowledge-registration", "注册与邀请码");
 
@@ -121,7 +121,7 @@ test("knowledge Admin can cancel a leased job with a reason and confirmation", a
     authenticated: true,
     adminConfigured: true
   });
-  await page.goto("/admin");
+  await page.goto("/xizi2333");
   await expect(page.locator(".admin-console-layout")).toBeVisible({ timeout: 20_000 });
   await openKnowledgeSection(page, testInfo.project.name, "knowledge-jobs", "任务与存储");
 

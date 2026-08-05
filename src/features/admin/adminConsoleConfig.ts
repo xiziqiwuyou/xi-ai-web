@@ -46,6 +46,7 @@ export type AssistantDraft = {
   category: string;
   tags: string;
   starterPrompts: string;
+  avatar: string;
   color: string;
   systemPrompt: string;
   enabled: boolean;
@@ -318,6 +319,7 @@ export const emptyAssistantDraft: AssistantDraft = {
   category: "通用效率",
   tags: "问答, 效率",
   starterPrompts: "帮我开始处理这个任务",
+  avatar: "sparkles",
   color: "#ff2442",
   systemPrompt: "你是一个可靠的中文 AI 助手。回答要清晰、准确、可执行。",
   enabled: true
@@ -383,6 +385,7 @@ export function assistantDraft(entry?: Assistant): AssistantDraft {
     category: entry.category,
     tags: entry.tags.join(", "),
     starterPrompts: entry.starterPrompts.join("\n"),
+    avatar: entry.avatar || "sparkles",
     color: entry.color,
     systemPrompt: entry.systemPrompt,
     enabled: entry.enabled
@@ -396,6 +399,7 @@ export function assistantPayload(draft: AssistantDraft): Partial<Assistant> {
     category: draft.category,
     tags: [...new Set(draft.tags.split(/[,，\r\n]+/).map((tag) => tag.trim()).filter(Boolean))],
     starterPrompts: [...new Set(draft.starterPrompts.split(/[\r\n]+/).map((prompt) => prompt.trim()).filter(Boolean))],
+    avatar: draft.avatar,
     color: draft.color,
     systemPrompt: draft.systemPrompt,
     enabled: draft.enabled
