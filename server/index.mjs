@@ -2892,6 +2892,7 @@ app.post(
       Connection: "keep-alive",
       "X-Accel-Buffering": "no"
     });
+    res.flushHeaders?.();
     writeSse(res, "meta", {
       conversation: conversationSummary(conversation),
       userMessage,

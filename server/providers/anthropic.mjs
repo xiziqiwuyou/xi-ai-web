@@ -1,9 +1,11 @@
 import {
   assertCapability,
+  consumeSseEvents,
   dataUrlPayload,
   fetchJson,
   hasImageContent,
   normalizeTools,
+  parseProviderJsonText,
   providerUrl,
   stringifyToolOutput
 } from "./types.mjs";
@@ -130,6 +132,116 @@ function generationOptions({ temperature, topP, reasoningEffort, maxTokens }) {
   };
 }
 
+function normalizedUsage(usage, inputTokens = 0) {
+  if (!usage || typeof usage !== "object") return null;
+  const input = Number(usage.input_tokens ?? inputTokens ?? 0);
+  const output = Number(usage.output_tokens || 0);
+  const total = Number(usage.total_tokens || input + output);
+  if (![input, output, total].some((value) => value > 0)) return null;
+  return { inputTokens: input, outputTokens: output, totalTokens: total };
+}
+
+function providerStreamError(payload, fallback) {
+  const source = payload?.error || payload;
+  const message = typeof source === "string" ? source : source?.message;
+  return String(message || fallback).slice(0, 700);
+}
+
+async function streamChat({
+  provider,
+  model,
+  messages,
+  temperature,
+  topP,
+  reasoningEffort,
+  maxTokens,
+  signal,
+  tools,
+  hostedTools,
+  runTool,
+  maxToolRounds,
+  onToken,
+  onUsage
+}) {
+  if (tools?.length || hostedTools?.length) {
+    const text = await completeText({
+      provider,
+      model,
+      messages,
+      temperature,
+      topP,
+      reasoningEffort,
+      maxTokens,
+      signal,
+      tools,
+      hostedTools,
+      runTool,
+      maxToolRounds,
+      onUsage
+    });
+    if (text) onToken(text);
+    return;
+  }
+
+  assertCapability(provider, "chat");
+  if (hasImageContent(messages)) assertCapability(provider, "vision");
+  const mapped = mapMessages(messages);
+  const endpoint = providerUrl(provider, "/messages");
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "text/event-stream", ...authHeaders(provider) },
+    body: JSON.stringify({
+      model,
+      ...generationOptions({ temperature, topP, reasoningEffort, maxTokens }),
+      system: mapped.system || undefined,
+      messages: mapped.messages,
+      stream: true
+    }),
+    redirect: "error",
+    signal
+  });
+
+  if (!response.ok) {
+    throw new Error(`Model service returned ${response.status}: ${(await response.text()).slice(0, 700)}`);
+  }
+
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.includes("text/event-stream")) {
+    const json = parseProviderJsonText(await response.text(), { contentType, url: endpoint });
+    const usage = normalizedUsage(json.usage);
+    if (usage) onUsage?.(usage);
+    const text = extractText(json);
+    if (text) onToken(text);
+    return;
+  }
+
+  let inputTokens = 0;
+  let finalUsage = null;
+  await consumeSseEvents(response, ({ event, data }) => {
+    const payload = data.trim();
+    if (!payload || payload === "[DONE]") return;
+    const json = JSON.parse(payload);
+    const type = event === "message" ? json.type : event;
+    if (type === "message_start") {
+      inputTokens = Number(json.message?.usage?.input_tokens || 0);
+      return;
+    }
+    if (type === "content_block_delta" && json.delta?.type === "text_delta") {
+      const token = String(json.delta.text || "");
+      if (token) onToken(token);
+      return;
+    }
+    if (type === "message_delta") {
+      finalUsage = normalizedUsage(json.usage, inputTokens);
+      return;
+    }
+    if (type === "error") {
+      throw new Error(providerStreamError(json, "Model service ended the streaming response with an error"));
+    }
+  });
+  if (finalUsage) onUsage?.(finalUsage);
+}
+
 async function completeWithTools({
   provider,
   model,
@@ -214,10 +326,7 @@ function unsupported(capability) {
 export function createAnthropicAdapter(provider) {
   return {
     kind: "anthropic",
-    streamChat: async (params) => {
-      const text = await completeText({ provider, ...params });
-      if (text) params.onToken(text);
-    },
+    streamChat: (params) => streamChat({ provider, ...params }),
     completeText: (params) => completeText({ provider, ...params }),
     generateImage: () => unsupported("image generation"),
     synthesizeSpeech: () => unsupported("speech synthesis"),

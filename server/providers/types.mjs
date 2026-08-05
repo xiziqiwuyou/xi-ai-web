@@ -237,6 +237,66 @@ export function parseProviderJsonText(raw, { contentType = "", url = "" } = {}) 
   }
 }
 
+const MAX_PROVIDER_SSE_FRAME_BYTES = 1024 * 1024;
+
+function dispatchSseFrame(frame, onEvent) {
+  let event = "message";
+  const data = [];
+
+  for (const rawLine of frame.split(/\r?\n/u)) {
+    if (!rawLine || rawLine.startsWith(":")) continue;
+    const separator = rawLine.indexOf(":");
+    const field = separator === -1 ? rawLine : rawLine.slice(0, separator);
+    const rawValue = separator === -1 ? "" : rawLine.slice(separator + 1);
+    const value = rawValue.startsWith(" ") ? rawValue.slice(1) : rawValue;
+    if (field === "event") event = value || "message";
+    if (field === "data") data.push(value);
+  }
+
+  if (data.length) onEvent({ event, data: data.join("\n") });
+}
+
+/**
+ * Consume an upstream Server-Sent Events response without assuming network
+ * chunk boundaries align with either UTF-8 characters or SSE frames.
+ */
+export async function consumeSseEvents(response, onEvent, { maxFrameBytes = MAX_PROVIDER_SSE_FRAME_BYTES } = {}) {
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("Model service did not return a readable stream");
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const dispatchAvailableFrames = () => {
+    let match = buffer.match(/\r?\n\r?\n/u);
+    while (match) {
+      const boundary = match.index ?? 0;
+      const frame = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + match[0].length);
+      dispatchSseFrame(frame, onEvent);
+      match = buffer.match(/\r?\n\r?\n/u);
+    }
+    if (Buffer.byteLength(buffer, "utf8") > maxFrameBytes) {
+      throw new Error("Model service sent an oversized SSE frame");
+    }
+  };
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    dispatchAvailableFrames();
+  }
+
+  buffer += decoder.decode();
+  dispatchAvailableFrames();
+  if (buffer.trim()) {
+    if (Buffer.byteLength(buffer, "utf8") > maxFrameBytes) {
+      throw new Error("Model service sent an oversized SSE frame");
+    }
+    dispatchSseFrame(buffer, onEvent);
+  }
+}
+
 function normalizedResponseLimit(value, fallback) {
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed) || parsed <= 0) return fallback;

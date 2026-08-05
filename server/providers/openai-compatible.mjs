@@ -1,5 +1,6 @@
 import {
   assertCapability,
+  consumeSseEvents,
   extractOpenAICompatibleText,
   fetchAsset,
   fetchMultipartJson,
@@ -114,28 +115,13 @@ async function streamChat({ provider, model, messages, temperature, topP, reason
     return;
   }
 
-  const reader = response.body?.getReader();
-  if (!reader) throw new Error("Model service did not return a readable stream");
-  const decoder = new TextDecoder();
-  let buffer = "";
-
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split(/\r?\n/);
-    buffer = lines.pop() || "";
-
-    for (const rawLine of lines) {
-      const line = rawLine.trim();
-      if (!line.startsWith("data:")) continue;
-      const data = line.slice(5).trim();
-      if (!data || data === "[DONE]") return;
-      const json = JSON.parse(data);
-      const token = json.choices?.[0]?.delta?.content || json.choices?.[0]?.message?.content || "";
-      if (token) onToken(token);
-    }
-  }
+  await consumeSseEvents(response, ({ data }) => {
+    const payload = data.trim();
+    if (!payload || payload === "[DONE]") return;
+    const json = JSON.parse(payload);
+    const token = json.choices?.[0]?.delta?.content || json.choices?.[0]?.message?.content || "";
+    if (token) onToken(token);
+  });
 }
 
 async function completeWithTools({

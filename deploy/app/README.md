@@ -36,6 +36,12 @@ Create a website or reverse proxy in 1Panel with:
 - Streaming responses: buffering disabled when the panel exposes this option
 - Request body limit: at least 68 MB when the Admin encrypted-payload limit may reach 64 MB
 
+For Chat streaming, add the exact-match `location = /api/chat/stream` block
+from [`nginx.conf`](./nginx.conf) above the generic `location /` block. It turns
+off proxy buffering, cache, and gzip only for the SSE route and gives long-lived
+provider responses a one-hour timeout. Do not create a second catch-all
+`location /` in a 1Panel-generated server block.
+
 Point the DNS record to the server and enable HTTPS. The minimal Compose file does not require a public-origin variable.
 
 ## Nginx
@@ -44,7 +50,8 @@ Use `nginx.conf` as a starting point:
 
 - replace `example.com`;
 - replace the TLS certificate paths;
-- keep `proxy_buffering off` for chat streaming;
+- keep the dedicated `/api/chat/stream` no-buffer/no-gzip location above the
+  generic application proxy;
 - set `TRUST_PROXY_HOPS=1` when exactly one trusted reverse proxy sits in front of the app.
 
 ## Systemd

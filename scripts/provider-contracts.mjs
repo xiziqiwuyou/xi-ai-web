@@ -569,6 +569,57 @@ async function testOpenAIAdapter() {
     }
   });
 
+  await withMockFetch("openai responses stream", [
+    (request) => {
+      assertIncludes(request.url, "/responses", "OpenAI native stream uses Responses endpoint");
+      const body = parseJsonBody(request);
+      assertEqual(body.stream, true, "OpenAI native stream enables stream");
+      return chunkedSseResponse([
+        "event: response.output_text.delta\n",
+        'data: {"type":"response.output_text.delta","delta":"Open"}\n\n',
+        "event: response.output_text.delta\n",
+        'data: {"type":"response.output_text.delta","delta":"AI"}\n\n',
+        "event: response.completed\n",
+        'data: {"type":"response.completed","response":{"usage":{"input_tokens":11,"output_tokens":2,"total_tokens":13}}}\n\n'
+      ]);
+    }
+  ], async () => {
+    const tokens = [];
+    let usage = null;
+    await adapter.streamChat({
+      model: "gpt-stream-contract",
+      messages: sampleMessages(),
+      onToken: (token) => tokens.push(token),
+      onUsage: (next) => {
+        usage = next;
+      }
+    });
+    assertEqual(tokens.join(""), "OpenAI", "OpenAI Responses stream forwards every delta");
+    assertEqual(tokens.length, 2, "OpenAI Responses stream does not aggregate deltas");
+    assertEqual(JSON.stringify(usage), JSON.stringify({
+      inputTokens: 11,
+      outputTokens: 2,
+      totalTokens: 13
+    }), "OpenAI Responses stream projects final usage");
+  });
+
+  await withMockFetch("openai responses stream json fallback", [
+    (request) => {
+      assertEqual(parseJsonBody(request).stream, true, "OpenAI fallback still requests streaming");
+      return jsonResponse({ output_text: "fallback response" });
+    }
+  ], async () => {
+    let text = "";
+    await adapter.streamChat({
+      model: "gpt-stream-fallback",
+      messages: sampleMessages(),
+      onToken: (token) => {
+        text += token;
+      }
+    });
+    assertEqual(text, "fallback response", "OpenAI non-SSE fallback remains usable");
+  });
+
   await withMockFetch("openai vision", [
     (request) => {
       const body = parseJsonBody(request);
@@ -615,6 +666,30 @@ async function testOpenAIAdapter() {
       runTool: async (call) => ({ ok: call.arguments.query === "x" })
     });
     assertEqual(result, "tool final", "OpenAI tool final text");
+  });
+
+  await withMockFetch("openai stream tool fallback", [
+    (request) => {
+      const body = parseJsonBody(request);
+      assertAbsent(body, "stream", "OpenAI tool loop remains non-streaming until tool-aware events exist");
+      return jsonResponse({
+        id: "stream-tool-1",
+        output: [{ type: "function_call", call_id: "stream-call-1", name: "lookup", arguments: "{\"query\":\"x\"}" }]
+      });
+    },
+    () => jsonResponse({ output_text: "stream tool final" })
+  ], async () => {
+    let text = "";
+    await adapter.streamChat({
+      model: "gpt-stream-tool-contract",
+      messages: sampleMessages(),
+      tools: [toolDefinition()],
+      runTool: async () => ({ ok: true }),
+      onToken: (token) => {
+        text += token;
+      }
+    });
+    assertEqual(text, "stream tool final", "OpenAI stream fallback preserves the local tool executor");
   });
 
   await withMockFetch("openai hosted tools", [
@@ -790,6 +865,45 @@ async function testAnthropicAdapter() {
     }
   });
 
+  await withMockFetch("claude messages stream", [
+    (request) => {
+      assertIncludes(request.url, "/messages", "Claude native stream uses Messages endpoint");
+      const body = parseJsonBody(request);
+      assertEqual(body.stream, true, "Claude native stream enables stream");
+      return chunkedSseResponse([
+        "event: message_start\n",
+        'data: {"type":"message_start","message":{"usage":{"input_tokens":17}}}\n\n',
+        "event: content_block_delta\n",
+        'data: {"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"hidden"}}\n\n',
+        "event: content_block_delta\n",
+        'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Clau',
+        'de"}}\n\n',
+        "event: content_block_delta\n",
+        'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":" answer"}}\n\n',
+        "event: message_delta\n",
+        'data: {"type":"message_delta","usage":{"output_tokens":2}}\n\n'
+      ]);
+    }
+  ], async () => {
+    const tokens = [];
+    let usage = null;
+    await adapter.streamChat({
+      model: "claude-stream-contract",
+      messages: sampleMessages(),
+      onToken: (token) => tokens.push(token),
+      onUsage: (next) => {
+        usage = next;
+      }
+    });
+    assertEqual(tokens.join(""), "Claude answer", "Claude stream forwards text deltas only");
+    assertEqual(tokens.length, 2, "Claude stream ignores thinking deltas");
+    assertEqual(JSON.stringify(usage), JSON.stringify({
+      inputTokens: 17,
+      outputTokens: 2,
+      totalTokens: 19
+    }), "Claude stream combines start and final usage");
+  });
+
   await withMockFetch("claude tools", [
     (request) => {
       const body = parseJsonBody(request);
@@ -813,6 +927,23 @@ async function testAnthropicAdapter() {
       runTool: async () => ({ ok: true })
     });
     assertEqual(result, "claude final", "Claude tool final text");
+  });
+
+  await withMockFetch("claude stream tool fallback", [
+    () => jsonResponse({ content: [{ type: "tool_use", id: "stream-tool-1", name: "lookup", input: { query: "x" } }] }),
+    () => jsonResponse({ content: [{ type: "text", text: "claude stream tool final" }] })
+  ], async () => {
+    let text = "";
+    await adapter.streamChat({
+      model: "claude-stream-tool-contract",
+      messages: sampleMessages(),
+      tools: [toolDefinition()],
+      runTool: async () => ({ ok: true }),
+      onToken: (token) => {
+        text += token;
+      }
+    });
+    assertEqual(text, "claude stream tool final", "Claude stream fallback preserves the local tool executor");
   });
 
   await withMockFetch("claude hosted tools", [
@@ -915,6 +1046,41 @@ async function testGeminiAdapter() {
     }
   });
 
+  await withMockFetch("gemini generate content stream", [
+    (request) => {
+      assertIncludes(
+        request.url,
+        ":streamGenerateContent?alt=sse",
+        "Gemini native stream uses the official SSE endpoint"
+      );
+      const body = parseJsonBody(request);
+      assertAbsent(body, "stream", "Gemini stream endpoint does not require a JSON stream flag");
+      return chunkedSseResponse([
+        'data: {"candidates":[{"content":{"parts":[{"text":"Gem"}]}}]}\n\n',
+        'data: {"candidates":[{"content":{"parts":[{"text":"Gemini"}]}}]}\n\n',
+        'data: {"candidates":[{"content":{"parts":[{"text":" streams"}]}}]}\n\n',
+        'data: {"candidates":[{"content":{"parts":[{"text":"Gemini streams now"}]}}],"usageMetadata":{"promptTokenCount":7,"candidatesTokenCount":4,"totalTokenCount":11}}\n\n'
+      ]);
+    }
+  ], async () => {
+    const tokens = [];
+    let usage = null;
+    await adapter.streamChat({
+      model: "gemini-stream-contract",
+      messages: sampleMessages(),
+      onToken: (token) => tokens.push(token),
+      onUsage: (next) => {
+        usage = next;
+      }
+    });
+    assertEqual(tokens.join(""), "Gemini streams now", "Gemini stream handles deltas and cumulative chunks");
+    assertEqual(JSON.stringify(usage), JSON.stringify({
+      inputTokens: 7,
+      outputTokens: 4,
+      totalTokens: 11
+    }), "Gemini stream projects final usage");
+  });
+
   await withMockFetch("gemini tools", [
     (request) => {
       const body = parseJsonBody(request);
@@ -937,6 +1103,25 @@ async function testGeminiAdapter() {
       runTool: async () => ({ ok: true })
     });
     assertEqual(result, "gemini final", "Gemini tool final text");
+  });
+
+  await withMockFetch("gemini stream tool fallback", [
+    () => jsonResponse({
+      candidates: [{ content: { parts: [{ functionCall: { name: "lookup", args: { query: "x" } } }] } }]
+    }),
+    () => jsonResponse({ candidates: [{ content: { parts: [{ text: "gemini stream tool final" }] } }] })
+  ], async () => {
+    let text = "";
+    await adapter.streamChat({
+      model: "gemini-stream-tool-contract",
+      messages: sampleMessages(),
+      tools: [toolDefinition()],
+      runTool: async () => ({ ok: true }),
+      onToken: (token) => {
+        text += token;
+      }
+    });
+    assertEqual(text, "gemini stream tool final", "Gemini stream fallback preserves the local tool executor");
   });
 
   await withMockFetch("gemini hosted tools", [

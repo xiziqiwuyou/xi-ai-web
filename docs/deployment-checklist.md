@@ -158,7 +158,10 @@ These checks do not require the server to store credentials:
 
 Skip this section when no real API credentials are available. Before opening the site to public users, the operator should test the intended provider routes:
 
-- Chat streaming with one Chat-capable model.
+- Chat streaming with one Chat-capable model. Confirm the first visible token
+  arrives before the provider has completed the full answer; a single answer
+  appearing only at the end usually means the installed image predates native
+  provider streaming or the reverse proxy is buffering `/api/chat/stream`.
 - Image text-to-image with one image-capable model.
 - Image edit with one image-edit-capable model, if offered.
 - PPT generation with one Chat-capable model.

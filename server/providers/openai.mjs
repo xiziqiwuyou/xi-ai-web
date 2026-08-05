@@ -1,12 +1,14 @@
 import {
   assertCapability,
   bufferFromDataUrl,
+  consumeSseEvents,
   fetchAsset,
   fetchMultipartForm,
   fetchMultipartJson,
   fetchJson,
   hasImageContent,
   normalizeTools,
+  parseProviderJsonText,
   parseStrictToolArguments,
   providerUrl,
   stringifyToolOutput
@@ -152,7 +154,8 @@ function responseRequestBody({
   reasoningEffort,
   maxTokens,
   tools,
-  responseVerbosity
+  responseVerbosity,
+  stream
 }, normalizeResponseBody) {
   const body = {
     model,
@@ -163,9 +166,124 @@ function responseRequestBody({
     text: ["low", "medium", "high"].includes(responseVerbosity)
       ? { verbosity: responseVerbosity }
       : undefined,
-    tools: tools?.length ? tools : undefined
+    tools: tools?.length ? tools : undefined,
+    stream: stream === true ? true : undefined
   };
   return normalizeResponseBody ? normalizeResponseBody(body, { model, reasoningEffort }) : body;
+}
+
+function providerStreamError(payload, fallback) {
+  const source = payload?.error || payload;
+  const message = typeof source === "string" ? source : source?.message;
+  return String(message || fallback).slice(0, 700);
+}
+
+async function streamChat({
+  provider,
+  model,
+  messages,
+  temperature,
+  topP,
+  reasoningEffort,
+  maxTokens,
+  responseVerbosity,
+  signal,
+  tools,
+  hostedTools,
+  runTool,
+  maxToolRounds,
+  onToken,
+  onUsage,
+  normalizeResponseBody
+}) {
+  if (tools?.length || hostedTools?.length) {
+    const text = await completeText({
+      provider,
+      model,
+      messages,
+      temperature,
+      topP,
+      reasoningEffort,
+      maxTokens,
+      responseVerbosity,
+      signal,
+      tools,
+      hostedTools,
+      runTool,
+      maxToolRounds,
+      onUsage,
+      normalizeResponseBody
+    });
+    if (text) onToken(text);
+    return;
+  }
+
+  assertCapability(provider, "chat");
+  if (hasImageContent(messages)) assertCapability(provider, "vision");
+  const { system, input } = splitSystem(messages);
+  const endpoint = providerUrl(provider, "/responses");
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "text/event-stream", ...authHeaders(provider) },
+    body: JSON.stringify(responseRequestBody({
+      model,
+      input: responseInput(provider, system, input),
+      instructions: system,
+      temperature,
+      topP,
+      reasoningEffort,
+      maxTokens,
+      responseVerbosity,
+      stream: true
+    }, normalizeResponseBody)),
+    redirect: "error",
+    signal
+  });
+
+  if (!response.ok) {
+    throw new Error(`Model service returned ${response.status}: ${(await response.text()).slice(0, 700)}`);
+  }
+
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.includes("text/event-stream")) {
+    const json = parseProviderJsonText(await response.text(), { contentType, url: endpoint });
+    const usage = normalizedUsage(json);
+    if (usage) onUsage?.(usage);
+    const text = extractResponseText(json);
+    if (text) onToken(text);
+    return;
+  }
+
+  let emittedText = false;
+  let completedResponse = null;
+  await consumeSseEvents(response, ({ event, data }) => {
+    const payload = data.trim();
+    if (!payload || payload === "[DONE]") return;
+    const json = JSON.parse(payload);
+    const type = event === "message" ? json.type : event;
+    if (type === "response.output_text.delta") {
+      const token = String(json.delta || "");
+      if (token) {
+        emittedText = true;
+        onToken(token);
+      }
+      return;
+    }
+    if (type === "response.completed") {
+      completedResponse = json.response || json;
+      const usage = normalizedUsage(completedResponse);
+      if (usage) onUsage?.(usage);
+      return;
+    }
+    if (type === "response.failed" || type === "error") {
+      throw new Error(providerStreamError(json, "Model service ended the streaming response with an error"));
+    }
+  });
+
+  if (!emittedText && completedResponse) {
+    const text = extractResponseText(completedResponse);
+    if (text) onToken(text);
+  }
 }
 
 async function completeWithTools({
@@ -406,10 +524,7 @@ async function transcribeAudio({ provider, model, fileBuffer, fileName, mimeType
 export function createOpenAIAdapter(provider, { normalizeResponseBody } = {}) {
   return {
     kind: "openai",
-    streamChat: async (params) => {
-      const text = await completeText({ ...params, provider, normalizeResponseBody });
-      if (text) params.onToken(text);
-    },
+    streamChat: (params) => streamChat({ ...params, provider, normalizeResponseBody }),
     completeText: (params) => completeText({ ...params, provider, normalizeResponseBody }),
     generateImage: (params) => generateImage({ provider, ...params }),
     synthesizeSpeech: (params) => synthesizeSpeech({ provider, ...params }),

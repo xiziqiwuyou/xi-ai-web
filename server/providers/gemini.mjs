@@ -1,9 +1,11 @@
 import {
   assertCapability,
+  consumeSseEvents,
   dataUrlPayload,
   fetchJson,
   hasImageContent,
   normalizeTools,
+  parseProviderJsonText,
   providerUrl,
   stringifyToolOutput
 } from "./types.mjs";
@@ -132,6 +134,119 @@ function generationConfig({ model, temperature, topP, reasoningEffort, maxTokens
       : undefined,
     thinkingConfig: thinkingConfig(model, reasoningEffort)
   };
+}
+
+function normalizedUsage(json) {
+  const usage = json?.usageMetadata;
+  if (!usage || typeof usage !== "object") return null;
+  const inputTokens = Number(usage.promptTokenCount || 0);
+  const outputTokens = Number(usage.candidatesTokenCount || 0);
+  const totalTokens = Number(usage.totalTokenCount || inputTokens + outputTokens);
+  if (![inputTokens, outputTokens, totalTokens].some((value) => value > 0)) return null;
+  return { inputTokens, outputTokens, totalTokens };
+}
+
+function providerStreamError(payload, fallback) {
+  const source = payload?.error || payload;
+  const message = typeof source === "string" ? source : source?.message;
+  return String(message || fallback).slice(0, 700);
+}
+
+function nextGeminiTextDelta(previousText, nextText) {
+  if (!nextText) return { text: "", current: previousText };
+  if (!previousText) return { text: nextText, current: nextText };
+  if (nextText.startsWith(previousText)) {
+    return { text: nextText.slice(previousText.length), current: nextText };
+  }
+  if (previousText.startsWith(nextText)) {
+    return { text: "", current: previousText };
+  }
+  return { text: nextText, current: `${previousText}${nextText}` };
+}
+
+async function streamChat({
+  provider,
+  model,
+  messages,
+  temperature,
+  topP,
+  reasoningEffort,
+  maxTokens,
+  signal,
+  tools,
+  hostedTools,
+  runTool,
+  maxToolRounds,
+  onToken,
+  onUsage
+}) {
+  if (tools?.length || hostedTools?.length) {
+    const text = await completeText({
+      provider,
+      model,
+      messages,
+      temperature,
+      topP,
+      reasoningEffort,
+      maxTokens,
+      signal,
+      tools,
+      hostedTools,
+      runTool,
+      maxToolRounds,
+      onUsage
+    });
+    if (text) onToken(text);
+    return;
+  }
+
+  assertCapability(provider, "chat");
+  if (hasImageContent(messages)) assertCapability(provider, "vision");
+  const mapped = mapMessages(messages);
+  const endpoint = providerUrl(provider, `/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`);
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "text/event-stream", ...authHeaders(provider) },
+    body: JSON.stringify({
+      contents: mapped.contents,
+      systemInstruction: mapped.system ? { parts: [{ text: mapped.system }] } : undefined,
+      generationConfig: generationConfig({ model, temperature, topP, reasoningEffort, maxTokens })
+    }),
+    redirect: "error",
+    signal
+  });
+
+  if (!response.ok) {
+    throw new Error(`Model service returned ${response.status}: ${(await response.text()).slice(0, 700)}`);
+  }
+
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.includes("text/event-stream")) {
+    const json = parseProviderJsonText(await response.text(), { contentType, url: endpoint });
+    const usage = normalizedUsage(json);
+    if (usage) onUsage?.(usage);
+    const text = extractText(json);
+    if (text) onToken(text);
+    return;
+  }
+
+  let priorText = "";
+  let latestUsage = null;
+  await consumeSseEvents(response, ({ event, data }) => {
+    const payload = data.trim();
+    if (!payload || payload === "[DONE]") return;
+    const json = JSON.parse(payload);
+    const type = event === "message" ? json.type : event;
+    if (type === "error") {
+      throw new Error(providerStreamError(json, "Model service ended the streaming response with an error"));
+    }
+    const nextText = extractText(json);
+    const delta = nextGeminiTextDelta(priorText, nextText);
+    priorText = delta.current;
+    if (delta.text) onToken(delta.text);
+    latestUsage = normalizedUsage(json) || latestUsage;
+  });
+  if (latestUsage) onUsage?.(latestUsage);
 }
 
 async function completeWithTools({
@@ -352,10 +467,7 @@ function unsupported(capability) {
 export function createGeminiAdapter(provider) {
   return {
     kind: "gemini",
-    streamChat: async (params) => {
-      const text = await completeText({ provider, ...params });
-      if (text) params.onToken(text);
-    },
+    streamChat: (params) => streamChat({ provider, ...params }),
     completeText: (params) => completeText({ provider, ...params }),
     generateImage: (params) => generateImage({ provider, ...params }),
     synthesizeSpeech: (params) => synthesizeSpeech({ provider, ...params }),
