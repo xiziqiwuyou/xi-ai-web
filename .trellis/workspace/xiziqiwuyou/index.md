@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 4
-- **Last Active**: 2026-07-23
+- **Total Sessions**: 5
+- **Last Active**: 2026-08-06
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~144 | Active |
+| `journal-1.md` | ~177 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 5 | 2026-08-06 | Native provider chat streaming | `4cc40ea` | `master` |
 | 4 | 2026-07-23 | Bootstrap guideline closure | `ceee007` | `master` |
 | 3 | 2026-07-23 | Workspace persistence and automation wrap-up | `ceee007` | `master` |
 | 2 | 2026-07-23 | Knowledge cloud release wrap-up | `8c361c4`, `77c2340`, `05bdb22`, `ceee007` | `master` |

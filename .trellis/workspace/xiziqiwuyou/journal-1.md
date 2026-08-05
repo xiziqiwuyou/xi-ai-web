@@ -142,3 +142,36 @@ Verified backend and frontend Trellis specs are populated with real project exam
 ### Next Steps
 
 - None - task complete
+
+
+## Session 5: Native provider chat streaming
+
+**Date**: 2026-08-06
+**Task**: Native provider chat streaming
+**Branch**: `master`
+
+### Summary
+
+Implemented native incremental chat streaming for OpenAI Responses, Anthropic Messages, and Gemini Generate Content; added shared split-frame SSE parsing, header flush, 1Panel proxy guidance, and provider contract coverage.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4cc40ea` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
