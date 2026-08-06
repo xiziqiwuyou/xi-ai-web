@@ -1674,7 +1674,7 @@ test("Translation exposes tone, language, clear, result, and copy interactions",
 
   const capabilities = module.getByLabel("\u7ffb\u8bd1\u80fd\u529b", { exact: true });
   await expect(capabilities.locator(":scope > button")).toHaveCount(3);
-  await expect(capabilities).toContainText("\u6587\u4ef6\u7ffb\u8bd1");
+  await expect(capabilities).toContainText("\u957f\u6587\u7ffb\u8bd1");
   await expect(capabilities).toContainText("\u672f\u8bed\u5e93");
   await expect(capabilities).toContainText("\u53cc\u8bed\u5bf9\u7167");
 });

@@ -445,7 +445,7 @@ for (const exactStudioCopy of [
   "\u81ea\u7136\u4e13\u4e1a",
   "\u7b80\u6d01",
   "\u8425\u9500\u611f",
-  "\u6587\u4ef6\u7ffb\u8bd1",
+  "\u957f\u6587\u7ffb\u8bd1",
   "\u672f\u8bed\u5e93",
   "\u53cc\u8bed\u5bf9\u7167"
 ]) {

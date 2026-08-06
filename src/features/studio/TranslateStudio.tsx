@@ -10,7 +10,6 @@ import {
   Download,
   Expand,
   FileText,
-  FileUp,
   GitFork,
   Languages,
   Loader2,
@@ -50,7 +49,7 @@ const defaultTranslationMaxInputCharacters = 100_000;
 const languageOptions = ["自动检测", "中文（简体）", "英语（美式）", "日本語", "한국어", "Français", "Deutsch", "Español"];
 
 const translationCapabilities = [
-  { icon: FileUp, title: "文件翻译", detail: "上传 DOCX、PDF 或字幕文件" },
+  { icon: FileText, title: "长文翻译", detail: "粘贴长文或字幕内容并保持段落结构" },
   { icon: BookOpen, title: "术语库", detail: "锁定品牌、产品和行业术语" },
   { icon: Columns2, title: "双语对照", detail: "保留段落级对照与审校痕迹" }
 ] as const;
@@ -142,9 +141,9 @@ export function TranslateStudio({
 
   const activateCapability = async (title: string) => {
     setActiveCapability(title);
-    if (title === "文件翻译") {
+    if (title === "长文翻译") {
       sourceEditorRef.current?.focus();
-      setNotice("请粘贴文档或字幕内容，随后使用翻译文本。");
+      setNotice("请将文档或字幕内容粘贴到左侧输入框，再使用翻译文本。");
       return;
     }
     if (title === "术语库") {
