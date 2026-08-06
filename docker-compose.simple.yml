@@ -1,0 +1,65 @@
+# xi-ai-web minimal server deployment.
+#
+# 1. Download this file on the server.
+# 2. Set the admin password without putting it in this file:
+#      export ADMIN_PASSWORD='replace-with-your-strong-password'
+# 3. Pull and start the prebuilt image:
+#      docker compose -f docker-compose.simple.yml pull
+#      docker compose -f docker-compose.simple.yml up -d
+#
+# The image is pinned to v0.0.2 for repeatable deployment. To intentionally
+# use another published image, set XI_AI_WEB_IMAGE before running Compose.
+
+name: xi-ai-web
+
+services:
+  xi-ai-web:
+    # Prebuilt image: no source checkout and no local build are required.
+    image: ${XI_AI_WEB_IMAGE:-ghcr.io/xiziqiwuyou/xi-ai-web:v0.0.2}
+    pull_policy: always
+    restart: unless-stopped
+
+    # Basic container hardening. The application writes only to /app/data.
+    init: true
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+
+    environment:
+      # Application runtime settings. These normally do not need changes.
+      NODE_ENV: production
+      PORT: 8787
+      DATA_DIR: /app/data
+
+      # Admin entry: /xizi2333 by default. ADMIN_PASSWORD is required.
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-xizi2333}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD before starting}
+
+      # Public browser requests are forwarded to this gateway.
+      UPSTREAM_BASE_URL: ${UPSTREAM_BASE_URL:-https://api.xi-ai.cn}
+
+      # Use 1 when this container is behind one trusted 1Panel/Nginx proxy.
+      TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-1}
+
+      # Optional services stay disabled in this minimal deployment.
+      KNOWLEDGE_ENABLED: "false"
+      LANGFLOW_ENABLED: "false"
+
+      # Cross-device sync stays disabled until HTTPS is configured.
+      PROGRESS_SYNC_ENABLED: ${PROGRESS_SYNC_ENABLED:-false}
+
+    ports:
+      # Default: 1Panel/Nginx connects to 127.0.0.1:8787.
+      # For direct access through SERVER_IP:8787, set APP_BIND_ADDRESS=0.0.0.0.
+      - "${APP_BIND_ADDRESS:-127.0.0.1}:${APP_PORT:-8787}:8787"
+
+    # Persistent metadata, admin settings, and sync files.
+    volumes:
+      - xi-ai-web-data:/app/data
+
+volumes:
+  xi-ai-web-data:

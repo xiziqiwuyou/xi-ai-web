@@ -127,6 +127,23 @@ echo "$GHCR_READ_TOKEN" | docker login ghcr.io -u xiziqiwuyou --password-stdin
 
 The default command starts only the public xi-ai-web service. Its data is stored in the `xi-ai-web-data` volume. By default the HTTP port binds to `127.0.0.1:8787`, which is suitable for a 1Panel/Nginx reverse proxy. Set `APP_BIND_ADDRESS=0.0.0.0` only when direct host-port access is intentional.
 
+For a basic deployment that only needs AI chat and image generation, use the
+minimal template [`docker-compose.simple.yml`](docker-compose.simple.yml) and
+[`.env.simple.example`](.env.simple.example). It starts only the main service
+and requires only `ADMIN_PASSWORD`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/xiziqiwuyou/xi-ai-web/master/docker-compose.simple.yml -o docker-compose.yml
+curl -fsSL https://raw.githubusercontent.com/xiziqiwuyou/xi-ai-web/master/.env.simple.example -o .env
+# Edit .env and set ADMIN_PASSWORD.
+docker compose pull
+docker compose up -d
+```
+
+Use `APP_BIND_ADDRESS=0.0.0.0` in `.env` only when direct access through
+`SERVER_IP:8787` is required. Keep `127.0.0.1` when the service is behind a
+1Panel/Nginx reverse proxy.
+
 To enable the optional PostgreSQL + pgvector + Tencent COS knowledge subsystem, set `KNOWLEDGE_ENABLED=true`, configure its database/COS values, and start the knowledge profile. The migration must complete before the web container is allowed to become ready:
 
 ```bash
