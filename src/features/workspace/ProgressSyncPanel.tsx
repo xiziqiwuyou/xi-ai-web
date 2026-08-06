@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type RefObject } from "react";
 import {
   Check,
   Clipboard,
@@ -198,6 +198,34 @@ function restoreModeControls(
   );
 }
 
+type SenderApprovalProps = {
+  sender: SenderState;
+  reverseSenderCode: string;
+  approvalButtonRef: RefObject<HTMLButtonElement | null>;
+  onReject: () => void | Promise<void>;
+  onApprove: () => void | Promise<void>;
+};
+
+function SenderApproval({
+  sender,
+  reverseSenderCode,
+  approvalButtonRef,
+  onReject,
+  onApprove
+}: SenderApprovalProps) {
+  return (
+    <div className="progress-sync-approval" data-sync-state="approval">
+      <span aria-live="polite"><Link2 size={16} />{reverseSenderCode ? `${sender.deviceLabel} 已准备接收` : `${sender.deviceLabel} 请求接收`}</span>
+      <div className="progress-sync-fingerprint"><small>安全指纹</small><strong>{sender.fingerprint}</strong></div>
+      <p>确认另一台设备显示相同的 6 位数字后再发送。</p>
+      <div className="progress-sync-actions">
+        <button type="button" className="ui-button secondary" onClick={() => void onReject()}><X size={15} />拒绝</button>
+        <button ref={approvalButtonRef} type="button" className="ui-button workspace-data-primary" onClick={() => void onApprove()}><ShieldCheck size={15} />确认并发送</button>
+      </div>
+    </div>
+  );
+}
+
 function ProgressSyncPanel({
   userProvider,
   initialMode = "send",
@@ -222,6 +250,8 @@ function ProgressSyncPanel({
   const [receiver, setReceiver] = useState<ReceiverState>(emptyReceiver);
   const senderRef = useRef(sender);
   const receiverRef = useRef(receiver);
+  const senderApprovalButtonRef = useRef<HTMLButtonElement | null>(null);
+  const previousSenderPhaseRef = useRef(sender.phase);
   senderRef.current = sender;
   receiverRef.current = receiver;
   const senderCountdown = useCountdown(sender.expiresAt);
@@ -233,6 +263,16 @@ function ProgressSyncPanel({
     ? createProgressSyncShareUrl(window.location.origin, receiver.code, "sender")
     : "";
   const qrShareUrl = mode === "send" ? senderShareUrl : receiverShareUrl;
+
+  useEffect(() => {
+    const enteredApproval = sender.phase === "approval" && previousSenderPhaseRef.current !== "approval";
+    previousSenderPhaseRef.current = sender.phase;
+    if (!enteredApproval) return;
+    const frame = window.requestAnimationFrame(() => {
+      senderApprovalButtonRef.current?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [sender.phase]);
 
   useEffect(() => {
     if (mobileDevice || !qrShareUrl) {
@@ -706,29 +746,39 @@ function ProgressSyncPanel({
 
           {sender.phase === "waiting" || sender.phase === "approval" || sender.phase === "uploading" ? (
             <div className="progress-sync-session">
-              {!mobileDevice && qrDataUrl ? (
-                <div className="progress-sync-qr" data-sync-url={senderShareUrl}>
-                  <img src={qrDataUrl} alt="同步到手机二维码" width="240" height="240" />
-                  <div className="progress-sync-qr-side">
-                    <strong>手机扫码接收</strong>
-                    {senderCodeRow}
-                  </div>
+              {!mobileDevice && senderShareUrl && (qrDataUrl || sender.phase === "approval") ? (
+                <div className={`progress-sync-qr${sender.phase === "approval" ? " progress-sync-qr--approval" : ""}`} data-sync-url={senderShareUrl}>
+                  {sender.phase === "approval" ? (
+                    <SenderApproval
+                      sender={sender}
+                      reverseSenderCode={reverseSenderCode}
+                      approvalButtonRef={senderApprovalButtonRef}
+                      onReject={rejectSender}
+                      onApprove={approveSender}
+                    />
+                  ) : (
+                    <>
+                      <img src={qrDataUrl} alt="同步到手机二维码" width="240" height="240" />
+                      <div className="progress-sync-qr-side">
+                        <strong>手机扫码接收</strong>
+                        {senderCodeRow}
+                      </div>
+                    </>
+                  )}
                 </div>
               ) : null}
               {qrError ? <p className="workspace-data-error" role="alert">{qrError}</p> : null}
-              {mobileDevice || !qrDataUrl ? senderCodeRow : null}
-              {sender.phase === "waiting" ? <div className="progress-sync-status" role="status"><LoaderCircle className="workspace-data-spin" />{mobileDevice ? "等待电脑输入授权码…" : "等待手机扫码确认…"}</div> : null}
-              {sender.phase === "approval" ? (
-                <div className="progress-sync-approval">
-                  <span><Link2 size={16} />{reverseSenderCode ? `${sender.deviceLabel} 已准备接收` : `${sender.deviceLabel} 请求接收`}</span>
-                  <div className="progress-sync-fingerprint"><small>安全指纹</small><strong>{sender.fingerprint}</strong></div>
-                  <p>确认另一台设备显示相同的 6 位数字后再发送。</p>
-                  <div className="progress-sync-actions">
-                    <button type="button" className="ui-button secondary" onClick={() => void rejectSender()}><X size={15} />拒绝</button>
-                    <button type="button" className="ui-button workspace-data-primary" onClick={() => void approveSender()}><ShieldCheck size={15} />确认并发送</button>
-                  </div>
-                </div>
+              {sender.phase === "approval" && (mobileDevice || !qrDataUrl) ? (
+                <SenderApproval
+                  sender={sender}
+                  reverseSenderCode={reverseSenderCode}
+                  approvalButtonRef={senderApprovalButtonRef}
+                  onReject={rejectSender}
+                  onApprove={approveSender}
+                />
               ) : null}
+              {sender.phase !== "approval" && (mobileDevice || !qrDataUrl) ? senderCodeRow : null}
+              {sender.phase === "waiting" ? <div className="progress-sync-status" role="status"><LoaderCircle className="workspace-data-spin" />{mobileDevice ? "等待电脑输入授权码…" : "等待手机扫码确认…"}</div> : null}
               {sender.phase === "uploading" ? <div className="progress-sync-status" role="status"><LoaderCircle className="workspace-data-spin" />正在加密并上传快照…</div> : null}
               <button type="button" className="progress-sync-cancel" onClick={() => void cancelSender()}>取消本次同步</button>
             </div>

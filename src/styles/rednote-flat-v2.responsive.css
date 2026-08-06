@@ -46,6 +46,17 @@
     text-align: center;
   }
 
+  .progress-sync-qr--approval {
+    min-height: 0;
+    height: auto;
+    justify-items: stretch;
+    text-align: left;
+  }
+
+  .progress-sync-qr--approval .progress-sync-approval {
+    min-height: 0;
+  }
+
   .figma-studio-shell {
     display: grid;
     grid-template-columns: minmax(0, 1fr);

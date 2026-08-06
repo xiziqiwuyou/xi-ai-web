@@ -58,6 +58,36 @@ function expectStableSyncGeometry(actual: SyncDialogGeometry, expected: SyncDial
   }
 }
 
+async function expectQrApprovalStage(page: Page, baseline: SyncDialogGeometry) {
+  const dialog = page.getByRole("dialog", { name: "跨设备同步", exact: true });
+  const qrStage = dialog.locator(".progress-sync-qr");
+  const approval = qrStage.locator(".progress-sync-approval");
+  const confirm = approval.getByRole("button", { name: "确认并发送", exact: true });
+  await expect(approval).toBeVisible();
+  await expect(confirm).toBeFocused();
+  await expect(qrStage.locator("img")).toHaveCount(0);
+
+  const visibility = await dialog.locator(".progress-sync-dialog-body").evaluate((body) => {
+    const approvalElement = body.querySelector<HTMLElement>(".progress-sync-approval");
+    const button = body.querySelector<HTMLButtonElement>(".progress-sync-approval button.workspace-data-primary");
+    const qr = body.querySelector<HTMLElement>(".progress-sync-qr");
+    if (!approvalElement || !button || !qr) throw new Error("Missing QR approval stage elements");
+    const bodyBounds = body.getBoundingClientRect();
+    const approvalBounds = approvalElement.getBoundingClientRect();
+    const buttonBounds = button.getBoundingClientRect();
+    const qrBounds = qr.getBoundingClientRect();
+    return {
+      bodyScrollTop: body.scrollTop,
+      approvalInsideQr: approvalBounds.top >= qrBounds.top && approvalBounds.bottom <= qrBounds.bottom,
+      buttonVisible: buttonBounds.top >= bodyBounds.top && buttonBounds.bottom <= bodyBounds.bottom
+    };
+  });
+  expect(visibility.bodyScrollTop).toBe(0);
+  expect(visibility.approvalInsideQr).toBe(true);
+  expect(visibility.buttonVisible).toBe(true);
+  expectStableSyncGeometry(await readSyncDialogGeometry(page), baseline);
+}
+
 async function seedConversation(page: Page, id: string, title: string) {
   await page.evaluate(async ({ id, title }) => {
     const dynamicImport = new Function("path", "return import(path)") as (path: string) => Promise<Record<string, any>>;
@@ -113,6 +143,7 @@ async function createSyncCode(page: Page, action: "同步到手机" | "同步到
   return {
     dialog,
     code: await code.innerText(),
+    geometry: await readSyncDialogGeometry(page),
     shareUrl: action === "同步到手机"
       ? await dialog.locator(".progress-sync-qr").getAttribute("data-sync-url")
       : null
@@ -201,6 +232,11 @@ async function approveAndRestore(senderPage: Page, receiverPage: Page) {
   const senderDialog = senderPage.getByRole("dialog", { name: "跨设备同步", exact: true });
   const senderFingerprint = senderDialog.locator(".progress-sync-fingerprint strong");
   await expect(senderFingerprint).toHaveText(/^\d{6}$/u);
+  if (await senderDialog.locator(".progress-sync-qr").count() === 0) {
+    const senderSession = senderDialog.locator(".progress-sync-session");
+    await expect(senderSession.locator(":scope > .progress-sync-approval")).toBeVisible();
+    await expect(senderSession.locator(":scope > *").first()).toHaveClass(/progress-sync-approval/u);
+  }
   const receiverFingerprint = receiverPage.locator(".progress-sync-fingerprint strong");
   await expect(receiverFingerprint).toHaveText(await senderFingerprint.innerText());
   await senderDialog.getByRole("button", { name: "确认并发送", exact: true }).click();
@@ -295,8 +331,19 @@ test("encrypted progress sync supports both QR directions and the manual phone f
     const first = await createSyncCode(desktop, "同步到手机");
     expect(first.shareUrl).toBe(`${baseURL}/chat#sync=${first.code}`);
     expect(first.shareUrl).not.toContain("desktop-original-key");
+    const prematureRequests: string[] = [];
+    const trackPrematureRequest = (request: Request) => {
+      const pathname = new URL(request.url()).pathname;
+      if (request.method() === "POST" && /\/sessions\/[^/]+\/(approve|payload)$/u.test(pathname)) {
+        prematureRequests.push(pathname);
+      }
+    };
+    desktop.on("request", trackPrematureRequest);
     const firstJoin = await joinSyncFromQr(phone, first.shareUrl!, first.code);
     await expect(desktop.locator(".progress-sync-fingerprint strong")).toHaveText(firstJoin.fingerprint);
+    await expectQrApprovalStage(desktop, first.geometry);
+    expect(prematureRequests).toEqual([]);
+    desktop.off("request", trackPrematureRequest);
     await approveAndRestore(desktop, phone);
     await expect.poll(() => conversationIds(phone)).toContain("desktop-transfer-conversation");
     expect(await phone.evaluate((key) => JSON.parse(window.sessionStorage.getItem(key) || "{}"), providerStorageKey))
