@@ -179,7 +179,7 @@ async function streamChat({
       maxToolRounds,
       onUsage
     });
-    if (text) onToken(text);
+    if (text) await onToken(text);
     return;
   }
 
@@ -211,13 +211,13 @@ async function streamChat({
     const usage = normalizedUsage(json.usage);
     if (usage) onUsage?.(usage);
     const text = extractText(json);
-    if (text) onToken(text);
+    if (text) await onToken(text);
     return;
   }
 
   let inputTokens = 0;
   let finalUsage = null;
-  await consumeSseEvents(response, ({ event, data }) => {
+  await consumeSseEvents(response, async ({ event, data }) => {
     const payload = data.trim();
     if (!payload || payload === "[DONE]") return;
     const json = JSON.parse(payload);
@@ -228,7 +228,7 @@ async function streamChat({
     }
     if (type === "content_block_delta" && json.delta?.type === "text_delta") {
       const token = String(json.delta.text || "");
-      if (token) onToken(token);
+      if (token) await onToken(token);
       return;
     }
     if (type === "message_delta") {

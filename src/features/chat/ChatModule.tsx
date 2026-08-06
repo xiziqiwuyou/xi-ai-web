@@ -106,6 +106,32 @@ type ChatModuleProps = {
   onRefresh: () => Promise<PublicBootstrapPayload>;
 };
 
+type StreamingRenderState = {
+  conversationId: string;
+  messageId: string;
+  content: string;
+};
+
+const STREAMING_PERSIST_INTERVAL_MS = 300;
+
+function withStreamingMessageContent(
+  conversations: Conversation[],
+  stream: StreamingRenderState
+) {
+  return conversations.map((conversation) =>
+    conversation.id !== stream.conversationId
+      ? conversation
+      : {
+          ...conversation,
+          messages: conversation.messages.map((message) =>
+            message.id === stream.messageId
+              ? { ...message, content: stream.content }
+              : message
+          )
+        }
+  );
+}
+
 
 function ChatModule({
   enabled,
@@ -135,9 +161,22 @@ function ChatModule({
   const pendingAssistantHandledRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
   const streamingMessageIdRef = useRef("");
+  const streamingRenderRef = useRef<StreamingRenderState | null>(null);
+  const streamingFrameRef = useRef<number | null>(null);
+  const streamingPersistTimerRef = useRef<number | null>(null);
   const titleSummariesInFlightRef = useRef(new Set<string>());
 
-  useEffect(() => () => abortRef.current?.abort(), []);
+  useEffect(() => () => {
+    abortRef.current?.abort();
+    if (streamingFrameRef.current !== null) cancelAnimationFrame(streamingFrameRef.current);
+    if (streamingPersistTimerRef.current !== null) clearTimeout(streamingPersistTimerRef.current);
+    const stream = streamingRenderRef.current;
+    if (stream) {
+      const next = sortSessionStack(withStreamingMessageContent(conversationsRef.current, stream));
+      conversationsRef.current = next;
+      void saveLocalConversations(next).catch(() => undefined);
+    }
+  }, []);
 
   const chatModels = useMemo(() => modelsForCapability(modelCatalog, "chat"), [modelCatalog]);
   const displayedConversations = useMemo(
@@ -164,6 +203,46 @@ function ChatModule({
     },
     [onConversationsChange]
   );
+
+  const renderStreamingConversation = useCallback((persist = false) => {
+    const stream = streamingRenderRef.current;
+    if (!stream) return;
+    const next = sortSessionStack(withStreamingMessageContent(conversationsRef.current, stream));
+    conversationsRef.current = next;
+    if (persist) {
+      void saveLocalConversations(next).catch((error: unknown) => {
+        setPersistenceError(error instanceof Error ? error.message : "无法保存本地对话。");
+      });
+    }
+    setConversationList(next);
+  }, []);
+
+  const clearStreamingSchedules = useCallback(() => {
+    if (streamingFrameRef.current !== null) {
+      cancelAnimationFrame(streamingFrameRef.current);
+      streamingFrameRef.current = null;
+    }
+    if (streamingPersistTimerRef.current !== null) {
+      clearTimeout(streamingPersistTimerRef.current);
+      streamingPersistTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleStreamingRender = useCallback(() => {
+    if (streamingFrameRef.current !== null) return;
+    streamingFrameRef.current = requestAnimationFrame(() => {
+      streamingFrameRef.current = null;
+      renderStreamingConversation(false);
+    });
+  }, [renderStreamingConversation]);
+
+  const scheduleStreamingPersistence = useCallback(() => {
+    if (streamingPersistTimerRef.current !== null) return;
+    streamingPersistTimerRef.current = window.setTimeout(() => {
+      streamingPersistTimerRef.current = null;
+      renderStreamingConversation(true);
+    }, STREAMING_PERSIST_INTERVAL_MS);
+  }, [renderStreamingConversation]);
 
   const patchSessionUi = useCallback((id: string, patch: Partial<SessionUiState>) => {
     if (patch.knowledgeBaseIds !== undefined) {
@@ -341,6 +420,11 @@ function ChatModule({
                   };
                   const assistantMessageId = uniqueLocalMessageId([...conversation.messages, userMessage], event.assistantMessageId);
                   streamingMessageIdRef.current = assistantMessageId;
+                  streamingRenderRef.current = {
+                    conversationId,
+                    messageId: assistantMessageId,
+                    content: ""
+                  };
                   const assistantPlaceholder: Message = {
                     id: assistantMessageId,
                     role: "assistant",
@@ -363,20 +447,11 @@ function ChatModule({
 
       if (event.type === "token") {
         if (!chatSettings.streamOutput) return;
-        const messageId = streamingMessageIdRef.current;
-        if (!messageId) return;
-        commitConversations((current) =>
-          current.map((conversation) =>
-            conversation.id === conversationId
-              ? {
-                  ...conversation,
-                  messages: conversation.messages.map((message) =>
-                    message.id === messageId ? { ...message, content: message.content + event.token } : message
-                  )
-                }
-              : conversation
-          )
-        );
+        const stream = streamingRenderRef.current;
+        if (!stream || stream.conversationId !== conversationId) return;
+        stream.content += event.token;
+        scheduleStreamingRender();
+        scheduleStreamingPersistence();
         return;
       }
 
@@ -385,6 +460,9 @@ function ChatModule({
         return;
       }
 
+      const finalMessageId = streamingMessageIdRef.current;
+      clearStreamingSchedules();
+      streamingRenderRef.current = null;
       commitConversations((current) =>
         current.map((conversation) =>
           conversation.id === conversationId
@@ -392,8 +470,8 @@ function ChatModule({
                 ...conversation,
                 ...event.conversation,
                 messages: conversation.messages.map((message) =>
-                  message.id === streamingMessageIdRef.current
-                    ? { ...event.message, id: streamingMessageIdRef.current }
+                  message.id === finalMessageId
+                    ? { ...event.message, id: finalMessageId }
                     : message
                 )
               }
@@ -401,7 +479,14 @@ function ChatModule({
         )
       );
     },
-    [chatSettings.streamOutput, commitConversations, patchSessionUi]
+    [
+      chatSettings.streamOutput,
+      clearStreamingSchedules,
+      commitConversations,
+      patchSessionUi,
+      scheduleStreamingPersistence,
+      scheduleStreamingRender
+    ]
   );
 
   const sendMessage = async (conversation: Conversation) => {
@@ -555,6 +640,9 @@ function ChatModule({
       );
       patchSessionUi(conversation.id, { attachments: [] });
     } catch (error) {
+      renderStreamingConversation(true);
+      clearStreamingSchedules();
+      streamingRenderRef.current = null;
       const aborted = controller.signal.aborted;
       const messageId = abortRef.current === controller ? streamingMessageIdRef.current : "";
       if (messageId) {
@@ -573,6 +661,8 @@ function ChatModule({
       if (abortRef.current === controller) {
         abortRef.current = null;
         streamingMessageIdRef.current = "";
+        streamingRenderRef.current = null;
+        clearStreamingSchedules();
         setStreamingConversationId((current) => current === conversation.id ? "" : current);
       }
       void onRefresh();

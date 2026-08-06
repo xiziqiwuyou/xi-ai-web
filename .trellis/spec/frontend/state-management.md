@@ -164,6 +164,7 @@ type PersistedSessionSettings = Omit<SessionSettingsSnapshot, "skillIds">;
 - Do not persist per-conversation Skill selections in this record. Skill IDs stay on each conversation's `SessionUiState`.
 - Persisted select values must be sanitized against the same constants that render their `<option>` elements.
 - Session Settings Save writes its draft fields. Cancel restores that dialog's in-memory snapshot and does not update the record; it must not roll back referenced-history changes made through the composer menu.
+- During Chat streaming, the current assistant text is first kept in an in-memory stream snapshot. UI frames may update from that snapshot, but IndexedDB writes are throttled to the bounded streaming interval and always forced on terminal `done`, `error`, stop, unmount, or stream replacement. API Keys and raw upstream stream buffers never enter this persistence path.
 
 ### 4. Validation & Error Matrix
 

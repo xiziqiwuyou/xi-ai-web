@@ -239,7 +239,7 @@ export function parseProviderJsonText(raw, { contentType = "", url = "" } = {}) 
 
 const MAX_PROVIDER_SSE_FRAME_BYTES = 1024 * 1024;
 
-function dispatchSseFrame(frame, onEvent) {
+async function dispatchSseFrame(frame, onEvent) {
   let event = "message";
   const data = [];
 
@@ -253,7 +253,7 @@ function dispatchSseFrame(frame, onEvent) {
     if (field === "data") data.push(value);
   }
 
-  if (data.length) onEvent({ event, data: data.join("\n") });
+  if (data.length) await onEvent({ event, data: data.join("\n") });
 }
 
 /**
@@ -266,13 +266,13 @@ export async function consumeSseEvents(response, onEvent, { maxFrameBytes = MAX_
 
   const decoder = new TextDecoder();
   let buffer = "";
-  const dispatchAvailableFrames = () => {
+  const dispatchAvailableFrames = async () => {
     let match = buffer.match(/\r?\n\r?\n/u);
     while (match) {
       const boundary = match.index ?? 0;
       const frame = buffer.slice(0, boundary);
       buffer = buffer.slice(boundary + match[0].length);
-      dispatchSseFrame(frame, onEvent);
+      await dispatchSseFrame(frame, onEvent);
       match = buffer.match(/\r?\n\r?\n/u);
     }
     if (Buffer.byteLength(buffer, "utf8") > maxFrameBytes) {
@@ -280,20 +280,25 @@ export async function consumeSseEvents(response, onEvent, { maxFrameBytes = MAX_
     }
   };
 
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    dispatchAvailableFrames();
-  }
-
-  buffer += decoder.decode();
-  dispatchAvailableFrames();
-  if (buffer.trim()) {
-    if (Buffer.byteLength(buffer, "utf8") > maxFrameBytes) {
-      throw new Error("Model service sent an oversized SSE frame");
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      await dispatchAvailableFrames();
     }
-    dispatchSseFrame(buffer, onEvent);
+
+    buffer += decoder.decode();
+    await dispatchAvailableFrames();
+    if (buffer.trim()) {
+      if (Buffer.byteLength(buffer, "utf8") > maxFrameBytes) {
+        throw new Error("Model service sent an oversized SSE frame");
+      }
+      await dispatchSseFrame(buffer, onEvent);
+    }
+  } catch (error) {
+    await reader.cancel().catch(() => undefined);
+    throw error;
   }
 }
 

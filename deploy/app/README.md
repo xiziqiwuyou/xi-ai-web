@@ -27,6 +27,14 @@ Cross-device temporary sync is also disabled on first production boot. After HTT
 
 The public browser sends only each user's API Key. The server uses `UPSTREAM_BASE_URL` for provider requests. Do not put a public user's API Key, shell token, or provider URL in `.env`.
 
+Chat token smoothing is enabled by default with a 32ms flush cadence, an 80ms
+maximum wait, a 512-character batch limit, and a 128 KiB pending queue limit.
+The bounded server-only knobs are `SSE_TOKEN_FLUSH_MS`,
+`SSE_TOKEN_MAX_WAIT_MS`, `SSE_TOKEN_MAX_CHARS`, `SSE_TOKEN_MAX_QUEUE_CHARS`, and
+`SSE_BACKPRESSURE_TIMEOUT_MS`. Keep the exact-match `/api/chat/stream` proxy
+location unbuffered; changing these values cannot compensate for a buffering
+reverse proxy or for a model that is silent while it is thinking.
+
 ## 1Panel Reverse Proxy
 
 Create a website or reverse proxy in 1Panel with:

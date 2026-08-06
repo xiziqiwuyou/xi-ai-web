@@ -111,16 +111,16 @@ async function streamChat({ provider, model, messages, temperature, topP, reason
     const text = await response.text();
     const parsed = parseProviderJsonText(text, { contentType, url: endpoint });
     const content = extractOpenAICompatibleText(parsed);
-    if (content) onToken(content);
+    if (content) await onToken(content);
     return;
   }
 
-  await consumeSseEvents(response, ({ data }) => {
+  await consumeSseEvents(response, async ({ data }) => {
     const payload = data.trim();
     if (!payload || payload === "[DONE]") return;
     const json = JSON.parse(payload);
     const token = json.choices?.[0]?.delta?.content || json.choices?.[0]?.message?.content || "";
-    if (token) onToken(token);
+    if (token) await onToken(token);
   });
 }
 

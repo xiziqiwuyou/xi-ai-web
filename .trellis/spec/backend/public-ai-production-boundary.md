@@ -151,6 +151,7 @@ createImageGenerationTimingStore({ filePath, maxBytes, retainRecords })
 - `/api/generate/mindmap` keeps the common chat-capable Provider adapter as its portability boundary, but the server owns every trusted preset and operation prompt. It accepts only normalized preset/depth/density/operation fields plus an optional bounded current `MindmapDocument`; user material and the current map stay in `user` messages. Provider JSON, fenced JSON, and legacy Markdown/Mermaid are normalized into version 1 with server-assigned IDs, 2-5 levels, at most 8 children per node, 60 nodes total, 24-character labels, 180-character notes, and duplicate-sibling removal. Expand merges only new children into the selected preserved-ID branch; Reorganize returns one complete normalized replacement. Meaningless output is `502`, never a successful decorative fallback.
 - Chat responses are SSE with `meta`, zero or more `token`, optional `error`, and exactly one terminal `done` event while the client is connected. The server emits heartbeat comments, aborts upstream work after a genuine client disconnect, and maps timeout separately from cancellation. The browser rejects a stream that ends without `done`.
 - For ordinary no-tool Chat requests, `openai-responses`, `anthropic-messages`, and `gemini-generate-content` adapters must call their native streaming endpoints and forward only displayable text deltas as they arrive. They must not await a complete JSON response before calling `onToken`. Anthropic thinking deltas are never public chat text; Gemini adapters must avoid duplicating cumulative gateway chunks. Local or hosted tool loops may retain their explicit final-answer fallback until a tool-aware streaming event contract is implemented.
+- The Chat route passes native text through a bounded micro-buffer before public `token` events. Defaults are a 32ms flush cadence, 80ms maximum wait, 512-character batch, 131072-character pending queue, and 5000ms downstream drain timeout. `SSE_TOKEN_FLUSH_MS`, `SSE_TOKEN_MAX_WAIT_MS`, `SSE_TOKEN_MAX_CHARS`, `SSE_TOKEN_MAX_QUEUE_CHARS`, and `SSE_BACKPRESSURE_TIMEOUT_MS` are server-only bounded deployment settings; they must not become public bootstrap or user settings. The buffer flushes its tail before `done`, cancels on disconnect, and never invents text during a Provider silence.
 - Chat context and attachments are bounded before Provider projection. API Keys are limited to 4,096 characters. Image attachments are at most 4 MiB each and 24 MiB total; model vision capability remains authoritative. Conversation persistence, IndexedDB archives, and import/export may retain message attachments and usage, but must not retain the API Key.
 - Image generation distinguishes `generate` from `edit`. The server validates local images, caps edit uploads at 20 MiB total, enforces Provider-specific reference counts, and validates OpenAI masks as same-size PNG images with an alpha channel. Count defaults to one, Gemini caps at four, and other supported image Providers cap at ten.
 - `/api/image/import` is a same-origin fallback for generated HTTPS images that render in `<img>` but deny browser CORS reads. It accepts only `{ url }`, applies its own `12/minute` and `2 concurrent` defaults, parses at most 16 KiB of JSON, validates a public credential-free HTTPS URL and DNS result before fetch, rejects redirects, detects PNG/JPEG/WebP from bytes rather than trusting `Content-Type`, caps the body at the shared 20 MiB edit limit, times out by default after 30 seconds, returns `Cache-Control: no-store`, and never forwards the user's API Key. It is not a general URL proxy.
@@ -174,6 +175,11 @@ Environment contract:
 | `IMAGE_UPSTREAM_TIMEOUT_MS` | `300000`, range `30000-900000` | Image Provider timeout |
 | `IMAGE_IMPORT_TIMEOUT_MS` | `30000`, max `120000` | Public generated-image import timeout |
 | `SSE_HEARTBEAT_MS` | `15000`, range `5000-60000` | Chat SSE heartbeat interval |
+| `SSE_TOKEN_FLUSH_MS` | `32`, range `16-100` | Chat token micro-buffer cadence |
+| `SSE_TOKEN_MAX_WAIT_MS` | `80`, range `40-200` | Maximum token micro-buffer wait |
+| `SSE_TOKEN_MAX_CHARS` | `512`, range `128-4096` | Maximum public token batch size |
+| `SSE_TOKEN_MAX_QUEUE_CHARS` | `131072`, range `1024-131072` | Maximum pending server token queue |
+| `SSE_BACKPRESSURE_TIMEOUT_MS` | `5000`, range `500-30000` | Downstream SSE drain timeout |
 | `CHAT_RATE_LIMIT_MAX` / `CHAT_MAX_CONCURRENT` | `30` / `8` | Process-local Chat limits |
 | `GENERATION_RATE_LIMIT_MAX` / `GENERATION_MAX_CONCURRENT` | `20` / `4` | Process-local generation limits |
 | `IMAGE_IMPORT_RATE_LIMIT_MAX` / `IMAGE_IMPORT_MAX_CONCURRENT` | `12` / `2` | Process-local CORS fallback import limits |
@@ -193,7 +199,8 @@ Environment contract:
 | Chat image exceeds per-item or aggregate bounds | `413`; no Provider request |
 | Request rate or concurrency exhausted | `429` with bounded `Retry-After` |
 | Upstream timeout | `504`; redact API Key from the message |
-| Client cancellation | Abort Provider work; use stopped/cancelled terminal state and do not count success |
+| Client cancellation | Abort Provider work, clear token buffers, emit no later token, use stopped/cancelled terminal state, and do not count success |
+| Downstream drain timeout or token queue overflow | Abort Provider work, bound the public error, clear timers/listeners, and never allocate an unbounded queue |
 | Chat stream closes without `done` | Browser throws a `502`-class `ApiError` |
 | Image edit uses an unsupported mode or reference format | `400`; no Provider request |
 | Image import URL is missing, non-HTTPS, credentialed, private, loopback, metadata, or DNS-rebound | `400`; no remote request for rejected validation |
@@ -213,7 +220,8 @@ Environment contract:
 
 ### 6. Tests Required
 
-- `npm run provider-contracts`: exact OpenAI Chat/Responses, Anthropic Messages, Gemini generateContent, native split-frame Chat streaming, tool-loop fallback, image generation/edit projection, unsupported-field omission, response bounds, and redaction.
+- `npm run provider-contracts`: exact OpenAI Chat/Responses, Anthropic Messages, Gemini generateContent, native split-frame Chat streaming, async token callback backpressure, tool-loop fallback, image generation/edit projection, unsupported-field omission, response bounds, and redaction.
+- `npm run test:server`: bounded token coalescing, tail flush, queue limits, SSE `drain`, cancellation, and backpressure timeout.
 - `npm run chat-local-contracts`: Chat payload bounds, attachment continuity, cancellation, terminal SSE handling, and local persistence contracts.
 - `npm run workspace-storage-contracts` and `npm run privacy`: IndexedDB/import-export round trips and absence of API Keys in durable browser/server data.
 - `npm run test:security`: managed-upstream lock, DNS/private-address rejection, request limits, Admin login limits, secret handling, and bounded public-image import type/size behavior.

@@ -214,7 +214,7 @@ async function streamChat({
       onUsage,
       normalizeResponseBody
     });
-    if (text) onToken(text);
+    if (text) await onToken(text);
     return;
   }
 
@@ -250,13 +250,13 @@ async function streamChat({
     const usage = normalizedUsage(json);
     if (usage) onUsage?.(usage);
     const text = extractResponseText(json);
-    if (text) onToken(text);
+    if (text) await onToken(text);
     return;
   }
 
   let emittedText = false;
   let completedResponse = null;
-  await consumeSseEvents(response, ({ event, data }) => {
+  await consumeSseEvents(response, async ({ event, data }) => {
     const payload = data.trim();
     if (!payload || payload === "[DONE]") return;
     const json = JSON.parse(payload);
@@ -265,7 +265,7 @@ async function streamChat({
       const token = String(json.delta || "");
       if (token) {
         emittedText = true;
-        onToken(token);
+        await onToken(token);
       }
       return;
     }
@@ -282,7 +282,7 @@ async function streamChat({
 
   if (!emittedText && completedResponse) {
     const text = extractResponseText(completedResponse);
-    if (text) onToken(text);
+    if (text) await onToken(text);
   }
 }
 

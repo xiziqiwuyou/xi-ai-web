@@ -144,6 +144,18 @@ const apiSource = fs.readFileSync(path.join(rootDir, "src/api.ts"), "utf8");
 assert(apiSource.includes("let receivedDone = false"), "Chat SSE must track its terminal done event");
 assert(apiSource.includes("if (!receivedDone)"), "Chat SSE must reject EOF before done");
 
+const chatModuleSource = fs.readFileSync(path.join(rootDir, "src/features/chat/ChatModule.tsx"), "utf8");
+const tokenBranchStart = chatModuleSource.indexOf('if (event.type === "token")');
+const tokenBranchEnd = chatModuleSource.indexOf('if (event.type === "error")', tokenBranchStart);
+const tokenBranch = chatModuleSource.slice(tokenBranchStart, tokenBranchEnd);
+assert(tokenBranch.includes("stream.content += event.token"), "Chat token events must accumulate in memory");
+assert(tokenBranch.includes("scheduleStreamingRender()"), "Chat token events must schedule frame rendering");
+assert(tokenBranch.includes("scheduleStreamingPersistence()"), "Chat token events must throttle persistence");
+assert(!tokenBranch.includes("commitConversations("), "Chat token events must not persist every fragment");
+assert(chatModuleSource.includes("requestAnimationFrame(() =>"), "Chat streaming UI must batch React rendering by frame");
+assert(chatModuleSource.includes("STREAMING_PERSIST_INTERVAL_MS = 300"), "Chat streaming persistence cadence must stay bounded");
+assert(chatModuleSource.includes("renderStreamingConversation(true)"), "Chat failure handling must persist the final buffered text");
+
 const serialized = JSON.stringify({
   ...envelope,
   bait: {

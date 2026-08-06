@@ -69,6 +69,21 @@ const upstreamServer = http.createServer(async (req, res) => {
     });
 
     if (req.url?.endsWith("/responses")) {
+      if (body.stream === true) {
+        res.writeHead(200, { "Content-Type": "text/event-stream" });
+        for (const delta of ["release", "-chat", "-ok"]) {
+          res.write(`event: response.output_text.delta\ndata: ${JSON.stringify({
+            type: "response.output_text.delta",
+            delta
+          })}\n\n`);
+          await delay(20);
+        }
+        res.end(`event: response.completed\ndata: ${JSON.stringify({
+          type: "response.completed",
+          response: { usage: { input_tokens: 3, output_tokens: 2, total_tokens: 5 } }
+        })}\n\n`);
+        return;
+      }
       writeJson(res, {
         id: "resp_release_check",
         output: [{ type: "message", content: [{ type: "output_text", text: "release-chat-ok" }] }],
@@ -324,6 +339,11 @@ try {
   assert(chat.text.includes("event: meta"), "Chat SSE did not include meta");
   assert(chat.text.includes("release-chat-ok"), "Chat SSE did not include provider text");
   assert(chat.text.includes("event: done"), "Chat SSE did not include done");
+  const publicTokenPayloads = [...chat.text.matchAll(/event: token\r?\ndata: ([^\r\n]+)/gu)]
+    .map((match) => JSON.parse(match[1]).token);
+  assert(publicTokenPayloads.length >= 2, "Chat token buffer did not emit progressive batches");
+  assert(publicTokenPayloads.length < 3, "Chat token buffer did not coalesce small Provider fragments");
+  assert(publicTokenPayloads.join("") === "release-chat-ok", "Chat token buffer changed Provider text");
 
   const imageModel = publicBootstrap.modelCatalog?.find(
     (entry) => entry.enabled !== false && entry.vendor === "openai" && entry.capabilities?.includes("image")

@@ -73,6 +73,10 @@ import {
   normalizeUpstreamBaseUrl
 } from "./upstream-security.mjs";
 import { createRequestGuard } from "./request-guard.mjs";
+import {
+  createSseTokenBuffer,
+  writeSseEventWithBackpressure
+} from "./sse-token-buffer.mjs";
 import { createProgressSyncRouter, createProgressSyncService } from "./progress-sync.mjs";
 import { exchangeShellJwt, ShellJwtExchangeError } from "./shell-jwt-exchange.mjs";
 import {
@@ -157,6 +161,11 @@ const MAX_CHAT_IMAGE_TOTAL_BYTES = 24 * 1024 * 1024;
 const MAX_IMAGE_EDIT_UPLOAD_BYTES = 20 * 1024 * 1024;
 const DEFAULT_IMAGE_TIMEOUT_MS = 300_000;
 const DEFAULT_SSE_HEARTBEAT_MS = 15_000;
+const DEFAULT_SSE_TOKEN_FLUSH_MS = 32;
+const DEFAULT_SSE_TOKEN_MAX_WAIT_MS = 80;
+const DEFAULT_SSE_TOKEN_MAX_CHARS = 512;
+const DEFAULT_SSE_TOKEN_MAX_QUEUE_CHARS = 131_072;
+const DEFAULT_SSE_BACKPRESSURE_TIMEOUT_MS = 5_000;
 const knowledgeRuntime = await initializeKnowledgeRuntime();
 const cloudKnowledgeRequests = createCloudKnowledgeRequestIntegration(knowledgeRuntime);
 const langflowConfig = loadLangflowConfig();
@@ -1212,8 +1221,7 @@ function buildPromptMessages(
 }
 
 function writeSse(res, event, payload) {
-  res.write(`event: ${event}\n`);
-  res.write(`data: ${JSON.stringify(payload)}\n\n`);
+  return res.write(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
 }
 
 function addTokenUsage(current, next) {
@@ -1881,7 +1889,7 @@ async function streamProviderReply({
       toolContext,
       onUsage
     }));
-    if (text) onToken(text);
+    if (text) await onToken(text);
     return;
   }
   await adapter.streamChat({
@@ -2902,6 +2910,30 @@ app.post(
     let finished = false;
     let clientClosed = false;
     let responseUsage = null;
+    let tokenBufferError = null;
+    const downstreamController = new AbortController();
+    const tokenBuffer = createSseTokenBuffer({
+      flushMs: optionalBoundedInteger(process.env.SSE_TOKEN_FLUSH_MS, 16, 100)
+        ?? DEFAULT_SSE_TOKEN_FLUSH_MS,
+      maxWaitMs: optionalBoundedInteger(process.env.SSE_TOKEN_MAX_WAIT_MS, 40, 200)
+        ?? DEFAULT_SSE_TOKEN_MAX_WAIT_MS,
+      maxChars: optionalBoundedInteger(process.env.SSE_TOKEN_MAX_CHARS, 128, 4096)
+        ?? DEFAULT_SSE_TOKEN_MAX_CHARS,
+      maxQueueChars: optionalBoundedInteger(process.env.SSE_TOKEN_MAX_QUEUE_CHARS, 1024, 131_072)
+        ?? DEFAULT_SSE_TOKEN_MAX_QUEUE_CHARS,
+      onFlush: (token) => {
+        if (clientClosed) return undefined;
+        return writeSseEventWithBackpressure(res, "token", { token }, {
+          signal: downstreamController.signal,
+          timeoutMs: optionalBoundedInteger(process.env.SSE_BACKPRESSURE_TIMEOUT_MS, 500, 30_000)
+            ?? DEFAULT_SSE_BACKPRESSURE_TIMEOUT_MS
+        });
+      },
+      onError: (error) => {
+        tokenBufferError = error;
+        if (!controller.signal.aborted) controller.abort();
+      }
+    });
     const heartbeatMs = optionalBoundedInteger(process.env.SSE_HEARTBEAT_MS, 5_000, 60_000)
       || DEFAULT_SSE_HEARTBEAT_MS;
     const heartbeat = setInterval(() => {
@@ -2911,7 +2943,9 @@ app.post(
     res.on("close", () => {
       if (!finished && !res.writableEnded) {
         clientClosed = true;
+        downstreamController.abort();
         controller.abort();
+        tokenBuffer.cancel();
       }
     });
 
@@ -2939,11 +2973,12 @@ app.post(
         onUsage: (usage) => {
           responseUsage = addTokenUsage(responseUsage, usage);
         },
-        onToken: (token) => {
+        onToken: async (token) => {
           assistantMessage.content += token;
-          if (!clientClosed) writeSse(res, "token", { token });
+          if (!clientClosed) await tokenBuffer.push(token);
         }
       });
+      await tokenBuffer.finish();
 
       assistantMessage.status = "done";
       if (req.body?.includeUsage === true && responseUsage?.totalTokens > 0) {
@@ -2959,19 +2994,27 @@ app.post(
       }
     } catch (error) {
       const timedOut = Boolean(req.upstreamTimedOut);
-      const aborted = !timedOut && (error?.name === "AbortError" || controller.signal.aborted);
+      if (!clientClosed && !tokenBufferError) {
+        try {
+          await tokenBuffer.finish();
+        } catch (flushError) {
+          tokenBufferError = flushError;
+        }
+      }
+      const failure = tokenBufferError || error;
+      const aborted = !timedOut && !tokenBufferError && (error?.name === "AbortError" || controller.signal.aborted);
       assistantMessage.status = aborted ? "stopped" : "error";
       if (!assistantMessage.content && !aborted) {
         assistantMessage.content = timedOut
           ? "请求失败：上游服务响应超时"
-          : `请求失败：${publicProviderError(error, connection, req.body?.searchService)}`;
+          : `请求失败：${publicProviderError(failure, connection, req.body?.searchService)}`;
       }
       conversation.updatedAt = now();
 
       if (!clientClosed) {
         if (!aborted) {
           writeSse(res, "error", {
-            error: timedOut ? "上游服务响应超时" : publicProviderError(error, connection, req.body?.searchService)
+            error: timedOut ? "上游服务响应超时" : publicProviderError(failure, connection, req.body?.searchService)
           });
         }
         writeSse(res, "done", {
@@ -2982,6 +3025,8 @@ app.post(
     } finally {
       finished = true;
       clearInterval(heartbeat);
+      downstreamController.abort();
+      tokenBuffer.cancel();
       if (!res.writableEnded && !res.destroyed) res.end();
     }
   })

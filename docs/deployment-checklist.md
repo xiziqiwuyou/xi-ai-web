@@ -162,6 +162,8 @@ Skip this section when no real API credentials are available. Before opening the
   arrives before the provider has completed the full answer; a single answer
   appearing only at the end usually means the installed image predates native
   provider streaming or the reverse proxy is buffering `/api/chat/stream`.
+  With the default micro-buffer, several small provider fragments should appear
+  as a few steady batches rather than one browser update per fragment.
 - Image text-to-image with one image-capable model.
 - Image edit with one image-edit-capable model, if offered.
 - PPT generation with one Chat-capable model.
