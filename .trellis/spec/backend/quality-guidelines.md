@@ -909,6 +909,8 @@ PATCH  /api/admin/model-catalog/order { modelIds }       -> 200 ModelCatalogEntr
 - Duplicate IDs must advance an independent suffix until an unused value is found. Never derive the next candidate solely from a fixed collection size inside the loop.
 - `order` is the global display and capability-fallback priority. Legacy catalogs backfill it from source position, normalized catalogs compact it to consecutive integers, and new models append instead of silently becoming the first default.
 - Reorder is one atomic full-list mutation. Validate exact length, unique non-empty IDs, and complete membership before changing `db.modelCatalog`; persist and audit only after the complete request passes.
+- The `openai-compatible` vendor/adapter remains available for administrator-created real models, but generic shipped placeholders such as `compatible-chat` and `compatible-video` are not default catalog entries or Admin presets. Versioned metadata migration removes those reserved IDs only.
+- An explicitly supplied empty `modelCatalog` is a valid administrator state and must remain empty through normalization, restart, import, and restore; fallback defaults apply only when catalog data is omitted or when a legacy migration explicitly requires them.
 
 ### 4. Validation & Error Matrix
 
@@ -921,6 +923,7 @@ PATCH  /api/admin/model-catalog/order { modelIds }       -> 200 ModelCatalogEntr
 | Delete unknown vendor | HTTP 404 |
 | Delete the final remaining vendor | HTTP 409 |
 | Delete a vendor that still owns models | HTTP 409; never cascade-delete models |
+| Explicit empty model catalog | Preserve an empty catalog; do not silently recreate shipped defaults |
 | Import/restore removes the selected model | Select the first surviving model, or create an unsaved draft under the first vendor when no models survive |
 | Reorder omits, duplicates, or invents a model ID | HTTP 400; preserve the complete previous catalog order |
 

@@ -202,7 +202,7 @@ function normalizeCatalogRequestModelAliases(modelCatalog) {
 
 function createDefaultData() {
   return {
-    version: 13,
+    version: 14,
     settings: defaultSettings(),
     menuItems: defaultMenuItems(),
     modelVendors: defaultModelVendors(),
@@ -306,9 +306,8 @@ function migrateModelCatalog(modelCatalog, sourceVersion) {
   const version = Number(sourceVersion || 0);
   let migrated = normalizeCatalogRequestModelAliases(modelCatalog);
 
-  if (version < 5 && !migrated.some((entry) => entry.capabilities.includes("video"))) {
-    const defaultVideoModel = defaultModelCatalog().find((entry) => entry.id === "compatible-video");
-    if (defaultVideoModel) migrated = normalizeModelCatalog([...migrated, defaultVideoModel], migrated);
+  if (version < 14) {
+    migrated = migrated.filter((entry) => !["compatible-chat", "compatible-video"].includes(entry.id));
   }
 
   if (version < 6) {

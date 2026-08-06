@@ -113,6 +113,14 @@ fs.writeFileSync(path.join(dataDir, "app-data.json"), JSON.stringify({
   settings: {
     upstreamBaseUrl: `http://127.0.0.1:${providerPort}/v1`
   },
+  providers: [{
+    id: "automation-compatible",
+    name: "Automation Compatible",
+    kind: "openai-compatible",
+    models: { chat: "automation-chat" },
+    modelOptions: ["automation-chat"],
+    capabilities: ["vision", "toolCalling"]
+  }],
   assistants: [{
     id: "legacy-general-assistant",
     name: "通用助手",
@@ -182,7 +190,7 @@ try {
   const bootstrapResponse = await fetch(`${appBaseUrl}/api/public/bootstrap`);
   const bootstrap = await bootstrapResponse.json();
   assert.equal(bootstrapResponse.status, 200);
-  assert.equal(bootstrap.assistants.length, 30, "legacy metadata must receive the version-13 curated assistant catalog once");
+  assert.equal(bootstrap.assistants.length, 30, "legacy metadata must receive the curated assistant catalog once");
   assert.deepEqual(
     [...new Set(bootstrap.assistants.map((assistant) => assistant.category))].sort(),
     ["内容创作", "商业办公", "学习研究", "生活创意", "编程开发", "通用效率", "营销增长"].sort()
@@ -192,7 +200,7 @@ try {
   assert.equal(migratedLegacyAssistant.enabled, true);
   assert.equal(migratedLegacyAssistant.avatar, "sparkles");
   assert.equal(migratedLegacyAssistant.updatedAt, legacyCreatedAt, "normalization must preserve update timestamps");
-  assert.equal(JSON.parse(fs.readFileSync(path.join(dataDir, "app-data.json"), "utf8")).version, 13);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dataDir, "app-data.json"), "utf8")).version, 14);
   const migratedOpenAi = bootstrap.modelCatalog.find((model) => model.id === "openai-gpt-4-1-mini");
   const migratedKimi = bootstrap.modelCatalog.find((model) => model.id === "kimi-k3");
   const migratedQwenFlash = bootstrap.modelCatalog.find((model) => model.id === "qwen3-6-flash");
@@ -244,7 +252,7 @@ try {
     body: JSON.stringify({
       moduleId: "agents",
       connection,
-      modelId: "openai-gpt-4-1-mini",
+      modelId: "automation-compatible-automation-chat",
       agent: { name: "Invalid", systemPrompt: "", skillInstructions: [] },
       prompt: "test",
       allowedTools: []
@@ -259,7 +267,7 @@ try {
     body: JSON.stringify({
       moduleId: "agents",
       connection,
-      modelId: "openai-gpt-4-1-mini",
+      modelId: "automation-compatible-automation-chat",
       assistantId: "missing-assistant",
       prompt: "test",
       allowedTools: []
@@ -307,7 +315,7 @@ try {
     body: JSON.stringify({
       moduleId: "agents",
       connection,
-      modelId: "compatible-chat",
+      modelId: "openai-gpt-4-1-mini",
       agent: { name: "Search config guard", systemPrompt: "Return a result." },
       prompt: "Search the web.",
       allowedTools: ["web_search"]
@@ -340,8 +348,8 @@ try {
     body: JSON.stringify({
       moduleId: "agents",
       connection,
-      modelId: "compatible-chat",
-      agent: { name: "Independent search", systemPrompt: "Use the supplied external context." },
+       modelId: "automation-compatible-automation-chat",
+       agent: { name: "Independent search", systemPrompt: "Use the supplied external context." },
       prompt: "Use independent web search.",
       allowedTools: ["web_search", "web_search"],
       searchService
@@ -367,8 +375,8 @@ try {
     signal: AbortSignal.timeout(10_000),
     body: JSON.stringify({
       connection,
-      modelId: "compatible-chat",
-      assistantId: "legacy-general-assistant",
+       modelId: "automation-compatible-automation-chat",
+       assistantId: "legacy-general-assistant",
       content: "Use the selected assistant.",
       displayContent: "Use the selected assistant.",
       temperature: 0.7,

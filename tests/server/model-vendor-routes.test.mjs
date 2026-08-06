@@ -316,3 +316,54 @@ test("Admin model vendor API enforces contracts and survives metadata round trip
   assert.equal(result.response.status, 409);
   assert.match(result.body.error, /至少/);
 });
+
+test("legacy compatible placeholders are removed and an explicit empty catalog survives restart", { timeout: 30_000 }, async (t) => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "xi-ai-placeholder-cleanup-"));
+  t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(dataDir, "app-data.json"), JSON.stringify({
+    version: 13,
+    settings: { upstreamBaseUrl: "https://api.xi-ai.cn" },
+    modelVendors: [
+      { id: "openai", label: "OpenAI", adapter: "openai", enabled: true, order: 0 },
+      { id: "openai-compatible", label: "OpenAI Compatible", adapter: "openai-compatible", enabled: true, order: 1 }
+    ],
+    modelCatalog: [
+      {
+        id: "compatible-chat",
+        vendorId: "openai-compatible",
+        vendor: "openai-compatible",
+        model: "gpt-4.1-mini",
+        label: "Compatible Chat",
+        capabilities: ["chat", "vision"],
+        defaultFor: ["chat"],
+        enabled: true
+      },
+      {
+        id: "real-openai-model",
+        vendorId: "openai",
+        vendor: "openai",
+        model: "gpt-real-test",
+        label: "Real OpenAI Test",
+        capabilities: ["chat"],
+        defaultFor: ["chat"],
+        enabled: true
+      }
+    ]
+  }));
+
+  let runtime = await startServer(dataDir);
+  t.after(async () => stopServer(runtime.child));
+  let result = await api(runtime.baseUrl, "/api/admin/bootstrap");
+  assert.equal(result.response.status, 200);
+  assert.equal(result.body.modelCatalog.some((entry) => entry.id === "compatible-chat"), false);
+  assert.equal(result.body.modelCatalog.some((entry) => entry.id === "real-openai-model"), true);
+
+  result = await api(runtime.baseUrl, "/api/admin/model-catalog/real-openai-model", { method: "DELETE" });
+  assert.equal(result.response.status, 204);
+  await stopServer(runtime.child);
+
+  runtime = await startServer(dataDir);
+  result = await api(runtime.baseUrl, "/api/admin/bootstrap");
+  assert.equal(result.response.status, 200);
+  assert.deepEqual(result.body.modelCatalog, []);
+});

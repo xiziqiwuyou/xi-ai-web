@@ -77,15 +77,6 @@ function cleanMaxInputCharacters(value) {
 
 const defaultCatalog = [
   {
-    id: "compatible-chat",
-    vendor: "openai-compatible",
-    model: "gpt-4.1-mini",
-    label: "Compatible Chat",
-    capabilities: ["chat", "vision"],
-    defaultFor: ["chat"],
-    enabled: true
-  },
-  {
     id: "openai-gpt-5-6-sol",
     vendor: "openai",
     model: "gpt-5.6-sol",
@@ -562,23 +553,6 @@ const defaultCatalog = [
     defaultFor: [],
     enabled: true
   },
-  {
-    id: "compatible-video",
-    vendor: "openai-compatible",
-    model: "video-model",
-    label: "Compatible Video",
-    capabilities: ["video"],
-    defaultFor: ["video"],
-    enabled: true,
-    mediaConfig: {
-      generatePath: "/video/generations",
-      statusPath: "/video/generations/status",
-      idJsonPath: "id",
-      statusJsonPath: "status",
-      assetJsonPath: "url",
-      requestShape: "openai-compatible"
-    }
-  }
 ];
 
 export function normalizeVendorKind(value) {
@@ -865,9 +839,7 @@ function inferredVendorEntry(entry, order) {
 export function reconcileModelRegistry(modelVendors, modelCatalog, fallbackCatalog = defaultModelCatalog()) {
   const vendors = normalizeModelVendors(modelVendors, defaultModelVendors());
   const vendorsById = new Map(vendors.map((vendor) => [vendor.id, vendor]));
-  const sourceCatalog = Array.isArray(modelCatalog) && modelCatalog.length
-    ? modelCatalog
-    : fallbackCatalog;
+  const sourceCatalog = Array.isArray(modelCatalog) ? modelCatalog : fallbackCatalog;
 
   for (const sourceEntry of sourceCatalog) {
     const normalizedEntry = normalizeCatalogEntry(sourceEntry);
@@ -879,7 +851,7 @@ export function reconcileModelRegistry(modelVendors, modelCatalog, fallbackCatal
 
   const normalizedCatalog = normalizeModelCatalog(
     sourceCatalog,
-    fallbackCatalog,
+    sourceCatalog.length ? fallbackCatalog : [],
     vendors
   ).map((entry) => {
     const vendor = vendorsById.get(entry.vendorId);

@@ -105,7 +105,7 @@ assert(
   freshCatalog.some((entry) => entry.vendor === "openai" && entry.model === "gpt-5.4-mini" && entry.capabilities.includes("chat")),
   "Fresh model catalogs must include the default Chat title-summary model"
 );
-assert(server.includes("version: 13") && server.includes('entry.model === "gpt-5.4-mini"'), "Current metadata must retain the assistant catalog and title-summary migrations");
+assert(server.includes("version: 14") && server.includes('entry.model === "gpt-5.4-mini"'), "Current metadata must retain the assistant catalog and title-summary migrations");
 assert(
   freshAssistants.length === 30
     && new Set(freshAssistants.map((assistant) => assistant.category)).size === 7

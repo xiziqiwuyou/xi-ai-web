@@ -387,30 +387,6 @@ const baseModelCatalogPresets: ModelPresetSource[] = [
     capabilities: ["embedding"],
     defaultFor: []
   },
-  {
-    id: "compatible-chat",
-    label: "Compatible Chat",
-    vendor: "openai-compatible",
-    model: "gpt-4.1-mini",
-    capabilities: ["chat", "vision"],
-    defaultFor: ["chat"]
-  },
-  {
-    id: "compatible-video",
-    label: "Compatible Video",
-    vendor: "openai-compatible",
-    model: "video-model",
-    capabilities: ["video"],
-    defaultFor: ["video"],
-    mediaConfig: {
-      generatePath: "/video/generations",
-      statusPath: "/video/generations/status",
-      idJsonPath: "id",
-      statusJsonPath: "status",
-      assetJsonPath: "url",
-      requestShape: "openai-compatible"
-    }
-  }
 ];
 
 export const modelCatalogPresets: ModelPreset[] = baseModelCatalogPresets.map((preset) => ({

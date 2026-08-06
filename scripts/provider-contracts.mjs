@@ -226,12 +226,12 @@ async function testCatalogModelMapping() {
   assertEqual(entry.endpointProtocol, "openai-responses", "Legacy OpenAI catalog records default to Responses");
   assertEqual(findModelEntry(catalog, shortDisplayLabel), undefined, "Display labels must not resolve as request IDs");
   assertEqual(
-    defaultModelCatalog().find((model) => model.id === "compatible-chat")?.contextWindowTokens,
+    defaultModelCatalog().find((model) => model.id === "openai-gpt-4-1-mini")?.contextWindowTokens,
     1_047_576,
     "Known default models expose their inferred context window"
   );
   assertEqual(
-    defaultModelCatalog().find((model) => model.id === "compatible-chat")?.maxInputCharacters,
+    defaultModelCatalog().find((model) => model.id === "openai-gpt-4-1-mini")?.maxInputCharacters,
     100_000,
     "Default models expose an independent maximum input character count"
   );
@@ -1231,7 +1231,7 @@ async function testOpenAICompatibleAdapter() {
     }
   ], async () => {
     const text = await adapter.completeText({
-      model: "compatible-chat",
+      model: "compatible-contract-chat",
       messages: [
         { role: "system", content: "System prompt" },
         { role: "user", content: [{ type: "text", text: "Look" }, { type: "image", dataUrl: imageDataUrl }] }
@@ -1273,7 +1273,7 @@ async function testOpenAICompatibleAdapter() {
   ], async () => {
     let text = "";
     await adapter.streamChat({
-      model: "compatible-chat",
+      model: "compatible-contract-chat",
       messages: sampleMessages(),
       temperature: 0.2,
       onToken: (token) => {
@@ -1297,7 +1297,7 @@ async function testOpenAICompatibleAdapter() {
   ], async () => {
     let text = "";
     await adapter.streamChat({
-      model: "compatible-chat",
+      model: "compatible-contract-chat",
       messages: sampleMessages(),
       temperature: 0.2,
       onToken: (token) => {
@@ -1388,7 +1388,7 @@ async function testOpenAICompatibleAdapter() {
     const embeddings = await adapter.embedText({ model: "compatible-embed", input: "embed" });
     assertEqual(embeddings.embeddings[0][2], 9, "Compatible embedding parse");
     const video = await adapter.generateVideo({
-      model: "compatible-video",
+      model: "compatible-contract-video",
       prompt: "video",
       size: "1280x720",
       endpointPath: "/vendor/video/create"
@@ -1396,7 +1396,7 @@ async function testOpenAICompatibleAdapter() {
     assertEqual(video.id, "job-1", "Compatible video generation job id");
     assertEqual(video.status, "submitted", "Compatible video generation status");
     const videoStatus = await adapter.getVideoStatus({
-      model: "compatible-video",
+      model: "compatible-contract-video",
       endpointPath: "/vendor/video/status",
       providerJobId: "job-1"
     });
@@ -1406,7 +1406,7 @@ async function testOpenAICompatibleAdapter() {
 
   assertNoPendingFetch("compatible hosted tool rejection");
   await assertRejects(
-    () => adapter.completeText({ model: "compatible-chat", messages: sampleMessages(), hostedTools: [{ name: "web_search" }] }),
+    () => adapter.completeText({ model: "compatible-contract-chat", messages: sampleMessages(), hostedTools: [{ name: "web_search" }] }),
     /does not support provider-hosted tools/,
     "Generic OpenAI-compatible endpoints must reject OpenAI hosted tools"
   );

@@ -28,6 +28,13 @@ test("default model registry exposes stable vendors and resolved public labels",
   assert.equal(defaultModelVendors()[0].label, "OpenAI");
 });
 
+test("deprecated compatible placeholders are not shipped and explicit empty catalogs stay empty", () => {
+  const catalog = defaultModelCatalog();
+  assert.equal(catalog.some((entry) => ["compatible-chat", "compatible-video"].includes(entry.id)), false);
+  assert.equal(catalog.some((entry) => entry.label.startsWith("Compatible ")), false);
+  assert.deepEqual(reconcileModelRegistry(defaultModelVendors(), [], []).modelCatalog, []);
+});
+
 test("legacy models migrate to default vendor IDs without changing runtime adapters", () => {
   const registry = reconcileModelRegistry(undefined, [{
     id: "legacy-claude",
