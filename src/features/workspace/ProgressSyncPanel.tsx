@@ -746,8 +746,11 @@ function ProgressSyncPanel({
 
           {sender.phase === "waiting" || sender.phase === "approval" || sender.phase === "uploading" ? (
             <div className="progress-sync-session">
-              {!mobileDevice && senderShareUrl && (qrDataUrl || sender.phase === "approval") ? (
-                <div className={`progress-sync-qr${sender.phase === "approval" ? " progress-sync-qr--approval" : ""}`} data-sync-url={senderShareUrl}>
+              {!mobileDevice && (qrDataUrl || sender.phase === "approval") ? (
+                <div
+                  className={`progress-sync-qr${sender.phase === "approval" ? " progress-sync-qr--approval" : ""}`}
+                  data-sync-url={senderShareUrl || undefined}
+                >
                   {sender.phase === "approval" ? (
                     <SenderApproval
                       sender={sender}
@@ -768,7 +771,7 @@ function ProgressSyncPanel({
                 </div>
               ) : null}
               {qrError ? <p className="workspace-data-error" role="alert">{qrError}</p> : null}
-              {sender.phase === "approval" && (mobileDevice || !qrDataUrl) ? (
+              {sender.phase === "approval" && mobileDevice ? (
                 <SenderApproval
                   sender={sender}
                   reverseSenderCode={reverseSenderCode}

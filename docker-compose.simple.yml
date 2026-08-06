@@ -7,15 +7,15 @@
 #      docker compose -f docker-compose.simple.yml pull
 #      docker compose -f docker-compose.simple.yml up -d
 #
-# The image is pinned to v0.0.2 for repeatable deployment. To intentionally
-# use another published image, set XI_AI_WEB_IMAGE before running Compose.
+# The image is pinned to v0.0.3 for repeatable deployment. Change this line
+# explicitly when upgrading; do not let an old server .env override the tag.
 
 name: xi-ai-web
 
 services:
   xi-ai-web:
     # Prebuilt image: no source checkout and no local build are required.
-    image: ${XI_AI_WEB_IMAGE:-ghcr.io/xiziqiwuyou/xi-ai-web:v0.0.2}
+    image: ghcr.io/xiziqiwuyou/xi-ai-web:v0.0.3
     pull_policy: always
     restart: unless-stopped
 
