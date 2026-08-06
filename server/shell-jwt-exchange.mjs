@@ -3,10 +3,11 @@ const MAX_API_KEY_CHARS = 4_096;
 const MAX_RESPONSE_CHARS = 128_000;
 
 export class ShellJwtExchangeError extends Error {
-  constructor(status, message) {
+  constructor(status, message, code = "SHELL_JWT_EXCHANGE_FAILED") {
     super(message);
     this.name = "ShellJwtExchangeError";
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -38,8 +39,30 @@ async function responseJson(response, failureMessage) {
   }
 }
 
-function upstreamFailureStatus(response) {
-  return response.status === 401 || response.status === 403 ? 401 : 502;
+function isCrossDomainLoginDisabled(payload) {
+  const message = typeof payload?.message === "string" ? payload.message : "";
+  return /jwt\s+cross-domain\s+login\s+is\s+not\s+enabled\s+by\s+the\s+administrator/iu.test(message);
+}
+
+function upstreamFailure(response, payload, failureMessage) {
+  if (isCrossDomainLoginDisabled(payload)) {
+    return new ShellJwtExchangeError(
+      502,
+      "上游未启用跨域 JWT 登录，请在 Shell 管理端开启后重试",
+      "UPSTREAM_CROSS_DOMAIN_LOGIN_DISABLED"
+    );
+  }
+  if (response.status === 401 || response.status === 403) {
+    return new ShellJwtExchangeError(401, failureMessage, "UPSTREAM_AUTH_EXPIRED");
+  }
+  if (response.status === 404 || response.status === 405) {
+    return new ShellJwtExchangeError(
+      502,
+      "上游未找到 Shell 令牌兑换接口，请检查统一上游 API 域名",
+      "UPSTREAM_ENDPOINT_MISSING"
+    );
+  }
+  return new ShellJwtExchangeError(502, failureMessage, "UPSTREAM_EXCHANGE_FAILED");
 }
 
 async function shellRequest(fetchImpl, url, init, failureMessage) {
@@ -54,7 +77,7 @@ async function shellRequest(fetchImpl, url, init, failureMessage) {
   }
   const payload = await responseJson(response, failureMessage);
   if (!response.ok || payload?.success !== true) {
-    throw new ShellJwtExchangeError(upstreamFailureStatus(response), failureMessage);
+    throw upstreamFailure(response, payload, failureMessage);
   }
   return payload;
 }

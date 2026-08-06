@@ -81,8 +81,45 @@ test("Shell JWT exchange redacts upstream failures and supplied JWT values", asy
     (error) => {
       assert(error instanceof ShellJwtExchangeError);
       assert.equal(error.status, 401);
+      assert.equal(error.code, "UPSTREAM_AUTH_EXPIRED");
       assert.equal(error.message.includes(jwt), false);
       assert.equal(error.message.includes(upstreamSecret), false);
+      return true;
+    }
+  );
+});
+
+test("Shell JWT exchange reports a disabled cross-domain login setting", async () => {
+  await assert.rejects(
+    exchangeShellJwt({
+      token: jwt,
+      upstreamBaseUrl: "https://api.xi-ai.cn",
+      fetchImpl: async () => jsonResponse({
+        success: false,
+        message: "JWT cross-domain login is not enabled by the administrator."
+      })
+    }),
+    (error) => {
+      assert(error instanceof ShellJwtExchangeError);
+      assert.equal(error.status, 502);
+      assert.equal(error.code, "UPSTREAM_CROSS_DOMAIN_LOGIN_DISABLED");
+      assert.equal(error.message, "上游未启用跨域 JWT 登录，请在 Shell 管理端开启后重试");
+      return true;
+    }
+  );
+});
+
+test("Shell JWT exchange reports missing control-plane endpoints", async () => {
+  await assert.rejects(
+    exchangeShellJwt({
+      token: jwt,
+      upstreamBaseUrl: "https://api.xi-ai.cn",
+      fetchImpl: async () => jsonResponse({ success: false }, 404)
+    }),
+    (error) => {
+      assert(error instanceof ShellJwtExchangeError);
+      assert.equal(error.status, 502);
+      assert.equal(error.code, "UPSTREAM_ENDPOINT_MISSING");
       return true;
     }
   );

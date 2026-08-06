@@ -2064,7 +2064,12 @@ app.post("/api/public/shell-token/exchange", asyncRoute(async (req, res) => {
     res.json(result);
   } catch (error) {
     if (error instanceof ShellJwtExchangeError) {
-      throw httpError(error.status, error.message);
+      return res.status(error.status).json({
+        error: {
+          code: error.code,
+          message: error.message
+        }
+      });
     }
     throw error;
   }
