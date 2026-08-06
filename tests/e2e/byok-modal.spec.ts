@@ -1,8 +1,38 @@
 import {
   expect,
+  publicBootstrapFixture,
   providerStorageKey,
   test
 } from "./support/app-fixture";
+
+async function indexedDbContains(page: import("@playwright/test").Page, value: string) {
+  return page.evaluate(async (needle) => {
+    if (!("databases" in indexedDB)) return false;
+    const databases = await indexedDB.databases();
+    for (const { name } of databases) {
+      if (!name?.startsWith("xi-ai-web")) continue;
+      const database = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open(name);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      const stores = Array.from(database.objectStoreNames);
+      if (!stores.length) {
+        database.close();
+        continue;
+      }
+      const transaction = database.transaction(stores, "readonly");
+      const records = await Promise.all(stores.map((storeName) => new Promise<unknown[]>((resolve, reject) => {
+        const request = transaction.objectStore(storeName).getAll();
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      })));
+      database.close();
+      if (JSON.stringify(records).includes(needle)) return true;
+    }
+    return false;
+  }, value);
+}
 
 test("public root resolves to Chat and requires BYOK credentials", async ({ page }) => {
   await page.goto("/");
@@ -68,6 +98,137 @@ test("Shell type-3 JWT handoff exchanges into a session-only API Key", async ({ 
   await expect(page.locator("body")).not.toContainText(shellJwt);
   expect(await page.evaluate((key) => window.localStorage.getItem(key), providerStorageKey)).toBeNull();
 });
+
+test("OneAPI settings handoff accepts raw settings without calling the Shell JWT exchange", async ({ page, apiHarness }) => {
+  const apiKey = "sk-oneapi-raw-session-2468";
+  const settings = JSON.stringify({
+    key: apiKey,
+    url: "https://untrusted.example.test/v1"
+  });
+  const bootstrap = structuredClone(publicBootstrapFixture);
+  bootstrap.settings.oneapiSettingsHandoffEnabled = true;
+  apiHarness.setBootstrap(bootstrap);
+
+  let exchangeCalls = 0;
+  let externalUrlCalls = 0;
+  await page.route("**/api/public/shell-token/exchange", async (route) => {
+    exchangeCalls += 1;
+    await route.abort();
+  });
+  await page.route("https://untrusted.example.test/**", async (route) => {
+    externalUrlCalls += 1;
+    await route.abort();
+  });
+
+  await page.goto(`/#/?settings=${settings}`);
+  await expect(page).toHaveURL(/\/chat$/);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect.poll(() => page.evaluate((key) => window.sessionStorage.getItem(key), providerStorageKey)).toBe(
+    JSON.stringify({ apiKey, lastModelId: "" })
+  );
+  expect(exchangeCalls).toBe(0);
+  expect(externalUrlCalls).toBe(0);
+  expect(page.url()).not.toContain("settings=");
+  expect(page.url()).not.toContain(apiKey);
+  expect(page.url()).not.toContain("untrusted.example.test");
+  await expect(page.locator("body")).not.toContainText(apiKey);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), providerStorageKey)).toBeNull();
+  expect(await indexedDbContains(page, apiKey)).toBe(false);
+  expect(apiHarness.requests).not.toContain("POST /api/public/shell-token/exchange");
+});
+
+test("OneAPI settings handoff accepts encoded settings and remains session-only after refresh", async ({ page, apiHarness }) => {
+  const apiKey = "sk-oneapi-encoded-session-2468";
+  const settings = encodeURIComponent(JSON.stringify({
+    key: apiKey,
+    url: "https://api.xi-ai.cn"
+  }));
+  const bootstrap = structuredClone(publicBootstrapFixture);
+  bootstrap.settings.oneapiSettingsHandoffEnabled = true;
+  apiHarness.setBootstrap(bootstrap);
+
+  await page.goto(`/#/?settings=${settings}`);
+  await expect(page).toHaveURL(/\/chat$/);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect.poll(() => page.evaluate((key) => window.sessionStorage.getItem(key), providerStorageKey)).toBe(
+    JSON.stringify({ apiKey, lastModelId: "" })
+  );
+  expect(page.url()).not.toContain("settings=");
+  expect(page.url()).not.toContain(apiKey);
+
+  await page.reload();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect.poll(() => page.evaluate((key) => window.sessionStorage.getItem(key), providerStorageKey)).toBe(
+    JSON.stringify({ apiKey, lastModelId: "" })
+  );
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), providerStorageKey)).toBeNull();
+  expect(await indexedDbContains(page, apiKey)).toBe(false);
+  expect(apiHarness.requests).not.toContain("POST /api/public/shell-token/exchange");
+});
+
+test("disabled OneAPI settings handoff is scrubbed and falls back to the manual Key dialog", async ({ page, apiHarness }) => {
+  const apiKey = "sk-oneapi-disabled-session-2468";
+  const settings = JSON.stringify({ key: apiKey, url: "https://api.xi-ai.cn" });
+
+  await page.goto(`/#/?settings=${settings}`);
+  await expect(page).toHaveURL(/\/chat$/);
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole("alert")).toContainText("未启用 OneAPI settings 跳转");
+  await expect(dialog.getByLabel("API Key", { exact: true })).toHaveValue("");
+  expect(page.url()).not.toContain("settings=");
+  expect(page.url()).not.toContain(apiKey);
+  expect(await page.evaluate((key) => window.sessionStorage.getItem(key), providerStorageKey)).not.toContain(apiKey);
+  expect(apiHarness.requests).not.toContain("POST /api/public/shell-token/exchange");
+});
+
+for (const scenario of [
+  {
+    name: "missing settings",
+    hash: "#/?mode=oneapi",
+    message: "缺少 settings"
+  },
+  {
+    name: "malformed settings JSON",
+    hash: "#/?settings=not-json",
+    message: "不是有效 JSON"
+  },
+  {
+    name: "empty API Key",
+    hash: `#/?settings=${JSON.stringify({ key: "", url: "https://api.xi-ai.cn" })}`,
+    message: "缺少 API Key"
+  },
+  {
+    name: "oversized API Key",
+    hash: `#/?settings=${encodeURIComponent(JSON.stringify({ key: `sk-${"a".repeat(4_097)}`, url: "https://api.xi-ai.cn" }))}`,
+    message: "API Key 过长"
+  },
+  {
+    name: "invalid API Key",
+    hash: `#/?settings=${JSON.stringify({ key: "not-an-api-key", url: "https://api.xi-ai.cn" })}`,
+    message: "API Key 格式无效"
+  },
+  {
+    name: "invalid ignored URL",
+    hash: `#/?settings=${JSON.stringify({ key: "sk-oneapi-invalid-url-2468", url: "ftp://invalid.example.test" })}`,
+    message: "API 地址格式无效"
+  }
+]) {
+  test(`OneAPI settings handoff rejects ${scenario.name} without exposing its fragment`, async ({ page, apiHarness }) => {
+    const bootstrap = structuredClone(publicBootstrapFixture);
+    bootstrap.settings.oneapiSettingsHandoffEnabled = true;
+    apiHarness.setBootstrap(bootstrap);
+
+    await page.goto(`/${scenario.hash}`);
+    await expect(page).toHaveURL(/\/chat$/);
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("alert")).toContainText(scenario.message);
+    expect(page.url()).not.toContain("settings=");
+    expect(await page.evaluate((key) => window.sessionStorage.getItem(key), providerStorageKey)).not.toContain("sk-");
+    expect(apiHarness.requests).not.toContain("POST /api/public/shell-token/exchange");
+  });
+}
 
 test("failed Shell type-3 handoff falls back to the required Key dialog", async ({ page }) => {
   const shellJwt = "header.payload.expired-shell-jwt-value";

@@ -21,6 +21,27 @@ GET  /api/image/timing-estimate
 POST /api/generate/image
 ```
 
+## Scenario: OneAPI Settings Direct-Key Handoff
+
+### 1. Scope / Trigger
+
+- Trigger: any change to `SiteSettings.oneapiSettingsHandoffEnabled`, public bootstrap settings, Admin site settings, metadata import/restore, or the browser `#/?settings=...` parser.
+- This compatibility path accepts a model API Key directly in a browser fragment. It is not a server token-exchange route and is fully isolated from Shell type-3 JWT handling.
+
+### 2. Contracts
+
+- `oneapiSettingsHandoffEnabled` defaults to false and may be changed only through the authenticated Admin settings route. Public bootstrap exposes only the boolean capability flag.
+- Metadata import and backup restore preserve the live administrator value instead of accepting the imported/restored value. Public routes cannot mutate it.
+- The server never receives the OneAPI fragment, direct Key, or caller-supplied `settings.url`. No route, audit record, log, export payload, analytics record, or JSON metadata may receive the direct Key.
+- Browser requests continue to use the administrator-managed `settings.upstreamBaseUrl`. A OneAPI `settings.url` value has no effect on SSRF policy, provider routing, or endpoint construction.
+- Shell `#/jwt_auth?x_s_token=...` continues to use `/api/public/shell-token/exchange`; the OneAPI path must make zero exchange calls.
+
+### 3. Validation & Tests
+
+- Server tests cover the default-off value, authenticated enable/disable, public projection, and import/restore preservation.
+- Desktop and mobile E2E cover raw and encoded JSON, URL cleanup, sessionStorage-only persistence, ignored external URL, disabled fallback, malformed/empty/oversized/invalid values, refresh behavior, and Shell/manual BYOK non-regression.
+- `npm run privacy` remains a required gate because the compatibility URL can contain a real long-lived Key before the browser scrubs it.
+
 ## Scenario: Manual Cross-Device Workspace Snapshot
 
 ### 1. Scope / Trigger

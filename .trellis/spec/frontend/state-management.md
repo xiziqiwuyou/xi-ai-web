@@ -134,6 +134,15 @@ type UserProviderConfig = {
 - A successful exchange updates only `UserProviderConfig.apiKey` and preserves the current `lastModelId`. The resulting Key follows the normal sessionStorage-only BYOK boundary.
 - Invalid or failed handoffs clear any stale Key, open the existing required Key dialog, and display a bounded public error. JWTs must never enter Web Storage, IndexedDB, workspace archives, URLs after consumption, page text, analytics, or logs.
 
+### OneAPI Settings Handoff
+
+- Treat `#/?settings=<JSON>` as an independent direct-Key compatibility path. It is never a Shell JWT fallback and never calls `/api/public/shell-token/exchange`.
+- Parse raw JSON, browser-partially-encoded JSON, or percent-encoded JSON through `parseOneApiSettingsHandoff`. Remove the fragment immediately through the separately named OneAPI cleanup entry before bootstrap settles.
+- Accept the Key only when public bootstrap reports `settings.oneapiSettingsHandoffEnabled === true`. The administrator setting defaults to false; rejection opens the existing manual Key dialog with a bounded error.
+- Operationally consume only a bounded `sk-...` `settings.key`. An optional `settings.url` may be syntax-checked for a clear malformed-link error, but it must never enter provider state, request payloads, or upstream selection.
+- Success updates the existing `UserProviderConfig.apiKey`, closes the Key dialog, and persists only through `cherry-web-user-provider` in `sessionStorage`. The Key must not enter `localStorage`, IndexedDB, workspace archives, server metadata, logs, analytics, page text, or the cleaned URL.
+- OneAPI and Shell handoffs keep separate parser states, error codes, cleanup functions, and E2E assertions. `type: 2` remains outside xi-ai-web; external Shell launchers continue to use the existing type-3 JWT route.
+
 Saved Chat UI/session settings use `xi-ai-web-chat-session-settings`. This record may contain only avatar/style/sampling/context/stream/tool-mode UI values, never API Keys, handoff JWTs, search credentials, document contents, or server-owned catalog data. Sanitizers for persisted select values must reuse the same option constants that render the controls so unsupported stale values fall back before React mounts a mismatched `<select>`.
 
 Automation's independent network search may still use `xi-ai-web-search-service` with `SearchServiceConfig`. Chat does not read that record: it keeps only an in-memory per-conversation GLM/Kimi selection and projects `SearchServiceConfig` from the active BYOK Key plus the administrator-managed upstream when the exact request includes `web_search`. Neither credential path may enter IndexedDB, workspace archives, backend metadata, logs, URL state, or public bootstrap data.

@@ -2,6 +2,9 @@ import type { UserProviderConfig } from "../../types";
 
 const storageKey = "cherry-web-user-provider";
 const maxShellJwtChars = 8_192;
+const maxOneApiSettingsChars = 12_288;
+const maxOneApiApiKeyChars = 4_096;
+const maxOneApiUrlChars = 2_048;
 
 export type ShellJwtHandoff = {
   present: boolean;
@@ -13,6 +16,30 @@ export const emptyShellJwtHandoff: ShellJwtHandoff = {
   present: false,
   token: "",
   error: ""
+};
+
+export type OneApiSettingsHandoffErrorCode =
+  | ""
+  | "ONEAPI_SETTINGS_MISSING"
+  | "ONEAPI_SETTINGS_TOO_LARGE"
+  | "ONEAPI_SETTINGS_INVALID"
+  | "ONEAPI_KEY_MISSING"
+  | "ONEAPI_KEY_TOO_LARGE"
+  | "ONEAPI_KEY_INVALID"
+  | "ONEAPI_URL_INVALID";
+
+export type OneApiSettingsHandoff = {
+  present: boolean;
+  apiKey: string;
+  error: string;
+  code: OneApiSettingsHandoffErrorCode;
+};
+
+export const emptyOneApiSettingsHandoff: OneApiSettingsHandoff = {
+  present: false,
+  apiKey: "",
+  error: "",
+  code: ""
 };
 
 export const connectionPresets = [
@@ -30,6 +57,92 @@ export const defaultUserProviderConfig: UserProviderConfig = {
 
 function cleanText(value: unknown, fallback = "") {
   return typeof value === "string" ? value.trim() : fallback;
+}
+
+function invalidOneApiSettingsHandoff(
+  code: Exclude<OneApiSettingsHandoffErrorCode, "">,
+  error: string
+): OneApiSettingsHandoff {
+  return { present: true, apiKey: "", error, code };
+}
+
+function oneApiSettingsValue(query: string) {
+  const prefix = "settings=";
+  if (query.startsWith(prefix)) return query.slice(prefix.length);
+  const params = new URLSearchParams(query);
+  return params.has("settings") ? params.get("settings") : null;
+}
+
+function validIgnoredOneApiUrl(value: unknown) {
+  if (value === undefined) return true;
+  if (typeof value !== "string") return false;
+  const text = value.trim();
+  if (!text || text.length > maxOneApiUrlChars) return false;
+  try {
+    const parsed = new URL(text);
+    return (parsed.protocol === "https:" || parsed.protocol === "http:")
+      && !parsed.username
+      && !parsed.password;
+  } catch {
+    return false;
+  }
+}
+
+export function parseOneApiSettingsHandoff(hash: string): OneApiSettingsHandoff {
+  const fragment = String(hash || "").replace(/^#/u, "");
+  const queryIndex = fragment.indexOf("?");
+  const route = (queryIndex >= 0 ? fragment.slice(0, queryIndex) : fragment).replace(/\/+$/u, "") || "/";
+  if (route !== "/" || queryIndex < 0) return emptyOneApiSettingsHandoff;
+
+  const rawSettings = oneApiSettingsValue(fragment.slice(queryIndex + 1));
+  if (rawSettings === null) {
+    return invalidOneApiSettingsHandoff("ONEAPI_SETTINGS_MISSING", "OneAPI 跳转配置缺少 settings");
+  }
+  if (!rawSettings.trim()) {
+    return invalidOneApiSettingsHandoff("ONEAPI_SETTINGS_MISSING", "OneAPI 跳转配置缺少 settings");
+  }
+  if (rawSettings.length > maxOneApiSettingsChars) {
+    return invalidOneApiSettingsHandoff("ONEAPI_SETTINGS_TOO_LARGE", "OneAPI 跳转配置过长");
+  }
+
+  let serialized = rawSettings.trim();
+  const looksLikeRawJson = serialized.startsWith("{") && serialized.includes('"');
+  if (!looksLikeRawJson) {
+    try {
+      // Browsers commonly encode the quotes of an otherwise raw JSON fragment.
+      serialized = decodeURIComponent(serialized);
+    } catch {
+      return invalidOneApiSettingsHandoff("ONEAPI_SETTINGS_INVALID", "OneAPI 跳转配置编码无效");
+    }
+  }
+  if (serialized.length > maxOneApiSettingsChars) {
+    return invalidOneApiSettingsHandoff("ONEAPI_SETTINGS_TOO_LARGE", "OneAPI 跳转配置过长");
+  }
+
+  let settings: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(serialized);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("invalid settings");
+    settings = parsed as Record<string, unknown>;
+  } catch {
+    return invalidOneApiSettingsHandoff("ONEAPI_SETTINGS_INVALID", "OneAPI 跳转配置不是有效 JSON");
+  }
+
+  const apiKey = cleanText(settings.key);
+  if (!apiKey) {
+    return invalidOneApiSettingsHandoff("ONEAPI_KEY_MISSING", "OneAPI 跳转配置缺少 API Key");
+  }
+  if (apiKey.length > maxOneApiApiKeyChars) {
+    return invalidOneApiSettingsHandoff("ONEAPI_KEY_TOO_LARGE", "OneAPI 跳转中的 API Key 过长");
+  }
+  if (!/^sk-[A-Za-z0-9._~+/=-]{4,}$/u.test(apiKey)) {
+    return invalidOneApiSettingsHandoff("ONEAPI_KEY_INVALID", "OneAPI 跳转中的 API Key 格式无效");
+  }
+  if (!validIgnoredOneApiUrl(settings.url)) {
+    return invalidOneApiSettingsHandoff("ONEAPI_URL_INVALID", "OneAPI 跳转中的 API 地址格式无效");
+  }
+
+  return { present: true, apiKey, error: "", code: "" };
 }
 
 export function parseShellJwtHandoff(hash: string): ShellJwtHandoff {
@@ -52,11 +165,25 @@ export function parseShellJwtHandoff(hash: string): ShellJwtHandoff {
       };
 }
 
-export function clearShellJwtHandoffUrl(
+function clearHandoffUrl(
   location: Pick<Location, "pathname" | "search">,
   history: Pick<History, "replaceState" | "state">
 ) {
   history.replaceState(history.state, "", `${location.pathname || "/"}${location.search || ""}`);
+}
+
+export function clearShellJwtHandoffUrl(
+  location: Pick<Location, "pathname" | "search">,
+  history: Pick<History, "replaceState" | "state">
+) {
+  clearHandoffUrl(location, history);
+}
+
+export function clearOneApiSettingsHandoffUrl(
+  location: Pick<Location, "pathname" | "search">,
+  history: Pick<History, "replaceState" | "state">
+) {
+  clearHandoffUrl(location, history);
 }
 
 export function sanitizeUserProviderConfig(value: unknown): UserProviderConfig {

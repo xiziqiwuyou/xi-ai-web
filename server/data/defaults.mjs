@@ -38,6 +38,7 @@ export function defaultSettings({
     theme: "rednote",
     allowGuestChat: true,
     defaultModule: "chat",
+    oneapiSettingsHandoffEnabled: false,
     upstreamBaseUrl: upstreamPolicy.configuredBaseUrl || normalizeUpstreamBaseUrl(
       env.UPSTREAM_BASE_URL || DEFAULT_UPSTREAM_BASE_URL,
       { production, allowLocal: String(env.ALLOW_LOCAL_UPSTREAM || "").toLowerCase() === "true" }

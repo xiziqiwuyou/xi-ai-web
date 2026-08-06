@@ -37,6 +37,7 @@ export type SiteSettings = {
   allowGuestChat: boolean;
   defaultModule: ModuleId;
   upstreamBaseUrl: string;
+  oneapiSettingsHandoffEnabled: boolean;
   progressSync: ProgressSyncSettings;
 };
 

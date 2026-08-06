@@ -157,6 +157,7 @@ export const publicBootstrapFixture: PublicBootstrapPayload = {
     allowGuestChat: true,
     defaultModule: "chat",
     upstreamBaseUrl: "https://api.xi-ai.cn",
+    oneapiSettingsHandoffEnabled: false,
     progressSync: {
       enabled: true,
       ttlSeconds: 600,
@@ -1085,6 +1086,21 @@ export const test = base.extend<BrowserFixtures>({
               ? adminBootstrap
               : { ...adminBootstrap, modelVendors: adminModelVendorsOverride }
           });
+          return;
+        }
+
+        if (request.method() === "PATCH" && pathname === "/api/admin/settings") {
+          const payload = request.postDataJSON() as Partial<AdminBootstrapPayload["settings"]>;
+          const settings = {
+            ...adminBootstrap.settings,
+            ...payload,
+            progressSync: payload.progressSync
+              ? { ...adminBootstrap.settings.progressSync, ...payload.progressSync }
+              : adminBootstrap.settings.progressSync
+          };
+          adminBootstrap = { ...adminBootstrap, settings };
+          bootstrap = { ...bootstrap, settings };
+          await route.fulfill({ json: settings });
           return;
         }
 

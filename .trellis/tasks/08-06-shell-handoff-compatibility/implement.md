@@ -7,6 +7,7 @@
 - Check the deployed `/api/health`, `/api/ready`, and `POST /api/public/shell-token/exchange` status without sending a real secret; confirm frontend static assets and backend route are from the same release.
 - Confirm the administrator `UPSTREAM_BASE_URL` points to the Shell control plane that actually exposes the two expected endpoints.
 - Confirmed on 2026-08-06: `api.xi-ai.cn/api/user/login/refresh` returns HTTP 200 with `success:false` because the administrator has disabled cross-domain JWT login. Treat this as the current production blocker, not as token expiry.
+- Follow-up confirmed: the `v0.0.6` image workflow completed successfully and the live exchange route emits the new structured error envelope. A random bounded token is rejected upstream as invalid/expired, which is expected and is not evidence that the request format should be changed.
 - Stop at this phase if the real type 3 URL does not contain the expected token; do not implement guessing or type 2 compatibility.
 
 ## P1 - Make failures diagnosable and safe
@@ -23,6 +24,14 @@
 - Compare the real type 3 token with the expected Shell login token and verify the refresh/default-token endpoint, headers, response shape and configured upstream origin.
 - If the real type 3 contract differs, correct the exchange service with a typed, documented adapter; do not add type 2 behavior.
 - Reject direct long-lived API Keys in URL handoffs; retain manual BYOK as the fallback.
+
+## P2.1 - Optional OneAPI/Next-Web settings compatibility
+
+- Add an administrator-controlled, default-off `oneapi-settings` feature flag.
+- Parse only `#/?settings=<JSON>` after the flag is enabled; validate bounded `settings.key`, discard all other settings, ignore `settings.url`, scrub the fragment, and store the Key through the existing session-only provider helper.
+- Do not send the direct Key to `/api/public/shell-token/exchange`, server metadata, logs, exports, or analytics.
+- Test raw and encoded JSON, malformed settings, disabled-feature rejection, URL cleanup, session-only storage, ignored malicious URL, manual replacement, and non-regression of Shell type 3.
+- Document that this format works for OneAPI's per-user model-token links but cannot make Shell's `{{x_s_token}}` act as a model API Key.
 
 ## P3 - Harden browser initialization and retry behavior
 
@@ -52,3 +61,11 @@
 - Do not store a handoff token in localStorage, IndexedDB, server JSON, audit logs, or analytics.
 - Do not classify every 401/403 as “expired” when the upstream endpoint is missing or the deployed route is stale.
 - Do not mix this task with the currently dirty synchronization-layout files.
+
+## P2.1 execution evidence - 2026-08-06
+
+- Implemented a separate `oneapi-settings` parser, state, cleanup entry, error taxonomy, and default-off Admin flag without changing Shell type-3 exchange behavior.
+- Confirmed that `settings.url` causes no external browser request and cannot replace the administrator-managed upstream; direct Keys persist only in the existing session provider record.
+- Added Admin UI warning and server protection that prevents metadata import and backup restore from changing the live flag.
+- Passed `npm run check`, `npm run build`, `npm run privacy`, `npm run ui-contract`, full `npm run test:server` (81 tests), and focused desktop/mobile Playwright coverage (28 BYOK/handoff tests plus Admin toggle coverage).
+- The broader task remains in progress because live validation with a real disposable Shell type-3 JWT is intentionally outside this direct-Key compatibility implementation.

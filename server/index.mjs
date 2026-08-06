@@ -256,6 +256,9 @@ function normalizeSettings(dataSettings) {
     siteName: String(source.siteName || fallback.siteName).trim(),
     allowGuestChat: typeof source.allowGuestChat === "boolean" ? source.allowGuestChat : fallback.allowGuestChat,
     defaultModule,
+    oneapiSettingsHandoffEnabled: typeof source.oneapiSettingsHandoffEnabled === "boolean"
+      ? source.oneapiSettingsHandoffEnabled
+      : fallback.oneapiSettingsHandoffEnabled,
     upstreamBaseUrl: upstreamPolicy.locked
       ? upstreamPolicy.configuredBaseUrl || fallback.upstreamBaseUrl
       : normalizeUpstreamBaseUrl(requestedUpstream),
@@ -2168,6 +2171,9 @@ adminRouter.patch("/settings", asyncRoute(async (req, res) => {
   }
   nextSettings.siteName = String(nextSettings.siteName || db.settings.siteName).trim();
   nextSettings.allowGuestChat = Boolean(nextSettings.allowGuestChat);
+  nextSettings.oneapiSettingsHandoffEnabled = typeof nextSettings.oneapiSettingsHandoffEnabled === "boolean"
+    ? nextSettings.oneapiSettingsHandoffEnabled
+    : db.settings.oneapiSettingsHandoffEnabled;
   const requestedUpstream = String(
     nextSettings.upstreamBaseUrl || db.settings.upstreamBaseUrl || DEFAULT_UPSTREAM_BASE_URL
   ).trim();
@@ -2579,6 +2585,7 @@ adminRouter.get("/metadata-export", (req, res) => {
 
 adminRouter.patch("/metadata-import", asyncRoute(async (req, res) => {
   const nextData = buildMetadataImport(req.body);
+  nextData.settings.oneapiSettingsHandoffEnabled = db.settings.oneapiSettingsHandoffEnabled;
   try {
     nextData.settings.upstreamBaseUrl = await assertManagedUpstreamBaseUrl(nextData.settings.upstreamBaseUrl, {
       production: isProduction,
@@ -2623,6 +2630,7 @@ adminRouter.get("/backups", (req, res) => {
 adminRouter.post("/backups/:name/restore", asyncRoute(async (req, res) => {
   const backupPath = safeBackupPath(req.params.name);
   const restored = normalizeData(JSON.parse(fs.readFileSync(backupPath, "utf8")));
+  restored.settings.oneapiSettingsHandoffEnabled = db.settings.oneapiSettingsHandoffEnabled;
   try {
     restored.settings.upstreamBaseUrl = await assertManagedUpstreamBaseUrl(restored.settings.upstreamBaseUrl, {
       production: isProduction,

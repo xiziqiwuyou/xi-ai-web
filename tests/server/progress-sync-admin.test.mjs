@@ -123,3 +123,81 @@ test("Admin progress-sync settings update the live public boundary", { timeout: 
   assert.equal(result.response.status, 429);
   assert.equal(result.response.headers.get("cache-control"), "no-store, max-age=0");
 });
+
+test("OneAPI settings handoff stays opt-in and cannot be changed by import or backup restore", { timeout: 30_000 }, async (t) => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "xi-ai-oneapi-settings-admin-"));
+  const runtime = await startServer(dataDir);
+  t.after(async () => {
+    await stopServer(runtime.child);
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  const login = await fetch(`${runtime.origin}/api/admin/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ username: "xizi2333", password: "progress-sync-admin-password" })
+  });
+  assert.equal(login.status, 200);
+  const cookie = String(login.headers.get("set-cookie") || "").split(";", 1)[0];
+
+  let result = await json(runtime.origin, "/api/public/bootstrap");
+  assert.equal(result.response.status, 200);
+  assert.equal(result.body.settings.oneapiSettingsHandoffEnabled, false);
+  assert.equal(Object.hasOwn(result.body.settings, "oneapiSettingsHandoffUrl"), false);
+  assert.equal(Object.hasOwn(result.body.settings, "oneapiSettingsHandoffKey"), false);
+
+  let admin = await json(runtime.origin, "/api/admin/bootstrap", { headers: { cookie } });
+  result = await json(runtime.origin, "/api/admin/settings", {
+    method: "PATCH",
+    headers: { cookie, "content-type": "application/json" },
+    body: JSON.stringify({
+      ...admin.body.settings,
+      oneapiSettingsHandoffEnabled: true
+    })
+  });
+  assert.equal(result.response.status, 200);
+  assert.equal(result.body.oneapiSettingsHandoffEnabled, true);
+
+  result = await json(runtime.origin, "/api/public/bootstrap");
+  assert.equal(result.body.settings.oneapiSettingsHandoffEnabled, true);
+
+  const exported = await json(runtime.origin, "/api/admin/metadata-export", { headers: { cookie } });
+  assert.equal(exported.response.status, 200);
+  assert.equal(exported.body.settings.oneapiSettingsHandoffEnabled, true);
+  exported.body.settings.oneapiSettingsHandoffEnabled = false;
+
+  result = await json(runtime.origin, "/api/admin/metadata-import", {
+    method: "PATCH",
+    headers: { cookie, "content-type": "application/json" },
+    body: JSON.stringify(exported.body)
+  });
+  assert.equal(result.response.status, 200);
+  assert.equal(result.body.settings.oneapiSettingsHandoffEnabled, true);
+
+  const backups = await json(runtime.origin, "/api/admin/backups", { headers: { cookie } });
+  assert.equal(backups.response.status, 200);
+  assert(backups.body.length > 0);
+
+  admin = await json(runtime.origin, "/api/admin/bootstrap", { headers: { cookie } });
+  result = await json(runtime.origin, "/api/admin/settings", {
+    method: "PATCH",
+    headers: { cookie, "content-type": "application/json" },
+    body: JSON.stringify({
+      ...admin.body.settings,
+      oneapiSettingsHandoffEnabled: false
+    })
+  });
+  assert.equal(result.response.status, 200);
+  assert.equal(result.body.oneapiSettingsHandoffEnabled, false);
+
+  result = await json(
+    runtime.origin,
+    `/api/admin/backups/${encodeURIComponent(backups.body[0].name)}/restore`,
+    { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({}) }
+  );
+  assert.equal(result.response.status, 200);
+  assert.equal(result.body.settings.oneapiSettingsHandoffEnabled, false);
+
+  result = await json(runtime.origin, "/api/public/bootstrap");
+  assert.equal(result.body.settings.oneapiSettingsHandoffEnabled, false);
+});

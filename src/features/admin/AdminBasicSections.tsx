@@ -1,5 +1,5 @@
 import { type FormEvent, useEffect, useState } from "react";
-import { KeyRound, Save, ServerCog, ToggleLeft } from "lucide-react";
+import { KeyRound, Save, ServerCog, ShieldAlert, ToggleLeft } from "lucide-react";
 import { vendorLabels } from "../../components/workbench";
 import { adminCapabilityLabels } from "./adminConsoleConfig";
 import type { AdminCredentialUpdate, MenuItem, SiteSettings, ToolSetting } from "../../types";
@@ -107,6 +107,21 @@ export function AdminSiteSection({
           <input type="checkbox" checked={settings.allowGuestChat} onChange={(event) => onChange({ allowGuestChat: event.target.checked })} />
           允许访客直接使用对话
         </label>
+        <label className="inline-check admin-oneapi-handoff-toggle">
+          <input
+            type="checkbox"
+            checked={settings.oneapiSettingsHandoffEnabled}
+            onChange={(event) => onChange({ oneapiSettingsHandoffEnabled: event.target.checked })}
+          />
+          允许 OneAPI settings 兼容跳转
+        </label>
+        <div className="admin-oneapi-handoff-warning" role="note">
+          <ShieldAlert size={17} aria-hidden="true" />
+          <p>
+            <strong>URL API Key 兼容入口默认关闭</strong>
+            <span>开启后，URL fragment 可携带真实 API Key，可能被浏览器历史、扩展程序或截图泄露。系统只读取 Key 并存入当前浏览器会话，链接中的 API 地址不会覆盖管理员配置的统一上游域名。</span>
+          </p>
+        </div>
         <label className="inline-check">
           <input
             type="checkbox"

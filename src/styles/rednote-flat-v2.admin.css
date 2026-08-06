@@ -3446,8 +3446,43 @@
 }
 
 .admin-site-upstream-field,
+.admin-oneapi-handoff-warning,
 .admin-site-form-grid > .inline-check {
   grid-column: 1 / -1;
+}
+
+.admin-oneapi-handoff-toggle {
+  justify-content: flex-start;
+}
+
+.admin-oneapi-handoff-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, #d97706 30%, var(--xhs-line));
+  border-radius: 12px;
+  background: color-mix(in srgb, #d97706 7%, var(--xhs-surface));
+  color: var(--xhs-muted);
+}
+
+.admin-oneapi-handoff-warning > svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: #b45309;
+}
+
+.admin-oneapi-handoff-warning p {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.admin-oneapi-handoff-warning strong {
+  color: var(--xhs-ink);
+  font-size: 13px;
 }
 
 .admin-site-actions {

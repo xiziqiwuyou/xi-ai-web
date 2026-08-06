@@ -87,6 +87,32 @@ test("site settings rotate Admin credentials and return to login", async ({ page
   expect(apiHarness.requests).toContain("PATCH /api/admin/credentials");
 });
 
+test("site settings make the OneAPI settings handoff an explicit, warned opt-in", async ({ page, apiHarness }, testInfo) => {
+  apiHarness.setAdminStatus({
+    authRequired: true,
+    authenticated: true,
+    adminConfigured: true
+  });
+
+  await page.goto("/xizi2333");
+  await expect(page.locator(".admin-console-layout")).toBeVisible({ timeout: 20_000 });
+  if (isMobileProject(testInfo.project.name)) {
+    await page.locator(".admin-mobile-section-picker select").selectOption("site");
+  } else {
+    await page.locator('.admin-nav-group-toggle[aria-controls="admin-nav-items-system"]').click();
+    await page.locator("#admin-nav-items-system button").first().click();
+  }
+
+  const toggle = page.getByRole("checkbox", { name: "允许 OneAPI settings 兼容跳转", exact: true });
+  await expect(toggle).not.toBeChecked();
+  await expect(page.getByText("URL API Key 兼容入口默认关闭", { exact: true })).toBeVisible();
+  await expect(page.getByText("浏览器历史、扩展程序或截图泄露", { exact: false })).toBeVisible();
+  await toggle.check();
+  await page.getByRole("button", { name: "保存系统设置", exact: true }).click();
+
+  expect(apiHarness.requests).toContain("PATCH /api/admin/settings");
+});
+
 test("authenticated admin console keeps responsive navigation and one scroll owner", async ({ page, apiHarness }, testInfo) => {
   apiHarness.setAdminStatus({
     authRequired: true,

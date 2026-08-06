@@ -31,11 +31,14 @@ import {
   saveSearchServiceConfig
 } from "./features/settings/searchServiceConfig";
 import {
+  clearOneApiSettingsHandoffUrl,
   clearShellJwtHandoffUrl,
+  emptyOneApiSettingsHandoff,
   emptyShellJwtHandoff,
   isUserProviderReady,
   loadUserProviderConfig,
   maskUserProviderKey,
+  parseOneApiSettingsHandoff,
   parseShellJwtHandoff,
   sanitizeUserProviderConfig,
   saveUserProviderConfig
@@ -129,8 +132,12 @@ function App() {
   const [shellJwtHandoff, setShellJwtHandoff] = useState(() =>
     isStandaloneRoute ? emptyShellJwtHandoff : parseShellJwtHandoff(window.location.hash)
   );
+  const [oneApiSettingsHandoff, setOneApiSettingsHandoff] = useState(() =>
+    isStandaloneRoute ? emptyOneApiSettingsHandoff : parseOneApiSettingsHandoff(window.location.hash)
+  );
   const [shellJwtPending, setShellJwtPending] = useState(Boolean(shellJwtHandoff.token));
-  const [apiConnectionError, setApiConnectionError] = useState(shellJwtHandoff.error);
+  const [oneApiSettingsPending, setOneApiSettingsPending] = useState(Boolean(oneApiSettingsHandoff.present));
+  const [apiConnectionError, setApiConnectionError] = useState(shellJwtHandoff.error || oneApiSettingsHandoff.error);
   const [searchService, setSearchService] = useState<SearchServiceConfig>(loadSearchServiceConfig);
   const [apiConfigOpen, setApiConfigOpen] = useState(false);
   const [workspaceDataOpen, setWorkspaceDataOpen] = useState(false);
@@ -239,6 +246,11 @@ function App() {
   }, [shellJwtHandoff.present]);
 
   useLayoutEffect(() => {
+    if (!oneApiSettingsHandoff.present) return;
+    clearOneApiSettingsHandoffUrl(window.location, window.history);
+  }, [oneApiSettingsHandoff.present]);
+
+  useLayoutEffect(() => {
     if (!progressSyncHandoff.code) return;
     clearProgressSyncHandoffUrl();
   }, [progressSyncHandoff.code]);
@@ -301,6 +313,31 @@ function App() {
       alive = false;
     };
   }, [isStandaloneRoute]);
+
+  useEffect(() => {
+    if (isStandaloneRoute || !oneApiSettingsHandoff.present) {
+      setOneApiSettingsPending(false);
+      return;
+    }
+    if (!payload) return;
+
+    if (!payload.settings.oneapiSettingsHandoffEnabled) {
+      setApiConnectionError("管理员未启用 OneAPI settings 跳转，请手动填写 API Key");
+      setApiConfigOpen(true);
+    } else if (oneApiSettingsHandoff.error) {
+      setApiConnectionError(oneApiSettingsHandoff.error);
+      setApiConfigOpen(true);
+    } else {
+      setUserProvider((current) => sanitizeUserProviderConfig({
+        ...current,
+        apiKey: oneApiSettingsHandoff.apiKey
+      }));
+      setApiConnectionError("");
+      setApiConfigOpen(false);
+    }
+    setOneApiSettingsHandoff(emptyOneApiSettingsHandoff);
+    setOneApiSettingsPending(false);
+  }, [isStandaloneRoute, oneApiSettingsHandoff, payload]);
 
   useEffect(() => {
     if (isStandaloneRoute) {
@@ -412,10 +449,10 @@ function App() {
 
   useEffect(() => {
     if (isStandaloneRoute || loading || !payload) return;
-    if (!isUserProviderReady(userProvider) && !progressSyncOpen && !progressSyncHandoff.code) {
+    if (!isUserProviderReady(userProvider) && !oneApiSettingsPending && !progressSyncOpen && !progressSyncHandoff.code) {
       setApiConfigOpen(true);
     }
-  }, [activeModule, isStandaloneRoute, loading, payload, progressSyncHandoff.code, progressSyncOpen, userProvider]);
+  }, [activeModule, isStandaloneRoute, loading, oneApiSettingsPending, payload, progressSyncHandoff.code, progressSyncOpen, userProvider]);
 
   useEffect(() => {
     if (isStandaloneRoute || !galleryHydrated) return;
@@ -538,11 +575,11 @@ function App() {
     );
   }
 
-  if (loading || shellJwtPending) {
+  if (loading || shellJwtPending || oneApiSettingsPending) {
     return (
       <main className="boot-screen">
         <span className="boot-mark">XI</span>
-        <strong>{shellJwtPending ? "正在验证访问令牌" : "正在打开工作台"}</strong>
+        <strong>{shellJwtPending ? "正在验证访问令牌" : oneApiSettingsPending ? "正在读取外部 API 配置" : "正在打开工作台"}</strong>
       </main>
     );
   }

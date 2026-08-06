@@ -10,6 +10,14 @@ The canonical existing contract remains:
 https://chat.xi-ai.cn/#/jwt_auth?x_s_token=<short-lived-shell-token>
 ```
 
+OneAPI uses a different contract for Next-Web:
+
+```text
+https://chat.xi-api.cn/#/?settings={"key":"sk-<model-key>","url":"https://api.xi-ai.cn"}
+```
+
+This is a direct Key handoff, not an authentication-token bridge. It must become a separately named `oneapi-settings` handoff, enabled only by an administrator setting. The parser extracts only `settings.key`, ignores `settings.url`, clears the hash synchronously, and writes the Key only to the existing session-only provider store. It never calls the Shell refresh/default-token endpoints.
+
 The external contract is now known: `type: 2` is reserved for ShellNext, while other external systems such as xi-ai-web must use `type: 3`. xi-ai-web must not implement a type 2 adapter. The type value is routing metadata owned by the launcher, not an authorization signal; the actual type 3 token must still be parsed and validated.
 
 ## 2. Failure taxonomy
@@ -64,6 +72,10 @@ Before changing the exchange implementation, record from a real type 3 redirect:
 - whether the control plane is the same origin as `UPSTREAM_BASE_URL`.
 
 If the type 3 token and control-plane facts match the existing exchange, retain the current parser and improve diagnostics/retry behavior. If they do not match, fix the endpoint/header/response contract based on evidence rather than adding type 2 logic. If the value is a long-lived API Key, reject URL transport and require an explicit safer handoff design.
+
+## 5.1 OneAPI compatibility gate
+
+The direct-Key format is only available after the administrator enables it. It must never activate from a Shell `x_s_token` link and must not honor the URL's `settings.url`. The feature cannot solve the Shell failure unless the launching system itself can generate a real per-user model Key for the `settings.key` field.
 
 ## 6. Operational compatibility
 

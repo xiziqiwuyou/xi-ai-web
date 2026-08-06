@@ -96,6 +96,7 @@ test("default metadata factories preserve stable public identifiers", () => {
     "mindmap-meeting"
   ]);
   assert.equal(defaultSettings().upstreamBaseUrl, "https://api.xi-ai.cn");
+  assert.equal(defaultSettings().oneapiSettingsHandoffEnabled, false);
 });
 
 test("default metadata factories return fresh values and one shared assistant timestamp", () => {

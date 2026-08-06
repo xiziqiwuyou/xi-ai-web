@@ -13,16 +13,24 @@
 - 前端通过同源 `POST /api/public/shell-token/exchange` 兑换 Key；服务端固定使用管理员配置的 `UPSTREAM_BASE_URL`，不接受调用方携带的上游地址。
 - 服务端兑换流程是 `/api/user/login/refresh` 后 `/api/token/default`，401/403 当前被合并为“外部登录令牌无效或已过期”。
 - 2026-08-06 线上证据：`https://api.xi-ai.cn/api/user/login/refresh` 对脱敏测试令牌返回 HTTP 200、`success:false`，消息为 `JWT cross-domain login is not enabled by the administrator.`；因此当前“令牌无效或已过期”是错误归类，首要阻塞是上游未开启跨域 JWT 登录。
+- 2026-08-06 后续线上验证：`v0.0.6` 的 GitHub Actions 构建成功，`chat.xi-api.cn` 已返回结构化 `UPSTREAM_EXCHANGE_FAILED`；上游当前对脱敏测试令牌返回 `The login token is invalid or has expired.`。因此新镜像已生效，剩余问题只能通过真实 type 3 跳转令牌和 Shell 侧配置确认，不能用随机令牌替代。
 - 兑换成功后的 Key 只进入当前浏览器会话的 `sessionStorage`；既有任务明确不支持 type 2 链接，且不允许把长期 API Key 放入 URL 或服务端存储。
 - 既有验证曾发现旧 Node 进程或旧镜像会使兑换路由返回 404，因此部署版本不一致也是现实风险。
 
 ## Requirements
+
+### R0. OneAPI-compatible direct-Key handoff decision
+
+- OneAPI's Next-Web link format carries the actual model API Key in a URL fragment `#/?settings={"key":"sk-...","url":"..."}`; it is not a Shell login-JWT flow.
+- Evaluate an operator-gated `oneapi-settings` handoff for xi-ai-web separately from `shell-jwt`; it may use only `settings.key`, must ignore `settings.url`, immediately remove the fragment, and use the existing session-only provider store.
+- Keep this path disabled by default because URL fragments can be copied, exposed by browser extensions, or visible before cleanup. Do not make it the fallback for Shell `x_s_token` links.
 
 ### R1. 协议确认与兼容边界
 
 - 保留现有规范入口 `#/jwt_auth?x_s_token=...`，不降低令牌长度、字符和安全校验。
 - 不在 xi-ai-web 中实现或猜测 `type: 2`；它属于 ShellNext。
 - 只接收外部系统以 `type: 3` 方式传入的、已确认格式的短期令牌；直接 API Key、任意 query 参数或未知路径不能被当作登录令牌。
+- OneAPI-compatible direct-Key handoff, if approved, is an explicit opt-in exception with its own parser, user-facing security warning, tests, and no server-side Key persistence.
 
 ### R2. 可诊断的失败分类
 
