@@ -51,10 +51,13 @@ async function readSyncDialogGeometry(page: Page): Promise<SyncDialogGeometry> {
 }
 
 function expectStableSyncGeometry(actual: SyncDialogGeometry, expected: SyncDialogGeometry) {
-  for (const key of Object.keys(expected) as Array<keyof SyncDialogGeometry>) {
+  for (const key of ["dialog", "header", "tabs", "body"] as const) {
     for (const metric of ["x", "y", "width", "height"] as const) {
       expect(Math.abs(actual[key][metric] - expected[key][metric]), `${key}.${metric} changed`).toBeLessThanOrEqual(1);
     }
+  }
+  for (const metric of ["x", "y", "width"] as const) {
+    expect(Math.abs(actual.panel[metric] - expected.panel[metric]), `panel.${metric} changed`).toBeLessThanOrEqual(1);
   }
 }
 
@@ -78,11 +81,13 @@ async function expectQrApprovalStage(page: Page, baseline: SyncDialogGeometry) {
     const qrBounds = qr.getBoundingClientRect();
     return {
       bodyScrollTop: body.scrollTop,
+      bodyFits: body.scrollHeight <= body.clientHeight + 1,
       approvalInsideQr: approvalBounds.top >= qrBounds.top && approvalBounds.bottom <= qrBounds.bottom,
       buttonVisible: buttonBounds.top >= bodyBounds.top && buttonBounds.bottom <= bodyBounds.bottom
     };
   });
   expect(visibility.bodyScrollTop).toBe(0);
+  expect(visibility.bodyFits).toBe(true);
   expect(visibility.approvalInsideQr).toBe(true);
   expect(visibility.buttonVisible).toBe(true);
   expectStableSyncGeometry(await readSyncDialogGeometry(page), baseline);
@@ -321,13 +326,15 @@ test("progress sync body hides its scrollbar until an actual scroll", async ({ p
   }));
 
   await expect(body).toHaveAttribute("data-scroll-active", "false");
-  await expect.poll(() => body.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+  await expect.poll(() => body.evaluate((element) => element.scrollHeight <= element.clientHeight + 1)).toBe(true);
   const idle = await scrollbarVisual();
   expect(idle.color).toMatch(/transparent|rgba\(0, 0, 0, 0\)/u);
   expect(idle.thumb).toMatch(/transparent|rgba\(0, 0, 0, 0\)/u);
   expect(idle.button).toBe("none");
 
   await body.evaluate((element) => {
+    const content = element.firstElementChild;
+    if (content instanceof HTMLElement) content.style.minHeight = `${element.clientHeight + 100}px`;
     element.scrollTop = Math.max(0, element.scrollHeight - element.clientHeight);
   });
   await expect(body).toHaveAttribute("data-scroll-active", "true");

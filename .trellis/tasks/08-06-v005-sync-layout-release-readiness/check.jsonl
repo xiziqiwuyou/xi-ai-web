@@ -1,0 +1,3 @@
+{"file":".trellis/spec/frontend/index.md","reason":"Resolve the complete frontend quality checklist for final review."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Verify dialog geometry, sole scroll ownership, focus, motion, and responsive behavior."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Verify targeted E2E, typecheck, build, privacy, release, and diff checks."}

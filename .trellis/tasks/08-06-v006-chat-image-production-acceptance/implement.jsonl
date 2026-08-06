@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/index.md","reason":"Load backend route, provider, error, and deployment boundaries for Chat/Image request validation."}
+{"file":".trellis/spec/backend/public-ai-production-boundary.md","reason":"Preserve the fixed upstream, BYOK, SSRF, redaction, and public production boundary."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Apply server validation, timeout, rate-limit, logging, and release quality gates."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Apply Chat/Image UI, dialog, loading, image result, accessibility, and scroll-owner contracts."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Apply browser matrix, provider-tool, BYOK, and release verification requirements."}

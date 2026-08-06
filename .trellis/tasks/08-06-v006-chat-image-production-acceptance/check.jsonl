@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/index.md","reason":"Review server-side request routing and production quality requirements."}
+{"file":".trellis/spec/backend/public-ai-production-boundary.md","reason":"Audit security and credential boundary compliance."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Check validation, errors, rate limits, timeouts, logs, and tests."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Review Chat/Image behavior and responsive UI contracts."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Review automated and live evidence separation plus browser acceptance."}

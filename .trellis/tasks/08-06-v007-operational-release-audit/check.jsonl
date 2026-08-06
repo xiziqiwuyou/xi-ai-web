@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Backend release quality and security checks"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Frontend release and E2E quality checks"}
+{"file": "package.json", "reason": "Canonical verification commands and version"}

@@ -76,7 +76,7 @@ DATA_DIR/admin-credentials.json =
 - Rotated credentials live only in `DATA_DIR/admin-credentials.json` as a versioned username, random salt, `scrypt` hash, random credential revision, and timestamp. Never include this file in metadata export/restore, backup payloads, logs, or browser state.
 - A valid persisted credential file overrides bootstrap environment credentials. Deleting the file and restarting is the operator recovery path back to `ADMIN_USERNAME` and `ADMIN_PASSWORD`.
 - Every signed Admin session contains the active credential revision. Rotation changes the revision, clears the current Cookie, and invalidates all previous sessions.
-- Rotation requires the current password; a blank new password preserves it. Usernames use 3 to 64 ASCII letters, digits, dots, underscores, or hyphens; new passwords use 16 to 512 characters.
+- Rotation requires the current password; a blank new password preserves it. Usernames use 3 to 64 ASCII letters, digits, dots, underscores, or hyphens; new passwords use 8 to 512 characters.
 
 ### 4. Validation & Error Matrix
 
