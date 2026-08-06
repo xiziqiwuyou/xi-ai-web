@@ -208,3 +208,36 @@ Implemented P0-P5 stable chat streaming: bounded server SSE token buffering with
 ### Next Steps
 
 - None - task complete
+
+
+## Session 7: Cross-device sync approval overlay
+
+**Date**: 2026-08-06
+**Task**: Cross-device sync approval overlay
+**Branch**: `master`
+
+### Summary
+
+Moved desktop QR sender approval into the QR stage, kept mobile/manual approval first, added one-time focus management and reduced-motion transition, and added end-to-end assertions for placement, visibility, geometry, focus, and no premature upload. All targeted checks passed; mobile project-wide layout harness still has an unrelated dynamic-import failure.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `80544d3` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
