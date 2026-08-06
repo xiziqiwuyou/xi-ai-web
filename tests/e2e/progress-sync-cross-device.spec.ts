@@ -309,6 +309,35 @@ test("progress sync dialog stays viewport-safe on mobile", async ({ page, baseUR
   expect(layout.visibleOwnerCount).toBe(1);
 });
 
+test("progress sync body hides its scrollbar until an actual scroll", async ({ page, baseURL }, testInfo) => {
+  test.skip(!testInfo.project.name.startsWith("desktop-"), "Desktop scrollbar visibility contract");
+  await initializeProvider(page, `${baseURL}/chat`, "scroll-contract-key", "gpt-5.4-mini");
+  const { dialog } = await createSyncCode(page, "同步到手机");
+  const body = dialog.locator(".progress-sync-dialog-body");
+  const scrollbarVisual = () => body.evaluate((element) => ({
+    color: getComputedStyle(element).scrollbarColor,
+    thumb: getComputedStyle(element, "::-webkit-scrollbar-thumb").backgroundColor,
+    button: getComputedStyle(element, "::-webkit-scrollbar-button").display
+  }));
+
+  await expect(body).toHaveAttribute("data-scroll-active", "false");
+  await expect.poll(() => body.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+  const idle = await scrollbarVisual();
+  expect(idle.color).toMatch(/transparent|rgba\(0, 0, 0, 0\)/u);
+  expect(idle.thumb).toMatch(/transparent|rgba\(0, 0, 0, 0\)/u);
+  expect(idle.button).toBe("none");
+
+  await body.evaluate((element) => {
+    element.scrollTop = Math.max(0, element.scrollHeight - element.clientHeight);
+  });
+  await expect(body).toHaveAttribute("data-scroll-active", "true");
+  const active = await scrollbarVisual();
+  expect(active.color).not.toBe(idle.color);
+  expect(active.thumb).not.toBe(idle.thumb);
+  await expect(body).toHaveAttribute("data-scroll-active", "false", { timeout: 1_200 });
+  expect(await scrollbarVisual()).toEqual(idle);
+});
+
 test("encrypted progress sync supports both QR directions and the manual phone fallback", async ({ browser, baseURL }, testInfo) => {
   test.setTimeout(120_000);
   test.skip(testInfo.project.name !== "desktop-1440", "Cross-device flow creates its own desktop and mobile contexts");

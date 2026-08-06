@@ -727,6 +727,36 @@
   max-height: none;
   overflow-y: auto;
   padding-top: 10px;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.progress-sync-dialog-body[data-scroll-active="true"] {
+  scrollbar-color: color-mix(in srgb, var(--xhs-muted) 36%, transparent) transparent;
+}
+
+.progress-sync-dialog-body::-webkit-scrollbar {
+  width: 7px;
+}
+
+.progress-sync-dialog-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.progress-sync-dialog-body::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: transparent;
+}
+
+.progress-sync-dialog-body[data-scroll-active="true"]::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--xhs-muted) 36%, transparent);
+}
+
+.progress-sync-dialog-body::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .progress-sync-dialog-body > .progress-sync-section {
@@ -1189,9 +1219,9 @@
 }
 
 .progress-sync-counts {
-  max-height: 154px;
-  overflow-y: auto;
-  scrollbar-gutter: stable;
+  max-height: none;
+  overflow: visible;
+  scrollbar-gutter: auto;
 }
 
 .progress-sync-counts dt {

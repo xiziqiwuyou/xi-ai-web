@@ -1,4 +1,4 @@
-import { useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { MonitorSmartphone, X } from "lucide-react";
 import { ConfirmationDialog, Dialog } from "../../components/ui";
 import type { UserProviderConfig } from "../../types";
@@ -27,6 +27,20 @@ function ProgressSyncDialog({
   const [restoreMode, setRestoreMode] = useState<"merge" | "replace">("merge");
   const [apiKeyConfirmationOpen, setApiKeyConfirmationOpen] = useState(false);
   const [replaceConfirmationOpen, setReplaceConfirmationOpen] = useState(false);
+  const dialogBodyRef = useRef<HTMLDivElement>(null);
+  const scrollActivityTimerRef = useRef<number | undefined>(undefined);
+
+  useEffect(() => () => window.clearTimeout(scrollActivityTimerRef.current), []);
+
+  const markBodyScrollActive = () => {
+    const body = dialogBodyRef.current;
+    if (!body) return;
+    body.dataset.scrollActive = "true";
+    window.clearTimeout(scrollActivityTimerRef.current);
+    scrollActivityTimerRef.current = window.setTimeout(() => {
+      if (body.isConnected) body.dataset.scrollActive = "false";
+    }, 650);
+  };
 
   const closeDialog = () => {
     if (apiKeyConfirmationOpen || replaceConfirmationOpen) return;
@@ -63,7 +77,12 @@ function ProgressSyncDialog({
           </button>
         </header>
 
-        <div className="workspace-data-body progress-sync-dialog-body">
+        <div
+          ref={dialogBodyRef}
+          className="workspace-data-body progress-sync-dialog-body"
+          data-scroll-active="false"
+          onScroll={markBodyScrollActive}
+        >
           <ProgressSyncPanel
             userProvider={userProvider}
             initialMode={initialMode}
