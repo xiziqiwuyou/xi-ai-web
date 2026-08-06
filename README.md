@@ -106,7 +106,7 @@ docker run -d \
   xi-ai-web
 ```
 
-The unified deployment template is available at [`docker-compose.yml`](docker-compose.yml), with a complete environment sample in [`.env.example`](.env.example). It pulls the pinned prebuilt `ghcr.io/xiziqiwuyou/xi-ai-web:v0.0.3` image and keeps optional services behind Compose profiles. The server does not need a source checkout or a local image build:
+The unified deployment template is available at [`docker-compose.yml`](docker-compose.yml), with a complete environment sample in [`.env.example`](.env.example). It pulls the pinned prebuilt `ghcr.io/xiziqiwuyou/xi-ai-web:v0.0.4` image and keeps optional services behind Compose profiles. The server does not need a source checkout or a local image build:
 
 ```bash
 mkdir -p /opt/xi-ai-web
@@ -180,7 +180,7 @@ The previous split templates remain available in [`deploy/app`](deploy/app), [`d
 | `DATA_DIR` | `./data` | Recommended | Persistent JSON metadata, backups, and Admin audit directory. |
 | `TRUST_PROXY_HOPS` | `0` | No | Set to the exact trusted reverse-proxy hop count, normally `1` behind one Nginx/1Panel proxy. |
 | `ADMIN_USERNAME` | `xizi2333` | No | Bootstrap Admin username. A rotated username in `DATA_DIR/admin-credentials.json` takes precedence. |
-| `ADMIN_PASSWORD` | empty | Yes in production | Admin login password. Production Admin is locked when this is missing. |
+| `ADMIN_PASSWORD` | empty | Yes in production | Admin login password, 8-512 characters. Production Admin is locked when this is missing. |
 | `ADMIN_SESSION_SECRET` | derived fallback | No | Optional advanced override. By default a domain-separated signing secret is derived from `ADMIN_PASSWORD`. |
 | `UPSTREAM_BASE_URL` | `https://api.xi-ai.cn` | No | Administrator-managed provider gateway origin. Public requests ignore caller-provided URLs. |
 | `LANGFLOW_ENABLED` | `false` | No | Enables the optional Langflow workflow gateway. |

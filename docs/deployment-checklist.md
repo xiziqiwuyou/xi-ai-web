@@ -11,7 +11,7 @@ This checklist covers the no-account BYOK deployment path for xi-ai-web. It inte
 - Keep `LANGFLOW_ENABLED=false` until the separate Langflow runtime has been secured and a published Flow has been tested.
 - Keep `PROGRESS_SYNC_ENABLED=false` until HTTPS, the persistent `DATA_DIR` volume,
   and a reverse-proxy request limit of at least 68 MB have been verified.
-- Generate a unique `ADMIN_PASSWORD` of at least 16 characters. The bundled
+- Generate a unique `ADMIN_PASSWORD` of at least 8 characters. The bundled
   deployment derives a domain-separated session-signing secret from it; an
   explicit `ADMIN_SESSION_SECRET` remains an optional advanced override.
 - Set `ADMIN_USERNAME` (default `xizi2333`) and keep the private page path `/xizi2333` out of public navigation.

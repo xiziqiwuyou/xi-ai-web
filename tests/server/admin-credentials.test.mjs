@@ -25,6 +25,20 @@ test("admin credentials default to xizi2333 and remain locked without a password
   }
 });
 
+test("admin credentials accept eight-character passwords and reject seven-character passwords", () => {
+  const { directory, filePath } = temporaryCredentialFile();
+  try {
+    assert.throws(
+      () => createAdminCredentialStore({ filePath, password: "1234567" }),
+      (error) => error?.status === 400 && error?.code === "ADMIN_PASSWORD_INVALID"
+    );
+    const store = createAdminCredentialStore({ filePath, password: "12345678" });
+    assert.equal(store.verify("xizi2333", "12345678"), true);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("admin credentials verify both username and password without revealing which field failed", () => {
   const { directory, filePath } = temporaryCredentialFile();
   try {

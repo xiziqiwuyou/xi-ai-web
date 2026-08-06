@@ -7,7 +7,7 @@
 #      docker compose -f docker-compose.simple.yml pull
 #      docker compose -f docker-compose.simple.yml up -d
 #
-# The image is pinned to v0.0.3 for repeatable deployment. Change this line
+# The image is pinned to v0.0.4 for repeatable deployment. Change this line
 # explicitly when upgrading; do not let an old server .env override the tag.
 
 name: xi-ai-web
@@ -15,7 +15,7 @@ name: xi-ai-web
 services:
   xi-ai-web:
     # Prebuilt image: no source checkout and no local build are required.
-    image: ghcr.io/xiziqiwuyou/xi-ai-web:v0.0.3
+    image: ghcr.io/xiziqiwuyou/xi-ai-web:v0.0.4
     pull_policy: always
     restart: unless-stopped
 
@@ -35,7 +35,7 @@ services:
       PORT: 8787
       DATA_DIR: /app/data
 
-      # Admin entry: /xizi2333 by default. ADMIN_PASSWORD is required.
+      # Admin entry: /xizi2333 by default. ADMIN_PASSWORD is required (8+ chars).
       ADMIN_USERNAME: ${ADMIN_USERNAME:-xizi2333}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD before starting}
 

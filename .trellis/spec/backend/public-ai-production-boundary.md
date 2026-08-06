@@ -166,7 +166,7 @@ Environment contract:
 
 | Key | Default / requirement | Meaning |
 | --- | --- | --- |
-| `ADMIN_PASSWORD` | Production: at least 16 characters | Admin login and fallback source for a domain-separated session signing key |
+| `ADMIN_PASSWORD` | Production: at least 8 characters | Admin login and fallback source for a domain-separated session signing key |
 | `ADMIN_SESSION_SECRET` | Optional but recommended | Explicit Admin session signing secret |
 | `UPSTREAM_BASE_URL` | `https://api.xi-ai.cn` | Administrator-managed Provider gateway |
 | `ALLOW_ADMIN_UPSTREAM_OVERRIDE` | `false` | Allows Admin metadata to override an explicit production upstream |

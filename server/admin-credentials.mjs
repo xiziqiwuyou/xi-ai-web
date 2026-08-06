@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 const DEFAULT_ADMIN_USERNAME = "xizi2333";
-const MIN_PASSWORD_LENGTH = 16;
+const MIN_PASSWORD_LENGTH = 8;
 const MAX_PASSWORD_LENGTH = 512;
 const USERNAME_PATTERN = /^[A-Za-z0-9._-]{3,64}$/;
 const SCRYPT_OPTIONS = {
