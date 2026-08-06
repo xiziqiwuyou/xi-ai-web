@@ -241,3 +241,36 @@ Moved desktop QR sender approval into the QR stage, kept mobile/manual approval 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 8: Remove compatible placeholder models
+
+**Date**: 2026-08-06
+**Task**: Remove compatible placeholder models
+**Branch**: `master`
+
+### Summary
+
+Removed the shipped Compatible Chat and Compatible Video placeholders, migrated reserved legacy IDs, preserved custom OpenAI-compatible adapter models, and fixed explicit empty model catalogs so deletions survive restart. Added registry and Admin route regressions; all 77 server tests, security, provider, automation, UI, privacy, build, and release checks passed.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8fb073a` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
