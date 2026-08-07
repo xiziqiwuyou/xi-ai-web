@@ -1,6 +1,6 @@
 import { createAnthropicAdapter } from "./anthropic.mjs";
 import { createBotcfAdapter } from "./botcf.mjs";
-import { createDeepSeekAdapter } from "./deepseek.mjs";
+import { createDeepSeekAdapter, createDeepSeekResponsesAdapter } from "./deepseek.mjs";
 import { createGeminiAdapter } from "./gemini.mjs";
 import { createKimiAdapter } from "./kimi.mjs";
 import { createOpenAIAdapter } from "./openai.mjs";
@@ -29,7 +29,9 @@ function createChatProtocolAdapter(provider) {
   const endpointProtocol = normalizeEndpointProtocol(provider?.endpointProtocol, kind);
 
   if (endpointProtocol === "openai-responses") {
-    return kind === "qwen" ? createQwenResponsesAdapter(provider) : createOpenAIAdapter(provider);
+    if (kind === "qwen") return createQwenResponsesAdapter(provider);
+    if (kind === "deepseek") return createDeepSeekResponsesAdapter(provider);
+    return createOpenAIAdapter(provider);
   }
   if (endpointProtocol === "anthropic-messages") return createAnthropicAdapter(provider);
   if (endpointProtocol === "gemini-generate-content") return createGeminiAdapter(provider);

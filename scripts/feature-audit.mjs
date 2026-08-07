@@ -87,6 +87,7 @@ const adminModelsSection = readProjectFile("src/features/admin/AdminModelsSectio
 const modelUtils = readProjectFile("src/components/workbench/model-utils.ts");
 const adminCss = readProjectFile("src/styles/rednote-flat-v2.admin.css");
 const adminConsoleConfig = readProjectFile("src/features/admin/adminConsoleConfig.ts");
+const modelCatalogPresets = readProjectFile("src/features/admin/modelCatalogPresets.ts");
 const adminValidation = readProjectFile("src/features/admin/adminValidation.ts");
 const chatSessionSettings = readProjectFile("src/features/chat/ChatSessionSettingsDialog.tsx");
 const server = readProjectFile("server/index.mjs");
@@ -105,6 +106,15 @@ assert(
   freshCatalog.some((entry) => entry.vendor === "openai" && entry.model === "gpt-5.4-mini" && entry.capabilities.includes("chat")),
   "Fresh model catalogs must include the default Chat title-summary model"
 );
+assert(
+  freshCatalog.some((entry) => entry.id === "deepseek-v4-flash" && entry.endpointProtocol === "openai-responses")
+    && freshCatalog.some((entry) => entry.id === "deepseek-v4-pro" && entry.endpointProtocol === "openai-chat"),
+  "Fresh DeepSeek catalogs must separate documented Responses and Chat-only models"
+);
+assert(
+  /id:\s*"deepseek-v4-flash"[\s\S]{0,320}endpointProtocol:\s*"openai-responses"/u.test(modelCatalogPresets),
+  "Admin DeepSeek V4 Flash preset must select Responses"
+);
 assert(server.includes("version: 14") && server.includes('entry.model === "gpt-5.4-mini"'), "Current metadata must retain the assistant catalog and title-summary migrations");
 assert(
   freshAssistants.length === 30
@@ -119,6 +129,14 @@ assert(
 for (const protocol of ["openai-chat", "openai-responses", "anthropic-messages", "gemini-generate-content"]) {
   assert(adminConsoleConfig.includes(`value: "${protocol}"`), `Admin model endpoint selector must expose ${protocol}`);
 }
+assert(
+  adminConsoleConfig.includes("Responses API (OpenAI / DeepSeek / Qwen)"),
+  "Admin endpoint copy must identify the shared Responses compatibility boundary"
+);
+assert(
+  providerRegistry.includes("createDeepSeekResponsesAdapter"),
+  "Provider registry must route DeepSeek Responses through its stateless adapter"
+);
 assert(
   adminModelsSection.includes('aria-label="对话请求端点"') && adminModelsSection.includes("仅控制对话请求"),
   "Admin model editor must expose the chat endpoint selector without implying media endpoint changes"

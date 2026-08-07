@@ -1,0 +1,3 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Provider adapter, managed upstream, endpoint protocol, capability, and regression requirements."}
+{"file":".trellis/spec/backend/public-ai-production-boundary.md","reason":"Public Chat trust boundary, provider routing, streaming, and no-secret contracts."}
+{"file":".trellis/tasks/08-07-deepseek-responses-endpoint/research/deepseek-responses-api.md","reason":"Official DeepSeek Responses endpoint, supported model, stateless tool-loop, and SSE contract."}

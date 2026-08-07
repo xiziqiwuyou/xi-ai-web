@@ -194,7 +194,8 @@ async function streamChat({
   maxToolRounds,
   onToken,
   onUsage,
-  normalizeResponseBody
+  normalizeResponseBody,
+  statelessResponses = false
 }) {
   if (tools?.length || hostedTools?.length) {
     const text = await completeText({
@@ -212,7 +213,8 @@ async function streamChat({
       runTool,
       maxToolRounds,
       onUsage,
-      normalizeResponseBody
+      normalizeResponseBody,
+      statelessResponses
     });
     if (text) await onToken(text);
     return;
@@ -301,7 +303,8 @@ async function completeWithTools({
   onUsage,
   maxToolRounds = 4,
   signal,
-  normalizeResponseBody
+  normalizeResponseBody,
+  statelessResponses = false
 }) {
   assertCapability(provider, "chat");
   if (hasImageContent(messages)) assertCapability(provider, "vision");
@@ -334,16 +337,26 @@ async function completeWithTools({
     const toolCalls = extractToolCalls(json);
     if (!toolCalls.length) return extractResponseText(json) || JSON.stringify(json);
 
-    previousResponseId = json.id || previousResponseId;
-    input = [];
+    const toolOutputs = [];
     for (const toolCall of toolCalls) {
       if (!runTool) throw new Error(`No local executor is available for tool: ${toolCall.name}`);
       const result = await runTool(toolCall);
-      input.push({
+      toolOutputs.push({
         type: "function_call_output",
         call_id: toolCall.id,
         output: stringifyToolOutput(result)
       });
+    }
+    if (statelessResponses) {
+      input = [
+        ...input,
+        ...(Array.isArray(json.output) ? json.output : []),
+        ...toolOutputs
+      ];
+      previousResponseId = "";
+    } else {
+      previousResponseId = json.id || previousResponseId;
+      input = toolOutputs;
     }
   }
 
@@ -364,9 +377,10 @@ async function completeText(params) {
     tools,
     hostedTools,
     onUsage,
-    normalizeResponseBody
+    normalizeResponseBody,
+    statelessResponses
   } = params;
-  if (tools?.length || hostedTools?.length) return completeWithTools(params);
+  if (tools?.length || hostedTools?.length) return completeWithTools({ ...params, statelessResponses });
   assertCapability(provider, "chat");
   if (hasImageContent(messages)) assertCapability(provider, "vision");
   const { system, input } = splitSystem(messages);
@@ -521,11 +535,11 @@ async function transcribeAudio({ provider, model, fileBuffer, fileName, mimeType
   });
 }
 
-export function createOpenAIAdapter(provider, { normalizeResponseBody } = {}) {
+export function createOpenAIAdapter(provider, { normalizeResponseBody, statelessResponses = false } = {}) {
   return {
     kind: "openai",
-    streamChat: (params) => streamChat({ ...params, provider, normalizeResponseBody }),
-    completeText: (params) => completeText({ ...params, provider, normalizeResponseBody }),
+    streamChat: (params) => streamChat({ ...params, provider, normalizeResponseBody, statelessResponses }),
+    completeText: (params) => completeText({ ...params, provider, normalizeResponseBody, statelessResponses }),
     generateImage: (params) => generateImage({ provider, ...params }),
     synthesizeSpeech: (params) => synthesizeSpeech({ provider, ...params }),
     transcribeAudio: (params) => transcribeAudio({ provider, ...params }),

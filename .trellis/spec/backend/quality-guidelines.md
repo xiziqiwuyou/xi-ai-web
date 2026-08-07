@@ -865,6 +865,70 @@ const sanitized = sanitizeChatAttachments(req.body.attachments, modelEntry).slic
 - `providerUrl()` must produce `/v1beta/models/{model}:generateContent` for Gemini-native model actions and `/v1/...` for the other supported protocols, replacing an incompatible trailing version on the managed base URL.
 - Provider contracts must cover exact paths, request shapes, authentication headers, Kimi Chat normalization, OpenAI Chat/Responses switching, and a media call after a chat-protocol override.
 
+## Scenario: DeepSeek Responses Compatibility
+
+### 1. Scope / Trigger
+
+- Trigger: any change to DeepSeek catalog presets, `createDeepSeekResponsesAdapter`, shared Responses tool rounds, or a DeepSeek model configured with `endpointProtocol: "openai-responses"`.
+- DeepSeek Responses reuses the existing `openai-responses` protocol value; vendor-specific behavior belongs in the DeepSeek wrapper, not a duplicate endpoint enum.
+
+### 2. Signatures
+
+```text
+POST {managedUpstream}/v1/responses
+Authorization: Bearer <session-only API Key>
+{ model, input, instructions?, reasoning?, max_output_tokens?, tools?, stream? }
+```
+
+```js
+createOpenAIAdapter(provider, { normalizeResponseBody, statelessResponses })
+createDeepSeekResponsesAdapter(provider)
+```
+
+### 3. Contracts
+
+- The shipped `deepseek-v4-flash` preset selects `openai-responses`; `deepseek-v4-pro` remains `openai-chat` until the official documentation reports Responses support.
+- DeepSeek Responses is stateless. Never depend on `previous_response_id`, `conversation`, or server-side storage. Every function-call round resends the original input, prior response output items, and matching `function_call_output` items.
+- Project system instructions use top-level `instructions` and are not duplicated as a leading `developer` input item. Function tools omit OpenAI-only `strict` metadata.
+- Semantic reasoning maps to `reasoning.effort`: `off -> none`, while `low`, `medium`, `high`, and `xhigh` retain their names. Explicit reasoning omits ineffective sampling fields; output limits use `max_output_tokens`.
+- Streaming consumes `response.output_text.delta` and terminates through the documented Responses event family. No `[DONE]` marker is required.
+- DeepSeek image/file input remains unsupported and must fail the model `vision` capability check before an upstream request. Independent GLM/Kimi search remains separate; do not infer DeepSeek hosted-search availability from the Responses endpoint.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| DeepSeek model selects `openai-chat` | Preserve the existing Chat Completions body and reasoning normalization |
+| DeepSeek model selects `openai-responses` | Route to `/v1/responses` through the stateless DeepSeek wrapper |
+| DeepSeek Responses receives an image part without `vision` | Reject before upstream access |
+| Function call requires another round | Resend full input/output transcript; omit `previous_response_id` |
+| Provider emits `response.failed` | Return a bounded provider error; never report successful completion |
+| Existing administrator record selects Chat | Preserve the explicit record; do not silently migrate it |
+
+### 5. Good/Base/Bad Cases
+
+- Good: `deepseek-v4-flash` sends `instructions`, user input, `reasoning.effort`, and `max_output_tokens` to `/v1/responses`; a tool round resends the full transcript and returns final text.
+- Base: an existing DeepSeek model remains on `/v1/chat/completions` and keeps the compatible Chat request fields.
+- Bad: adding a `deepseek-responses` enum, switching every DeepSeek model by vendor, sending only a `function_call_output` after an ignored `previous_response_id`, or enabling hosted search as a side effect.
+
+### 6. Tests Required
+
+- `scripts/provider-contracts.mjs`: exact endpoint/body/auth, prompt projection, reasoning/output limits, stateless tool round, streaming deltas/usage, and Chat Completions non-regression.
+- `scripts/feature-audit.mjs`: fresh server and Admin presets select Responses only for `deepseek-v4-flash`, and the registry uses the DeepSeek wrapper.
+- `npm run check`, `npm run privacy`, `npm run test:server`, and `npm run build` remain green.
+
+### 7. Wrong vs Correct
+
+```js
+// Wrong: DeepSeek ignores this ID, so the follow-up loses the tool context.
+input = functionOutputs;
+previous_response_id = response.id;
+
+// Correct: DeepSeek receives the complete stateless Responses transcript.
+input = [...previousInput, ...response.output, ...functionOutputs];
+delete body.previous_response_id;
+```
+
 ## Scenario: Administrator Model Vendor Registry
 
 ### 1. Scope / Trigger

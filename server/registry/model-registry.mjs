@@ -486,6 +486,7 @@ const defaultCatalog = [
     vendor: "deepseek",
     model: "deepseek-v4-flash",
     label: "DeepSeek V4 Flash",
+    endpointProtocol: "openai-responses",
     capabilities: ["chat", "toolCalling"],
     defaultFor: [],
     enabled: true

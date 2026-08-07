@@ -262,7 +262,7 @@ export const endpointProtocolOptions: Array<{
   path: string;
 }> = [
   { value: "openai-chat", label: "OpenAI Chat Completions", path: "/v1/chat/completions" },
-  { value: "openai-responses", label: "OpenAI Responses", path: "/v1/responses" },
+  { value: "openai-responses", label: "Responses API (OpenAI / DeepSeek / Qwen)", path: "/v1/responses" },
   { value: "anthropic-messages", label: "Anthropic Messages", path: "/v1/messages" },
   {
     value: "gemini-generate-content",

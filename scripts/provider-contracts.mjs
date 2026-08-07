@@ -261,6 +261,16 @@ async function testCatalogModelMapping() {
     100_000,
     "Legacy catalog records receive an independent input character limit"
   );
+  assertEqual(
+    defaultModelCatalog().find((model) => model.id === "deepseek-v4-flash")?.endpointProtocol,
+    "openai-responses",
+    "DeepSeek V4 Flash uses the documented Responses endpoint"
+  );
+  assertEqual(
+    defaultModelCatalog().find((model) => model.id === "deepseek-v4-pro")?.endpointProtocol,
+    "openai-chat",
+    "DeepSeek V4 Pro keeps Chat Completions until Responses support is documented"
+  );
 
   const runtimeProvider = buildRuntimeProvider(entry, {
     baseUrl: "https://catalog.contract.test/v1",
@@ -330,6 +340,118 @@ async function testModelEndpointProtocolRouting() {
     });
     assertEqual(text, "responses routed", "OpenAI Responses parser");
   });
+
+  const deepseekResponses = {
+    ...provider("deepseek", ["chat", "toolCalling"], "https://routing.contract.test"),
+    endpointProtocol: "openai-responses"
+  };
+  const deepseekResponsesAdapter = createProviderAdapter(deepseekResponses);
+  await withMockFetch("DeepSeek Responses protocol routing", [
+    (request) => {
+      assertEqual(request.url, "https://routing.contract.test/v1/responses", "DeepSeek Responses exact endpoint");
+      assertEqual(headerValue(request.init.headers, "Authorization"), `Bearer ${deepseekResponses.apiKey}`, "DeepSeek Responses auth header");
+      const body = parseJsonBody(request);
+      assertEqual(body.model, "deepseek-v4-flash", "DeepSeek Responses model");
+      assertEqual(body.instructions, "System prompt", "DeepSeek Responses maps the assistant prompt to instructions");
+      assertEqual(body.input[0].role, "user", "DeepSeek Responses does not duplicate instructions in input");
+      assertAbsent(body, "messages", "DeepSeek Responses must not use Chat messages");
+      assertAbsent(body, "previous_response_id", "DeepSeek Responses is stateless");
+      assertEqual(body.reasoning.effort, "xhigh", "DeepSeek Responses maps reasoning effort");
+      assertAbsent(body, "temperature", "DeepSeek Responses omits sampling in explicit reasoning mode");
+      assertAbsent(body, "top_p", "DeepSeek Responses omits top-p in explicit reasoning mode");
+      assertEqual(body.max_output_tokens, 8192, "DeepSeek Responses uses max_output_tokens");
+      assertAbsent(body.tools?.[0] || {}, "strict", "DeepSeek Responses omits OpenAI-only strict tool metadata");
+      return jsonResponse({ output_text: "deepseek responses routed" });
+    }
+  ], async () => {
+    const text = await deepseekResponsesAdapter.completeText({
+      model: "deepseek-v4-flash",
+      messages: sampleMessages(),
+      temperature: 0.2,
+      topP: 0.65,
+      reasoningEffort: "xhigh",
+      maxTokens: 8192,
+      tools: [toolDefinition()],
+      runTool: async () => ({ ok: true })
+    });
+    assertEqual(text, "deepseek responses routed", "DeepSeek Responses text extraction");
+  });
+
+  await withMockFetch("DeepSeek Responses stateless tool round", [
+    (request) => {
+      const body = parseJsonBody(request);
+      assertAbsent(body, "previous_response_id", "DeepSeek first Responses tool round is stateless");
+      return jsonResponse({
+        id: "deepseek-response-1",
+        output: [
+          { type: "reasoning", id: "reasoning-1", content: [{ type: "reasoning_text", text: "reason" }] },
+          { type: "function_call", id: "function-1", call_id: "deep-call-1", name: "lookup", arguments: "{\"query\":\"x\"}" }
+        ]
+      });
+    },
+    (request) => {
+      const body = parseJsonBody(request);
+      assertAbsent(body, "previous_response_id", "DeepSeek follow-up must not use previous_response_id");
+      assert(body.input.some((item) => item.role === "user"), "DeepSeek follow-up retains the original user input");
+      assert(body.input.some((item) => item.type === "reasoning"), "DeepSeek follow-up retains provider reasoning output");
+      assert(body.input.some((item) => item.type === "function_call"), "DeepSeek follow-up retains the function call output item");
+      assert(body.input.some((item) => item.type === "function_call_output" && item.call_id === "deep-call-1"), "DeepSeek follow-up appends function output");
+      return jsonResponse({ output_text: "deepseek stateless tool final" });
+    }
+  ], async () => {
+    const text = await deepseekResponsesAdapter.completeText({
+      model: "deepseek-v4-flash",
+      messages: sampleMessages(),
+      tools: [toolDefinition()],
+      runTool: async () => ({ result: "tool result" })
+    });
+    assertEqual(text, "deepseek stateless tool final", "DeepSeek stateless tool final text");
+  });
+
+  await withMockFetch("DeepSeek Responses stream", [
+    (request) => {
+      assertEqual(request.url, "https://routing.contract.test/v1/responses", "DeepSeek Responses stream endpoint");
+      const body = parseJsonBody(request);
+      assertEqual(body.stream, true, "DeepSeek Responses enables streaming");
+      return chunkedSseResponse([
+        "event: response.output_text.delta\n",
+        'data: {"type":"response.output_text.delta","delta":"Deep"}\n\n',
+        "event: response.output_text.delta\n",
+        'data: {"type":"response.output_text.delta","delta":"Seek"}\n\n',
+        "event: response.completed\n",
+        'data: {"type":"response.completed","response":{"usage":{"input_tokens":4,"output_tokens":2,"total_tokens":6}}}\n\n'
+      ]);
+    }
+  ], async () => {
+    const tokens = [];
+    let usage = null;
+    await deepseekResponsesAdapter.streamChat({
+      model: "deepseek-v4-flash",
+      messages: sampleMessages(),
+      onToken: (token) => tokens.push(token),
+      onUsage: (next) => {
+        usage = next;
+      }
+    });
+    assertEqual(tokens.join(""), "DeepSeek", "DeepSeek Responses stream forwards output deltas");
+    assertEqual(JSON.stringify(usage), JSON.stringify({
+      inputTokens: 4,
+      outputTokens: 2,
+      totalTokens: 6
+    }), "DeepSeek Responses stream projects usage");
+  });
+
+  assertNoPendingFetch("DeepSeek Responses vision rejection");
+  await assertRejects(
+    () => deepseekResponsesAdapter.completeText({
+      model: "deepseek-v4-flash",
+      messages: [
+        { role: "user", content: [{ type: "text", text: "Look" }, { type: "image", dataUrl: imageDataUrl }] }
+      ]
+    }),
+    /vision/,
+    "DeepSeek Responses must reject image input before upstream access"
+  );
 
   const compatibleResponses = {
     ...provider("openai-compatible", chatCapabilities, "https://routing.contract.test"),

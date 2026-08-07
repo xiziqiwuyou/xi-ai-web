@@ -328,6 +328,7 @@ const baseModelCatalogPresets: ModelPresetSource[] = [
     label: "DeepSeek V4 Flash",
     vendor: "deepseek",
     model: "deepseek-v4-flash",
+    endpointProtocol: "openai-responses",
     capabilities: ["chat", "toolCalling"],
     defaultFor: []
   },
