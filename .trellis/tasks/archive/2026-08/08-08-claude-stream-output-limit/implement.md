@@ -52,7 +52,7 @@
 
 - [x] Run `git diff --check`, review secrets and changed paths, and update the
       backend/frontend specs with the final executable contract.
-- [ ] Commit and archive through Trellis. Do not tag, push, deploy, or claim a
+- [x] Commit and archive through Trellis. Do not tag, push, deploy, or claim a
       real-provider smoke from this task.
 
 ## Verification Evidence
