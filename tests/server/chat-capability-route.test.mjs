@@ -25,6 +25,27 @@ function listen(server) {
   return new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve(server.address().port)));
 }
 
+async function requestJson(req) {
+  const chunks = [];
+  for await (const chunk of req) chunks.push(chunk);
+  const text = Buffer.concat(chunks).toString("utf8");
+  return text ? JSON.parse(text) : {};
+}
+
+function parseSse(text) {
+  return text
+    .split(/\r?\n\r?\n/u)
+    .map((frame) => {
+      const event = frame.split(/\r?\n/u).find((line) => line.startsWith("event:"))?.slice(6).trim();
+      const data = frame.split(/\r?\n/u)
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).trim())
+        .join("\n");
+      return event && data ? { event, data: JSON.parse(data) } : null;
+    })
+    .filter(Boolean);
+}
+
 async function startApp(dataDir, upstreamBaseUrl, extraEnv = {}) {
   const port = await freePort();
   const child = spawn(process.execPath, ["server/index.mjs"], {
@@ -71,6 +92,77 @@ async function stopApp(child) {
   ]);
   if (child.exitCode === null) child.kill("SIGKILL");
 }
+
+test("Claude Chat honors model output limits and explicit stream delivery", { timeout: 30_000 }, async (t) => {
+  const upstreamBodies = [];
+  const upstream = http.createServer(async (req, res) => {
+    const body = await requestJson(req);
+    upstreamBodies.push(body);
+    if (body.stream === true) {
+      res.writeHead(200, { "content-type": "text/event-stream; charset=utf-8" });
+      res.write('event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":3}}}\n\n');
+      res.write('event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":"native "}}\n\n');
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      res.write('event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":"stream"}}\n\n');
+      res.end('event: message_delta\ndata: {"type":"message_delta","usage":{"output_tokens":2}}\n\nevent: message_stop\ndata: {"type":"message_stop"}\n\n');
+      return;
+    }
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({
+      content: [{ type: "text", text: "buffered reply" }],
+      usage: { input_tokens: 4, output_tokens: 2 }
+    }));
+  });
+  const upstreamPort = await listen(upstream);
+  t.after(() => upstream.close());
+
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "xi-ai-claude-stream-"));
+  t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+  const app = await startApp(dataDir, `http://127.0.0.1:${upstreamPort}`);
+  t.after(async () => stopApp(app.child));
+
+  const basePayload = {
+    content: "test Claude delivery",
+    displayContent: "test Claude delivery",
+    modelId: "claude-sonnet-5",
+    connection: { apiKey: "claude-route-key" },
+    allowedTools: []
+  };
+  const nativeResponse = await fetch(`${app.baseUrl}/api/chat/stream`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ...basePayload, streamOutput: true })
+  });
+  assert.equal(nativeResponse.status, 200);
+  const nativeEvents = parseSse(await nativeResponse.text());
+  assert.equal(upstreamBodies[0].stream, true);
+  assert.equal(upstreamBodies[0].max_tokens, 128_000);
+  assert.equal(nativeEvents.find((event) => event.event === "meta")?.data.deliveryMode, "native-stream");
+  assert.equal(nativeEvents.filter((event) => event.event === "token").map((event) => event.data.token).join(""), "native stream");
+  assert.equal(nativeEvents.at(-1)?.event, "done");
+
+  const oversizedResponse = await fetch(`${app.baseUrl}/api/chat/stream`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ...basePayload, maxTokens: 128_001 })
+  });
+  assert.equal(oversizedResponse.status, 400);
+  assert.match((await oversizedResponse.json()).error, /128000/u);
+  assert.equal(upstreamBodies.length, 1);
+
+  const bufferedResponse = await fetch(`${app.baseUrl}/api/chat/stream`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ...basePayload, streamOutput: false, maxTokens: 2_048, includeUsage: true })
+  });
+  assert.equal(bufferedResponse.status, 200);
+  const bufferedEvents = parseSse(await bufferedResponse.text());
+  assert.equal(upstreamBodies[1].stream, undefined);
+  assert.equal(upstreamBodies[1].max_tokens, 2_048);
+  assert.equal(bufferedEvents.find((event) => event.event === "meta")?.data.deliveryMode, "buffered");
+  assert.deepEqual(bufferedEvents.filter((event) => event.event === "token").map((event) => event.data.token), ["buffered reply"]);
+  assert.equal(bufferedEvents.find((event) => event.event === "done")?.data.message.usage.totalTokens, 6);
+});
 
 test("Chat rejects image attachments for a non-vision model before upstream access", { timeout: 30_000 }, async (t) => {
   let upstreamRequests = 0;

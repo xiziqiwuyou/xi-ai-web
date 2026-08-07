@@ -1067,6 +1067,29 @@ function modelInputCharacterLimit(entry) {
   return Math.min(configured, 4_000_000);
 }
 
+function modelOutputTokenLimit(entry) {
+  const configured = Number(entry?.maxOutputTokens);
+  if (!Number.isSafeInteger(configured) || configured < 1) return 16_384;
+  return Math.min(configured, 1_048_576);
+}
+
+function resolveChatMaxTokens(entry, value) {
+  const modelLimit = modelOutputTokenLimit(entry);
+  const omitted = value === undefined || value === null || value === "";
+  if (omitted) {
+    const usesAnthropicMessages = entry?.vendor === "anthropic" || entry?.endpointProtocol === "anthropic-messages";
+    return usesAnthropicMessages ? modelLimit : undefined;
+  }
+  const requested = Number(value);
+  if (!Number.isSafeInteger(requested) || requested < 1) {
+    throw httpError(400, "Maximum output tokens must be a positive integer");
+  }
+  if (requested > modelLimit) {
+    throw httpError(400, `Maximum output tokens cannot exceed this model's configured limit of ${modelLimit}`);
+  }
+  return requested;
+}
+
 function assertModelInputCharacters(entry, values, label = "Model input") {
   const limit = modelInputCharacterLimit(entry);
   const total = values.reduce((sum, value) => sum + String(value || "").length, 0);
@@ -1851,6 +1874,7 @@ async function streamProviderReply({
   topP,
   reasoningEffort,
   maxTokens,
+  streamOutput,
   responseVerbosity,
   toolInvocationMode,
   skillInstructions,
@@ -1912,6 +1936,28 @@ async function streamProviderReply({
     if (text) await onToken(text);
     return;
   }
+  if (!streamOutput) {
+    const text = await adapter.completeText({
+      model,
+      messages: buildPromptMessages(
+        assistant,
+        conversation,
+        attachments,
+        skillInstructions,
+        cloudKnowledge,
+        searchContext
+      ),
+      temperature,
+      topP,
+      reasoningEffort,
+      maxTokens,
+      responseVerbosity,
+      onUsage,
+      signal
+    });
+    if (text) await onToken(text);
+    return;
+  }
   await adapter.streamChat({
     model,
     messages: buildPromptMessages(
@@ -1969,6 +2015,12 @@ function sanitizeAdminModelCatalogEntry(body, existing) {
   if (!model) throw httpError(400, "实际请求模型名不能为空");
   const label = String(body?.label ?? existing?.label ?? "").trim();
   if (!label) throw httpError(400, "前台显示名称不能为空");
+  if (Object.prototype.hasOwnProperty.call(body || {}, "maxOutputTokens")) {
+    const maxOutputTokens = Number(body.maxOutputTokens);
+    if (!Number.isSafeInteger(maxOutputTokens) || maxOutputTokens < 1 || maxOutputTokens > 1_048_576) {
+      throw httpError(400, "模型最大输出必须是 1 至 1,048,576 Token");
+    }
+  }
   const vendorId = String(body?.vendorId ?? existing?.vendorId ?? "").trim();
   const vendorEntry = db.modelVendors.find((vendor) => vendor.id === vendorId);
   if (!vendorEntry) throw httpError(400, "模型厂商不存在");
@@ -2837,6 +2889,8 @@ app.post(
     const attachments = sanitizeChatAttachments(req.body?.attachments, entry);
     const skillInstructions = chatSkillInstructionsFromBody(req.body?.skillInstructions);
     const toolInvocationMode = req.body?.toolInvocationMode === "prompt" ? "prompt" : "function";
+    const streamOutput = req.body?.streamOutput !== false;
+    const maxTokens = resolveChatMaxTokens(entry, req.body?.maxTokens);
     if (req.body?.allowedTools !== undefined && !Array.isArray(req.body.allowedTools)) {
       throw httpError(400, "allowedTools 必须是工具名称数组");
     }
@@ -2905,7 +2959,6 @@ app.post(
     const responseVerbosity = ["low", "medium", "high"].includes(req.body?.responseVerbosity)
       ? req.body.responseVerbosity
       : undefined;
-    const maxTokens = optionalBoundedInteger(req.body?.maxTokens, 1, 1_000_000);
     const conversation = requestConversationFromBody(req.body || {}, assistant, displayContent, entry);
     assertModelInputCharacters(
       entry,
@@ -2948,10 +3001,14 @@ app.post(
       "X-Accel-Buffering": "no"
     });
     res.flushHeaders?.();
+    const deliveryMode = streamOutput && !resolvedTools.localTools.length && !resolvedTools.hostedTools.length
+      ? "native-stream"
+      : "buffered";
     writeSse(res, "meta", {
       conversation: conversationSummary(conversation),
       userMessage,
-      assistantMessageId: assistantMessage.id
+      assistantMessageId: assistantMessage.id,
+      deliveryMode
     });
 
     let finished = false;
@@ -3008,6 +3065,7 @@ app.post(
         topP,
         reasoningEffort,
         maxTokens,
+        streamOutput,
         responseVerbosity,
         toolInvocationMode,
         skillInstructions,

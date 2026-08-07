@@ -211,6 +211,9 @@ export function AdminConsole({
   const modelDisplayNameMissing = !modelForm.label.trim();
   const modelRequestNameMissing = !modelForm.model.trim();
   const modelContextWindowInvalid = !Number.isFinite(modelForm.contextWindowTokens) || modelForm.contextWindowTokens < 4096;
+  const modelMaxOutputTokensInvalid = !Number.isSafeInteger(modelForm.maxOutputTokens)
+    || modelForm.maxOutputTokens < 1
+    || modelForm.maxOutputTokens > 1_048_576;
   const modelMaxInputCharactersInvalid = !Number.isFinite(modelForm.maxInputCharacters) || modelForm.maxInputCharacters < 1000;
 
   const openSection = (sectionId: AdminSectionId) => {
@@ -294,6 +297,7 @@ export function AdminConsole({
       defaultFor: preset.defaultFor,
       enabled: true,
       contextWindowTokens: preset.contextWindowTokens || 128000,
+      maxOutputTokens: preset.maxOutputTokens || 16384,
       maxInputCharacters: preset.maxInputCharacters || 100000,
       mediaConfig: preset.mediaConfig || {}
     });
@@ -526,10 +530,12 @@ export function AdminConsole({
     setShowModelFieldErrors(true);
     const label = modelForm.label.trim();
     const model = modelForm.model.trim();
-    if (!label || !model || modelContextWindowInvalid || modelMaxInputCharactersInvalid) {
+    if (!label || !model || modelContextWindowInvalid || modelMaxOutputTokensInvalid || modelMaxInputCharactersInvalid) {
       onError(
         modelMaxInputCharactersInvalid
           ? "模型最大输入字符数不能小于 1,000"
+          : modelMaxOutputTokensInvalid
+          ? "模型最大输出必须是 1 至 1,048,576 Token"
           : modelContextWindowInvalid
           ? "模型上下文窗口不能小于 4,096 Token"
           : !label && !model
@@ -545,6 +551,7 @@ export function AdminConsole({
       label,
       model,
       contextWindowTokens: Math.trunc(modelForm.contextWindowTokens),
+      maxOutputTokens: Math.trunc(modelForm.maxOutputTokens),
       maxInputCharacters: Math.trunc(modelForm.maxInputCharacters),
       capabilities: modelForm.capabilities.length ? modelForm.capabilities : ["chat"],
       defaultFor: modelForm.defaultFor
@@ -951,6 +958,7 @@ export function AdminConsole({
           displayNameMissing={modelDisplayNameMissing}
           requestNameMissing={modelRequestNameMissing}
           contextWindowInvalid={modelContextWindowInvalid}
+          maxOutputTokensInvalid={modelMaxOutputTokensInvalid}
           maxInputCharactersInvalid={modelMaxInputCharactersInvalid}
           onApplyPreset={applyModelPreset}
           onCreateVendor={createModelVendor}

@@ -274,6 +274,14 @@ function ChatModule({
     });
   }, []);
 
+  const setTokenRequestPhase = useCallback((id: string) => {
+    setSessionUi((current) => {
+      const ui = current[id] || defaultSessionUi(false);
+      if (ui.requestPhase === "buffering" || ui.requestPhase === "generating") return current;
+      return { ...current, [id]: { ...ui, requestPhase: "generating" } };
+    });
+  }, []);
+
   const createConversation = useCallback(() => {
     const conversation = createLocalConversation();
     commitConversations((current) => [conversation, ...current]);
@@ -448,6 +456,7 @@ function ChatModule({
       event: ChatStreamEvent
     ) => {
       if (event.type === "meta") {
+        setRequestPhase(conversationId, event.deliveryMode === "buffered" ? "buffering" : "generating");
         commitConversations((current) =>
           current.map((conversation) =>
             conversation.id !== conversationId
@@ -486,7 +495,7 @@ function ChatModule({
       }
 
       if (event.type === "token") {
-        setRequestPhase(conversationId, "generating");
+        setTokenRequestPhase(conversationId);
         if (!chatSettings.streamOutput) return;
         const stream = streamingRenderRef.current;
         if (!stream || stream.conversationId !== conversationId) return;
@@ -529,7 +538,8 @@ function ChatModule({
       patchSessionUi,
       scheduleStreamingPersistence,
       scheduleStreamingRender,
-      setRequestPhase
+      setRequestPhase,
+      setTokenRequestPhase
     ]
   );
 
@@ -657,7 +667,11 @@ function ChatModule({
     setStreamingConversationId(conversation.id);
     const controller = new AbortController();
     abortRef.current = controller;
-    const selectedHistory = selectChatHistory(requestConversation.messages, chatSettings);
+    const selectedHistory = selectChatHistory(
+      requestConversation.messages,
+      chatSettings,
+      selectedModel.maxOutputTokens
+    );
     const attachmentLimits = {
       imageLimit: chatSettings.maxImageAttachments,
       includeImages: supportsChatImageInput(selectedModel)
@@ -675,6 +689,7 @@ function ChatModule({
           topP: chatSettings.topP,
           reasoningEffort: ui.reasoningEffort,
           maxTokens: chatSettings.maxTokensEnabled ? chatSettings.maxTokens : undefined,
+          streamOutput: chatSettings.streamOutput,
           toolInvocationMode: chatSettings.toolInvocationMode,
           responseVerbosity: chatSettings.responseVerbosity === "default" ? undefined : chatSettings.responseVerbosity,
           includeUsage: chatSettings.showUsage,

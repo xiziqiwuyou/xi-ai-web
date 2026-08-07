@@ -261,10 +261,10 @@ const chatRequestBlock = chatModule.slice(chatRequestStart, chatRequestEnd);
 assert(chatRequestStart >= 0 && chatRequestEnd > chatRequestStart, "Chat stream request block is missing");
 assertInOrder(
   chatRequestBlock,
-  ["temperature: chatSettings.temperature", "topP: chatSettings.topP", "maxTokens: chatSettings.maxTokensEnabled ? chatSettings.maxTokens : undefined"],
+  ["temperature: chatSettings.temperature", "topP: chatSettings.topP", "maxTokens: chatSettings.maxTokensEnabled ? chatSettings.maxTokens : undefined", "streamOutput: chatSettings.streamOutput"],
   "Chat requests must carry saved sampling and omit the output limit when disabled"
 );
-assert(types.includes("topP?: number;") && types.includes("maxTokens?: number;"), "Chat request types must include topP and maxTokens");
+assert(types.includes("topP?: number;") && types.includes("maxTokens?: number;") && types.includes("streamOutput?: boolean;"), "Chat request types must include topP, maxTokens, and streamOutput");
 const chatSettings = fs.readFileSync(path.join(rootDir, "src/features/chat/chatSessionSettings.ts"), "utf8");
 for (const avatarFile of ["avatar-lumi.png", "avatar-fox.png", "avatar-orbit.png", "avatar-cloud.png", "avatar-piko.png", "avatar-nori.png"]) {
   assert(fs.existsSync(path.join(rootDir, "public/assets/figma", avatarFile)), `Chat avatar asset is missing ${avatarFile}`);
@@ -274,10 +274,12 @@ assert(chatSettings.includes('chatSettingsStorageKey = "xi-ai-web-chat-session-s
 assert(chatSettings.includes("window.sessionStorage.getItem(chatSettingsStorageKey)") && chatSettings.includes("window.sessionStorage.setItem(chatSettingsStorageKey"), "Saved Chat settings must use sessionStorage");
 assert(!chatSettings.includes("localStorage.getItem(chatSettingsStorageKey)") && !chatSettings.includes("localStorage.setItem(chatSettingsStorageKey"), "Saved Chat settings must not use localStorage");
 assert(
-  chatModule.includes("const selectedHistory = selectChatHistory(requestConversation.messages, chatSettings)") &&
+  chatModule.includes("const selectedHistory = selectChatHistory(") &&
+  chatModule.includes("selectedModel.maxOutputTokens") &&
   chatRequestBlock.includes("history: chatHistoryWithoutAttachments(selectedHistory)"),
   "Chat requests must honor the selected context window and message count before replaying bounded attachments"
 );
+assert(types.includes("maxOutputTokens?: number;") && chatSettings.includes("modelMaxOutputTokens"), "Model output limits must participate in shared metadata and Chat history reservation");
 assert(chatSettings.includes('chatContextSizeValues = ["4", "16", "32", "64", "128", "256", "512", "1024"]') && chatSettings.includes("contextMessageCount") && chatSettings.includes("maxTokensEnabled"), "Chat settings must expose a 1M context window, independent history-message count, and optional output limit");
 assert(chatSettings.includes("maxTokensEnabled: false"), "Chat maximum output must default to the provider-managed unlimited state");
 assert(chatSettings.includes('titleSummaryModelId: "gpt-5.4-mini"') && chatSettings.includes("titleSummaryMessageCount: 4"), "Collapsed-title summaries must default to gpt-5.4-mini and the latest four messages");

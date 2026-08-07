@@ -303,3 +303,89 @@ const asset = await importPublicImageAsset(req.body.url, {
 - Health and Admin operations project `APP_VERSION` from the root `package.json`; do not add independent hard-coded product version strings to route handlers.
 - `scripts/smoke.mjs` is credential-free and may compare a deployed health version with the local release version. `scripts/live-provider-smoke.mjs` is opt-in, sends requests only through the xi-ai-web application, and must report no prompt, response text, image URL, API Key, or request body.
 - Missing live-provider credentials or model/source-image inputs are explicit skips or configuration failures, never a passing provider result. Local contract and browser evidence must remain separate from `live-api` and `online-smoke` evidence.
+
+## 9. Chat Streaming And Model Output Ceiling
+
+### 1. Scope / Trigger
+
+- Trigger: changes to `ModelCatalogEntry.maxOutputTokens`, `/api/chat/stream`, `streamProviderReply`, the Anthropic Messages adapter, Chat `streamOutput`, or Admin model CRUD/import/export.
+- The catalog owns the server-side output ceiling. The browser owns only an optional lower per-session override and the delivery preference.
+
+### 2. Signatures
+
+```ts
+type ModelCatalogEntry = {
+  // ...existing model fields
+  maxOutputTokens?: number; // normalized by the server to 1..1,048,576
+};
+
+type ChatStreamPayload = {
+  modelId: string;
+  maxTokens?: number;
+  streamOutput?: boolean; // omitted legacy callers default to true
+};
+```
+
+```text
+POST /api/chat/stream
+  -> SSE meta { deliveryMode: "native-stream" | "buffered" }
+  -> zero or more token events
+  -> exactly one done event while connected
+```
+
+### 3. Contracts
+
+- Fresh and legacy model records are normalized with a positive `maxOutputTokens`. Shipped Claude Messages presets use `128000` for Fable/Sonnet 5 and Opus 4.7/4.8/Sonnet 4.6, and `64000` for Haiku 4.5; unknown records receive a bounded editable fallback.
+- The route resolves the requested value before any search, knowledge, or Provider request. An omitted value uses the catalog ceiling for Anthropic Messages and remains omitted for other adapters; an explicit value is forwarded exactly when it is within the catalog ceiling.
+- Values above the selected model ceiling, non-integers, zero, negatives, and non-finite values return `400` and do not contact an upstream Provider.
+- Anthropic Messages always receives a positive `max_tokens` from the resolved effective value. The adapter has no implicit `4096` fallback and fails closed if a direct caller supplies no valid catalog ceiling.
+- `streamOutput` defaults to `true`. Tool-free requests with it enabled use the adapter's native stream method. Disabled streaming uses the adapter completion method and still emits the public `meta`/single `token`/`done` envelope. Local or hosted tool loops are explicitly marked `buffered` until tool-delta streaming is supported.
+- The browser treats `meta.deliveryMode` as authoritative for the transient UI phase. Missing mode from an older server is interpreted as native streaming for compatibility.
+- The browser's context-history selector reserves the selected model's output ceiling when the manual output limit is disabled; a lower manual value takes precedence.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| Legacy model record omits `maxOutputTokens` | Normalize a bounded value without changing ID, order, label, enabled state, or capabilities |
+| Anthropic Messages request omits `maxTokens` | Send the normalized catalog ceiling as `max_tokens` |
+| Non-Anthropic request omits `maxTokens` | Preserve the adapter's omitted optional output field behavior |
+| Explicit output value is invalid or exceeds the catalog ceiling | `400`; no search, tool, or Provider request |
+| Claude adapter is called without a valid effective ceiling | Fail closed before `fetch` |
+| `streamOutput` is omitted | Native stream path for tool-free requests |
+| `streamOutput=false` | Completion path, one public final token, then `done` |
+| Local/hosted tool path | Preserve tool loop and emit `deliveryMode: "buffered"` |
+| Provider cancellation, timeout, or error | Preserve existing abort/error/redaction and terminal SSE behavior |
+
+### 5. Good/Base/Bad Cases
+
+- Good: a Claude Sonnet catalog entry with `maxOutputTokens: 128000` and no manual limit sends `max_tokens: 128000`, forwards text deltas before upstream EOF, and reports `native-stream`.
+- Base: a user sets `maxTokens: 2048`; the same exact value reaches every compatible adapter, while a tool request reports `buffered` and retains its final answer behavior.
+- Bad: restoring `4096` inside the Anthropic adapter, trusting a browser-provided model limit, silently clamping an oversized user value and still calling the Provider, or labeling a complete tool response as native streaming.
+
+### 6. Tests Required
+
+- `scripts/provider-contracts.mjs`: Claude model ceiling, delayed text delta before EOF, thinking filtering, usage, completion mode, tool buffering, and fail-closed missing ceiling.
+- `tests/server/chat-capability-route.test.mjs`: default Claude ceiling, explicit lower value, oversized rejection before upstream access, native/buffered meta modes, and public SSE terminal behavior.
+- `tests/server/model-registry.test.mjs` and `tests/server/model-vendor-routes.test.mjs`: normalization, shipped limits, Admin CRUD, legacy fallback, metadata import/export, restart, and runtime projection.
+- `npm run chat-local-contracts`, `npm run ui-contract`, `npm run feature-audit`, and `tests/e2e/chat-settings.spec.ts`: session stream preference, model-aware history reservation, and storage/request projection.
+- `tests/e2e/admin-shell.spec.ts`: desktop/mobile output-limit editing and reload persistence.
+
+### 7. Wrong vs Correct
+
+```js
+// Wrong: the Provider adapter invents a global limit for every Claude model.
+const max_tokens = maxTokens ?? 4096;
+
+// Correct: the route resolves the catalog-owned limit before Provider access.
+const maxTokens = resolveChatMaxTokens(entry, request.maxTokens);
+await adapter.streamChat({ model, maxTokens, ...params });
+```
+
+```js
+// Wrong: streamOutput only changes browser rendering after a buffered request.
+if (settings.streamOutput) renderIncomingToken(token);
+
+// Correct: the server chooses the actual Provider method and exposes the mode.
+const deliveryMode = streamOutput && !hasTools ? "native-stream" : "buffered";
+```

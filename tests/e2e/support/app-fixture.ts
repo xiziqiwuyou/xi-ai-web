@@ -183,6 +183,7 @@ export const publicBootstrapFixture: PublicBootstrapPayload = {
       capabilities: ["chat", "vision", "toolCalling", "webSearch", "codeExecution"],
       defaultFor: ["chat"],
       contextWindowTokens: 32768,
+      maxOutputTokens: 32768,
       maxInputCharacters: 24000,
       enabled: true
     },
@@ -1233,6 +1234,7 @@ export const test = base.extend<BrowserFixtures>({
             defaultFor: payload.defaultFor || [],
             enabled: payload.enabled !== false,
             contextWindowTokens: payload.contextWindowTokens,
+            maxOutputTokens: payload.maxOutputTokens,
             maxInputCharacters: payload.maxInputCharacters,
             mediaConfig: payload.mediaConfig
           };
@@ -1614,7 +1616,8 @@ export const test = base.extend<BrowserFixtures>({
             `event: meta\ndata: ${JSON.stringify({
               conversation: completedConversation,
               userMessage,
-              assistantMessageId: assistantMessage.id
+              assistantMessageId: assistantMessage.id,
+              deliveryMode: payload.streamOutput === false ? "buffered" : "native-stream"
             })}`,
             `event: token\ndata: ${JSON.stringify({ token: assistantMessage.content })}`,
             `event: done\ndata: ${JSON.stringify({ conversation: completedConversation, message: assistantMessage })}`

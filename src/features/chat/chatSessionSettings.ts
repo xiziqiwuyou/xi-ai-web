@@ -226,12 +226,18 @@ export function estimatedTokenCount(value: string) {
 
 export function selectChatHistory(
   messages: readonly Message[],
-  settings: Pick<ChatSessionSettings, "contextSize" | "contextMessageCount" | "maxTokensEnabled" | "maxTokens">
+  settings: Pick<ChatSessionSettings, "contextSize" | "contextMessageCount" | "maxTokensEnabled" | "maxTokens">,
+  modelMaxOutputTokens?: number
 ) {
   const messageLimit = settings.contextMessageCount === null ? messages.length : Math.max(1, settings.contextMessageCount);
   const candidates = messages.slice(-messageLimit);
   const windowTokens = Math.max(1, Number(settings.contextSize) || 16) * 1024;
-  const outputReserve = settings.maxTokensEnabled ? Math.max(1, settings.maxTokens) : 4096;
+  const configuredModelLimit = Number(modelMaxOutputTokens);
+  const outputReserve = settings.maxTokensEnabled
+    ? Math.max(1, settings.maxTokens)
+    : Number.isSafeInteger(configuredModelLimit) && configuredModelLimit > 0
+      ? configuredModelLimit
+      : defaultChatSessionSettings.maxTokens;
   const historyBudget = Math.max(1024, windowTokens - outputReserve - 2048);
   const selected: Message[] = [];
   let consumedTokens = 0;

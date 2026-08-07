@@ -76,7 +76,7 @@ export type SessionUiState = {
   searchProvider: SearchProviderKind | "";
   knowledgeBaseIds: string[];
   reasoningEffort: ReasoningEffort;
-  requestPhase: "idle" | "searching" | "generating" | "failed" | "cancelled";
+  requestPhase: "idle" | "searching" | "generating" | "buffering" | "failed" | "cancelled";
   notice: string;
 };
 
@@ -306,7 +306,9 @@ export function ChatSessionBlock({
       ? `${searchProviderLabel} · 搜索中`
       : ui.requestPhase === "generating"
         ? `${searchProviderLabel} · 正在生成`
-        : ui.requestPhase === "failed"
+        : ui.requestPhase === "buffering"
+          ? `${searchProviderLabel} · 等待完整回复`
+          : ui.requestPhase === "failed"
           ? `${searchProviderLabel} · 搜索失败`
           : ui.requestPhase === "cancelled"
             ? `${searchProviderLabel} · 已停止`
@@ -359,7 +361,11 @@ export function ChatSessionBlock({
   const lastMessage = [...displayMessages].reverse().find((message) => message.content);
   const latestMessageContent = displayMessages[displayMessages.length - 1]?.content || "";
   const latestAssistantMessage = [...conversation.messages].reverse().find((message) => message.role === "assistant");
-  const selectedContextMessages = selectChatHistory(conversation.messages, settings);
+  const selectedContextMessages = selectChatHistory(
+    conversation.messages,
+    settings,
+    selectedModel?.maxOutputTokens
+  );
   const estimatedContextTokens = selectedContextMessages.reduce(
     (total, message) => total + estimatedTokenCount(message.content) + 8,
     0
@@ -840,7 +846,9 @@ export function ChatSessionBlock({
                         enableCodePreview={settings.enableCodePreview}
                       />
                     ) : message.status === "streaming" ? (
-                      <span className="figma-typing"><i /><i /><i /></span>
+                      ui.requestPhase === "buffering"
+                        ? <span className="figma-buffered-status" role="status">正在等待完整回复</span>
+                        : <span className="figma-typing" role="status" aria-label="正在生成"><i /><i /><i /></span>
                     ) : (
                       <small role="status">
                         {message.status === "stopped" ? "已停止生成" : "生成失败"}

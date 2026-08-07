@@ -949,6 +949,14 @@
 .figma-typing i:nth-child(2) { animation-delay: 120ms; }
 .figma-typing i:nth-child(3) { animation-delay: 240ms; }
 
+.figma-buffered-status {
+  display: inline-flex;
+  min-height: 18px;
+  align-items: center;
+  color: var(--xhs-muted);
+  font-size: 12px;
+}
+
 @keyframes figma-pulse {
   50% { opacity: 0.3; transform: translateY(-2px); }
 }

@@ -524,6 +524,7 @@ test("saved sampling settings are sent with the next Chat request", async ({ pag
     temperature: 0.4,
     topP: 0.6,
     maxTokens: 131072,
+    streamOutput: true,
     modelId: "test-chat"
   });
   expect(apiHarness.chatRequests[0]).not.toHaveProperty("responseVerbosity");
@@ -618,7 +619,7 @@ test("context window token budget further limits the selected history", async ({
   expect(apiHarness.chatRequests[0].history?.map((message) => message.id)).toEqual(["budget-5", "budget-6"]);
 });
 
-test("saved Chat settings are scoped to sessionStorage and survive reload", async ({ page }) => {
+test("saved Chat settings are scoped to sessionStorage and survive reload", async ({ page, apiHarness }) => {
   await page.goto("/chat");
   await waitForPublicModule(page, publicDestinations[0]);
 
@@ -685,6 +686,11 @@ test("saved Chat settings are scoped to sessionStorage and survive reload", asyn
   await expect(reloadedDialog.getByRole("button", { name: "\u6700\u5927 Token \u6570", exact: true })).toHaveAttribute("aria-pressed", "true");
   await expect(reloadedDialog.getByRole("spinbutton", { name: "最大 Token 数值", exact: true })).toHaveValue("262144");
   await expect(reloadedDialog.getByRole("button", { name: "\u6d41\u5f0f\u8f93\u51fa", exact: true })).toHaveAttribute("aria-pressed", "false");
+  await reloadedDialog.getByRole("button", { name: "取消", exact: true }).click();
+  await page.getByRole("textbox", { name: "消息内容", exact: true }).fill("验证关闭流式输出");
+  await page.getByRole("button", { name: "发送", exact: true }).click();
+  await expect.poll(() => apiHarness.chatRequests.length).toBe(1);
+  expect(apiHarness.chatRequests[0].streamOutput).toBe(false);
 });
 
 test("Chat input settings control command menus, token estimates, long paste attachments, and send shortcut", async ({ page, apiHarness }) => {

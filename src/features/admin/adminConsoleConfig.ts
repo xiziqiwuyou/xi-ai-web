@@ -36,6 +36,7 @@ export type ModelDraft = {
   defaultFor: ModelDefaultFor[];
   enabled: boolean;
   contextWindowTokens: number;
+  maxOutputTokens: number;
   maxInputCharacters: number;
   mediaConfig?: ModelCatalogEntry["mediaConfig"];
 };
@@ -309,6 +310,7 @@ export const emptyModelDraft: ModelDraft = {
   defaultFor: [],
   enabled: true,
   contextWindowTokens: 128000,
+  maxOutputTokens: 16384,
   maxInputCharacters: 100000,
   mediaConfig: {}
 };
@@ -372,6 +374,7 @@ export function modelDraft(entry?: ModelCatalogEntry): ModelDraft {
     defaultFor: entry.defaultFor,
     enabled: entry.enabled,
     contextWindowTokens: entry.contextWindowTokens || 128000,
+    maxOutputTokens: entry.maxOutputTokens || 16384,
     maxInputCharacters: entry.maxInputCharacters || 100000,
     mediaConfig: entry.mediaConfig || {}
   };

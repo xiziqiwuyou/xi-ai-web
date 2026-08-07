@@ -93,6 +93,7 @@ test("Admin model vendor API enforces contracts and survives metadata round trip
   assert.equal(result.response.status, 200);
   assert.equal(result.body.modelVendors.length, 8);
   assert(result.body.modelCatalog.every((entry) => entry.vendorId && entry.vendorLabel));
+  assert(result.body.modelCatalog.every((entry) => Number.isSafeInteger(entry.maxOutputTokens) && entry.maxOutputTokens > 0));
   assert.deepEqual(result.body.modelCatalog.map((entry) => entry.order), result.body.modelCatalog.map((_, index) => index));
 
   const originalVendorIds = result.body.modelVendors.map((entry) => entry.id);
@@ -194,6 +195,7 @@ test("Admin model vendor API enforces contracts and survives metadata round trip
       label: "Claude Acme",
       capabilities: ["chat"],
       defaultFor: [],
+      maxOutputTokens: 32_768,
       enabled: true
     })
   });
@@ -201,14 +203,28 @@ test("Admin model vendor API enforces contracts and survives metadata round trip
   const customModel = result.body;
   assert.equal(customModel.vendor, "anthropic");
   assert.equal(customModel.vendorLabel, "Acme Claude");
+  assert.equal(customModel.maxOutputTokens, 32_768);
+
+  result = await api(runtime.baseUrl, "/api/admin/model-catalog", {
+    method: "POST",
+    body: JSON.stringify({
+      vendorId: customVendor.id,
+      model: "claude-invalid-output",
+      label: "Invalid Claude Output",
+      capabilities: ["chat"],
+      maxOutputTokens: 0
+    })
+  });
+  assert.equal(result.response.status, 400);
 
   result = await api(runtime.baseUrl, `/api/admin/model-catalog/${customModel.id}`, {
     method: "PATCH",
-    body: JSON.stringify({ vendorId: customVendor.id, vendor: "qwen", vendorLabel: "forged", label: "Claude Acme Updated" })
+    body: JSON.stringify({ vendorId: customVendor.id, vendor: "qwen", vendorLabel: "forged", label: "Claude Acme Updated", maxOutputTokens: 65_536 })
   });
   assert.equal(result.response.status, 200);
   assert.equal(result.body.vendor, "anthropic");
   assert.equal(result.body.vendorLabel, "Acme Claude");
+  assert.equal(result.body.maxOutputTokens, 65_536);
 
   result = await api(runtime.baseUrl, "/api/admin/model-catalog", {
     method: "POST",
@@ -226,6 +242,7 @@ test("Admin model vendor API enforces contracts and survives metadata round trip
   result = await api(runtime.baseUrl, "/api/public/bootstrap");
   assert.equal(Object.hasOwn(result.body, "modelVendors"), false);
   assert.equal(result.body.modelCatalog.find((entry) => entry.id === customModel.id)?.vendorLabel, "Acme Claude");
+  assert.equal(result.body.modelCatalog.find((entry) => entry.id === customModel.id)?.maxOutputTokens, 65_536);
 
   result = await api(runtime.baseUrl, "/api/admin/model-catalog", {
     method: "POST",
@@ -245,6 +262,7 @@ test("Admin model vendor API enforces contracts and survives metadata round trip
   assert.equal(exported.response.status, 200);
   assert.equal(exported.body.modelVendors.some((entry) => entry.id === customVendor.id), false);
   exported.body.modelCatalog[0].vendorLabel = "forged";
+  exported.body.modelCatalog[0].maxOutputTokens = 24_576;
 
   result = await api(runtime.baseUrl, "/api/admin/metadata-import", {
     method: "PATCH",
@@ -253,6 +271,7 @@ test("Admin model vendor API enforces contracts and survives metadata round trip
   assert.equal(result.response.status, 200);
   assert.deepEqual(result.body.modelVendors, exported.body.modelVendors);
   assert.notEqual(result.body.modelCatalog[0].vendorLabel, "forged");
+  assert.equal(result.body.modelCatalog[0].maxOutputTokens, 24_576);
 
   const backups = await api(runtime.baseUrl, "/api/admin/backups");
   assert.equal(backups.response.status, 200);
@@ -288,6 +307,7 @@ test("Admin model vendor API enforces contracts and survives metadata round trip
   assert.equal(result.body.modelVendors.some((entry) => entry.id === "deepseek"), false);
   assert.equal(result.body.modelCatalog.some((entry) => entry.vendorId === "deepseek"), false);
   assert.equal(result.body.modelCatalog[0].id, reorderedFirstModelId);
+  assert.equal(result.body.modelCatalog[0].maxOutputTokens, 16_384);
 
   await stopServer(runtime.child);
   const singleVendorDir = fs.mkdtempSync(path.join(os.tmpdir(), "xi-ai-single-vendor-"));
@@ -312,6 +332,8 @@ test("Admin model vendor API enforces contracts and survives metadata round trip
     }]
   }));
   runtime = await startServer(singleVendorDir);
+  result = await api(runtime.baseUrl, "/api/admin/bootstrap");
+  assert.equal(result.body.modelCatalog[0].maxOutputTokens, 16_384);
   result = await api(runtime.baseUrl, "/api/admin/model-vendors/only-vendor", { method: "DELETE" });
   assert.equal(result.response.status, 409);
   assert.match(result.body.error, /至少/);

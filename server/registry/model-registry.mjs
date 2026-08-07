@@ -52,6 +52,7 @@ const defaultVendors = vendorKinds.map((adapter, order) => ({
 
 const defaultContextWindowTokens = 128_000;
 const defaultMaxInputCharacters = 100_000;
+const defaultMaxOutputTokens = 16_384;
 
 function inferredContextWindowTokens(vendor, model) {
   const normalized = String(model || "").toLowerCase();
@@ -73,6 +74,22 @@ function cleanMaxInputCharacters(value) {
   const parsed = Number(value);
   if (Number.isFinite(parsed)) return Math.max(1_000, Math.min(2_000_000, Math.trunc(parsed)));
   return defaultMaxInputCharacters;
+}
+
+function inferredMaxOutputTokens(vendor, model) {
+  const normalized = String(model || "").toLowerCase();
+  if (vendor === "anthropic") {
+    if (/haiku-4-5(?:-|$)/.test(normalized)) return 64_000;
+    if (/(?:fable-5|sonnet-5|opus-4-[678]|sonnet-4-6)(?:-|$)/.test(normalized)) return 128_000;
+  }
+  return defaultMaxOutputTokens;
+}
+
+function cleanMaxOutputTokens(value, vendor, model) {
+  if (value === undefined || value === null || value === "") return inferredMaxOutputTokens(vendor, model);
+  const parsed = Number(value);
+  if (Number.isFinite(parsed)) return Math.max(1, Math.min(1_048_576, Math.trunc(parsed)));
+  return inferredMaxOutputTokens(vendor, model);
 }
 
 const defaultCatalog = [
@@ -597,6 +614,7 @@ export function defaultModelCatalog() {
       endpointProtocol: normalizeEndpointProtocol(entry.endpointProtocol, entry.vendor),
       order: cleanModelOrder(entry.order, order),
       contextWindowTokens: cleanContextWindowTokens(entry.contextWindowTokens, entry.vendor, entry.model),
+      maxOutputTokens: cleanMaxOutputTokens(entry.maxOutputTokens, entry.vendor, entry.model),
       maxInputCharacters: cleanMaxInputCharacters(entry.maxInputCharacters),
       capabilities: uniqueValues(next.capabilities, modelCapabilities),
       defaultFor: [...entry.defaultFor]
@@ -765,6 +783,11 @@ export function normalizeCatalogEntry(entry, fallback = {}) {
     enabled: typeof source.enabled === "boolean" ? source.enabled : fallback.enabled ?? true,
     contextWindowTokens: cleanContextWindowTokens(
       source.contextWindowTokens ?? fallback.contextWindowTokens,
+      vendor,
+      model
+    ),
+    maxOutputTokens: cleanMaxOutputTokens(
+      source.maxOutputTokens ?? fallback.maxOutputTokens,
       vendor,
       model
     ),
@@ -960,6 +983,7 @@ export function buildRuntimeProvider(entry, connection) {
     models: { chat: entry.model },
     capabilities: entry.capabilities,
     enabled: entry.enabled,
+    maxOutputTokens: entry.maxOutputTokens,
     mediaConfig: entry.mediaConfig,
     transient: true
   };

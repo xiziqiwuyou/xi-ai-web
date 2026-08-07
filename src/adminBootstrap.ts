@@ -47,13 +47,17 @@ function normalizedCatalogEntry(
   const vendorLabel = typeof entry.vendorLabel === "string" && entry.vendorLabel.trim()
     ? entry.vendorLabel.trim()
     : declaredVendor?.label || providerLabels[adapter];
+  const configuredMaxOutputTokens = Number(entry.maxOutputTokens);
 
   return {
     ...entry,
     order: Number.isFinite(entry.order) ? Math.max(0, Math.trunc(entry.order)) : fallbackOrder,
     vendorId,
     vendor: adapter,
-    vendorLabel
+    vendorLabel,
+    maxOutputTokens: Number.isSafeInteger(configuredMaxOutputTokens) && configuredMaxOutputTokens > 0
+      ? Math.min(1_048_576, configuredMaxOutputTokens)
+      : 16_384
   };
 }
 

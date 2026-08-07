@@ -432,6 +432,7 @@ test("admin model names keep the short label in front of the stable request ID",
   const requestName = section.getByLabel("实际请求模型名", { exact: true });
   const endpointProtocol = section.getByLabel("对话请求端点", { exact: true });
   const contextWindow = section.getByLabel("上下文窗口（Token）", { exact: true });
+  const maxOutputTokens = section.getByLabel("最大输出 Token 数", { exact: true });
   const maxInputCharacters = section.getByLabel("最大输入字符数", { exact: true });
   await expect(displayName).toHaveValue("Test Chat");
   await expect(displayName).toHaveAttribute("required", "");
@@ -442,6 +443,9 @@ test("admin model names keep the short label in front of the stable request ID",
   await expect(endpointProtocol).toHaveValue("openai-chat");
   await expect(contextWindow).toHaveValue("32768");
   await expect(contextWindow).toHaveAttribute("min", "4096");
+  await expect(maxOutputTokens).toHaveValue("32768");
+  await expect(maxOutputTokens).toHaveAttribute("min", "1");
+  await expect(maxOutputTokens).toHaveAttribute("max", "1048576");
   await expect(maxInputCharacters).toHaveValue("24000");
   await expect(maxInputCharacters).toHaveAttribute("min", "1000");
   await expect(section.getByLabel("模型名称映射预览", { exact: true })).toHaveCount(0);
@@ -455,6 +459,7 @@ test("admin model names keep the short label in front of the stable request ID",
 
   await displayName.fill("Test Chat");
   await requestName.fill(mappedRequestModel);
+  await maxOutputTokens.fill("24576");
   await section.getByRole("button", { name: "保存模型", exact: true }).click();
   await expect.poll(() => apiHarness.requests.filter((request) => request === "PATCH /api/admin/model-catalog/test-chat").length).toBe(1);
 
@@ -468,6 +473,7 @@ test("admin model names keep the short label in front of the stable request ID",
     await navigation.getByRole("button", { name: "模型目录", exact: true }).click();
   }
   await expect(page.locator("#admin-section-models").getByLabel("对话请求端点", { exact: true })).toHaveValue("openai-chat");
+  await expect(page.locator("#admin-section-models").getByLabel("最大输出 Token 数", { exact: true })).toHaveValue("24576");
 
   await page.goto("/chat");
   const session = page.locator(".figma-chat-session").first();

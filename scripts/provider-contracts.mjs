@@ -96,6 +96,26 @@ function chunkedSseResponse(chunks) {
   });
 }
 
+function delayedSseResponse(chunks, { delayMs = 5, onComplete } = {}) {
+  let index = 0;
+  const encoder = new TextEncoder();
+  const body = new ReadableStream({
+    async pull(controller) {
+      if (index >= chunks.length) {
+        onComplete?.();
+        controller.close();
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      controller.enqueue(encoder.encode(chunks[index]));
+      index += 1;
+    }
+  });
+  return new Response(body, {
+    headers: { "content-type": "text/event-stream" }
+  });
+}
+
 function parseJsonBody(request) {
   assert(typeof request.init.body === "string", `${request.label} body should be JSON string`);
   return JSON.parse(request.init.body);
@@ -525,7 +545,11 @@ async function testModelEndpointProtocolRouting() {
     });
   });
 
-  const anthropicMessages = { ...openAiChat, endpointProtocol: "anthropic-messages" };
+  const anthropicMessages = {
+    ...openAiChat,
+    endpointProtocol: "anthropic-messages",
+    maxOutputTokens: 16_384
+  };
   await withMockFetch("Anthropic Messages protocol routing", [
     (request) => {
       assertEqual(request.url, "https://routing.contract.test/v1/messages", "Anthropic Messages exact endpoint");
@@ -931,7 +955,17 @@ async function testOpenAIAdapter() {
 
 async function testAnthropicAdapter() {
   const claude = provider("anthropic", ["chat", "vision", "toolCalling", "webSearch", "urlContext", "codeExecution"], "https://claude.contract.test/v1");
+  claude.maxOutputTokens = 128_000;
   const adapter = createAnthropicAdapter(claude);
+
+  await assertRejects(
+    () => createAnthropicAdapter({ ...claude, maxOutputTokens: undefined }).completeText({
+      model: "claude-unconfigured",
+      messages: sampleMessages()
+    }),
+    /maximum output tokens are not configured/i,
+    "Claude requests fail closed when the catalog output limit is missing"
+  );
 
   await withMockFetch("claude chat vision", [
     (request) => {
@@ -992,7 +1026,10 @@ async function testAnthropicAdapter() {
       assertIncludes(request.url, "/messages", "Claude native stream uses Messages endpoint");
       const body = parseJsonBody(request);
       assertEqual(body.stream, true, "Claude native stream enables stream");
-      return chunkedSseResponse([
+      assertEqual(body.max_tokens, 128_000, "Claude native stream uses the model catalog output limit");
+      let upstreamCompleted = false;
+      request.upstreamCompleted = () => upstreamCompleted;
+      return delayedSseResponse([
         "event: message_start\n",
         'data: {"type":"message_start","message":{"usage":{"input_tokens":17}}}\n\n',
         "event: content_block_delta\n",
@@ -1003,22 +1040,29 @@ async function testAnthropicAdapter() {
         "event: content_block_delta\n",
         'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":" answer"}}\n\n',
         "event: message_delta\n",
-        'data: {"type":"message_delta","usage":{"output_tokens":2}}\n\n'
-      ]);
+        'data: {"type":"message_delta","usage":{"output_tokens":2}}\n\n',
+        "event: message_stop\n",
+        'data: {"type":"message_stop"}\n\n'
+      ], { onComplete: () => { upstreamCompleted = true; } });
     }
-  ], async () => {
+  ], async (mock) => {
     const tokens = [];
+    const completionStates = [];
     let usage = null;
     await adapter.streamChat({
       model: "claude-stream-contract",
       messages: sampleMessages(),
-      onToken: (token) => tokens.push(token),
+      onToken: (token) => {
+        tokens.push(token);
+        completionStates.push(mock.calls[0].upstreamCompleted());
+      },
       onUsage: (next) => {
         usage = next;
       }
     });
     assertEqual(tokens.join(""), "Claude answer", "Claude stream forwards text deltas only");
     assertEqual(tokens.length, 2, "Claude stream ignores thinking deltas");
+    assertEqual(completionStates[0], false, "Claude stream forwards its first text delta before upstream completion");
     assertEqual(JSON.stringify(usage), JSON.stringify({
       inputTokens: 17,
       outputTokens: 2,

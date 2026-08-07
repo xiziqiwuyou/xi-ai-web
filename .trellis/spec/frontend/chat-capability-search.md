@@ -99,3 +99,21 @@ const canAttach = supportsChatImageInput(model);
 - Local contracts must assert `vision`/`image`/`imageEdit` separation and independent tool resolution without a model `webSearch` capability.
 - Server tests must assert no upstream access for non-vision images, primary-Key-only search authorization, structured `401`/`403`/`404`/`429`/timeout errors, malformed responses, and cancellation.
 - Browser tests must cover desktop/mobile, keyboard focus and disabled explanation, dark-mode layout stability, provider-selection no-op, send-time ordering, attachment-only blocking, retry, cancellation, and refresh reset.
+
+## Chat Delivery And Model-Aware Output Settings
+
+### Scope
+
+- Trigger: changes to Chat session settings, `ChatStreamPayload`, `ChatStreamEvent`, model selection, context-history estimation, or the Admin model editor's output-limit field.
+
+### Contracts
+
+- The Chat settings `streamOutput` value is sent on every Chat request. A missing server `deliveryMode` is treated as native for compatibility; `"buffered"` is an explicit transient state, not a rendering failure.
+- `meta.deliveryMode` changes the active session to a buffered status before the final answer arrives. Tool/hosted-tool responses show a concise waiting state, then return to idle on `done`; they must not be presented as incremental native text.
+- `ModelCatalogEntry.maxOutputTokens` is metadata owned by the selected model record. When manual maximum output is disabled, `selectChatHistory` reserves that model value; when enabled, it reserves the lower manual value.
+- The UI may allow a session value that is valid for another model, but the server remains authoritative and returns a bounded error before upstream access when it exceeds the selected model ceiling. The draft and model selection remain available for correction.
+
+### Verification
+
+- Local contracts assert model-limit-aware history selection, request `streamOutput`, and buffered meta handling without per-token conversation commits.
+- Desktop and mobile browser tests assert that stream settings persist in session storage, are projected into the next request, and that the Admin output-limit editor survives reload without shell overflow.

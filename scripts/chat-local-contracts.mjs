@@ -62,6 +62,28 @@ assert.equal(chatSessionSettings.sanitizeChatSessionSettings({ messageFontSize: 
 assert.equal(chatSessionSettings.sanitizeChatSessionSettings({ messageFontSize: 12 }).messageFontSize, 13, "invalid saved Chat message sizes must fall back to the current default");
 assert.equal(chatCapabilities.supportsChatImageInput({ capabilities: ["chat", "vision"] }), true, "vision must enable Chat image input");
 assert.equal(chatCapabilities.supportsChatImageInput({ capabilities: ["chat", "image", "imageEdit"] }), false, "image generation/edit capabilities must not enable Chat image input");
+const budgetMessages = Array.from({ length: 6 }, (_, index) => ({
+  id: `budget-${index}`,
+  role: index % 2 ? "assistant" : "user",
+  content: String(index).repeat(1600),
+  createdAt: "2026-01-01T00:00:00.000Z"
+}));
+const budgetSettings = {
+  contextSize: "4",
+  contextMessageCount: null,
+  maxTokensEnabled: false,
+  maxTokens: 16_384
+};
+assert.equal(
+  chatSessionSettings.selectChatHistory(budgetMessages, budgetSettings, 2_048).length,
+  2,
+  "disabled manual output limits must reserve the selected model output ceiling"
+);
+assert.equal(
+  chatSessionSettings.selectChatHistory(budgetMessages, { ...budgetSettings, maxTokensEnabled: true, maxTokens: 512 }, 2_048).length,
+  3,
+  "enabled manual output limits must reserve the lower session value"
+);
 const conversation = {
   id: "thread-1",
   title: "NextChat local thread",
@@ -156,10 +178,13 @@ const tokenBranch = chatModuleSource.slice(tokenBranchStart, tokenBranchEnd);
 assert(tokenBranch.includes("stream.content += event.token"), "Chat token events must accumulate in memory");
 assert(tokenBranch.includes("scheduleStreamingRender()"), "Chat token events must schedule frame rendering");
 assert(tokenBranch.includes("scheduleStreamingPersistence()"), "Chat token events must throttle persistence");
+assert(tokenBranch.includes("setTokenRequestPhase(conversationId)"), "Chat token events must preserve an explicit buffered delivery phase");
 assert(!tokenBranch.includes("commitConversations("), "Chat token events must not persist every fragment");
 assert(chatModuleSource.includes("requestAnimationFrame(() =>"), "Chat streaming UI must batch React rendering by frame");
 assert(chatModuleSource.includes("STREAMING_PERSIST_INTERVAL_MS = 300"), "Chat streaming persistence cadence must stay bounded");
 assert(chatModuleSource.includes("renderStreamingConversation(true)"), "Chat failure handling must persist the final buffered text");
+assert(chatModuleSource.includes('event.deliveryMode === "buffered" ? "buffering" : "generating"'), "Chat meta events must expose native versus buffered delivery");
+assert(chatModuleSource.includes("streamOutput: chatSettings.streamOutput"), "Chat requests must send the saved stream preference to the server");
 
 const serialized = JSON.stringify({
   ...envelope,

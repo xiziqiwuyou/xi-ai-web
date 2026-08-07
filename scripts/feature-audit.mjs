@@ -112,6 +112,17 @@ assert(
   "Fresh DeepSeek catalogs must separate documented Responses and Chat-only models"
 );
 assert(
+  freshCatalog.find((entry) => entry.id === "claude-sonnet-5")?.maxOutputTokens === 128_000
+    && freshCatalog.find((entry) => entry.id === "claude-haiku-4-5")?.maxOutputTokens === 64_000,
+  "Fresh Claude models must expose their configured Messages output ceilings"
+);
+assert(
+  adminModelsSection.includes('aria-label="最大输出 Token 数"')
+    && adminConsoleConfig.includes("maxOutputTokens: number")
+    && modelCatalogPresets.includes("presetMaxOutputTokens"),
+  "Admin model CRUD and presets must expose model-specific maximum output tokens"
+);
+assert(
   /id:\s*"deepseek-v4-flash"[\s\S]{0,320}endpointProtocol:\s*"openai-responses"/u.test(modelCatalogPresets),
   "Admin DeepSeek V4 Flash preset must select Responses"
 );
@@ -322,16 +333,18 @@ assert(
   chatModule.includes('const modelVendorTabs: ModelVendorTab[] = ["OpenAI", "Claude", "Gemini", "Kimi", "DeepSeek", "\u901a\u4e49\u5343\u95ee"]'),
   "Chat model picker must expose the six named vendor labels"
 );
-assert(chatModule.includes("topP: chatSettings.topP") && chatModule.includes("maxTokens: chatSettings.maxTokensEnabled ? chatSettings.maxTokens : undefined"), "Chat requests must carry topP and omit a disabled output limit");
+assert(chatModule.includes("topP: chatSettings.topP") && chatModule.includes("maxTokens: chatSettings.maxTokensEnabled ? chatSettings.maxTokens : undefined") && chatModule.includes("streamOutput: chatSettings.streamOutput"), "Chat requests must carry topP, streamOutput, and omit a disabled output limit");
 const chatSettings = fs.readFileSync(path.join(rootDir, "src/features/chat/chatSessionSettings.ts"), "utf8");
 assert(chatSettings.includes('chatSettingsStorageKey = "xi-ai-web-chat-session-settings"'), "Chat settings must use the session-scoped settings key");
 assert(chatSettings.includes("window.sessionStorage.getItem(chatSettingsStorageKey)") && chatSettings.includes("window.sessionStorage.setItem(chatSettingsStorageKey"), "Chat settings must persist through sessionStorage only");
 assert(!chatSettings.includes("localStorage.getItem(chatSettingsStorageKey)") && !chatSettings.includes("localStorage.setItem(chatSettingsStorageKey"), "Chat settings must not use localStorage");
 assert(
-  chatModule.includes("const selectedHistory = selectChatHistory(requestConversation.messages, chatSettings)") &&
+  chatModule.includes("const selectedHistory = selectChatHistory(") &&
+  chatModule.includes("selectedModel.maxOutputTokens") &&
   chatModule.includes("history: chatHistoryWithoutAttachments(selectedHistory)"),
   "Chat requests must honor both saved context settings while replaying bounded historical attachments"
 );
+assert(types.includes("maxOutputTokens?: number;") && chatSettings.includes("modelMaxOutputTokens"), "Model output limits must cross the catalog and Chat history budget boundary");
 assert(
   chatModule.includes('ariaLabel="引用上下文条数"') &&
   chatModule.includes("figma-token-usage-summary") &&

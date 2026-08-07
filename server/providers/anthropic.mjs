@@ -122,10 +122,18 @@ function reasoningOptions(reasoningEffort) {
   }
 }
 
-function generationOptions({ temperature, topP, reasoningEffort, maxTokens }) {
+function requiredMaxTokens(provider, maxTokens) {
+  const parsed = Number(maxTokens ?? provider?.maxOutputTokens);
+  if (!Number.isSafeInteger(parsed) || parsed < 1) {
+    throw new Error("Claude model maximum output tokens are not configured");
+  }
+  return parsed;
+}
+
+function generationOptions(provider, { temperature, topP, reasoningEffort, maxTokens }) {
   const explicitReasoning = ["low", "medium", "high", "xhigh"].includes(reasoningEffort);
   return {
-    max_tokens: Number.isFinite(Number(maxTokens)) ? Math.max(1, Math.trunc(Number(maxTokens))) : 4096,
+    max_tokens: requiredMaxTokens(provider, maxTokens),
     temperature: explicitReasoning ? undefined : Number.isFinite(Number(temperature)) ? Number(temperature) : undefined,
     top_p: explicitReasoning ? undefined : Number.isFinite(Number(topP)) ? Number(topP) : undefined,
     ...reasoningOptions(reasoningEffort)
@@ -192,7 +200,7 @@ async function streamChat({
     headers: { "Content-Type": "application/json", Accept: "text/event-stream", ...authHeaders(provider) },
     body: JSON.stringify({
       model,
-      ...generationOptions({ temperature, topP, reasoningEffort, maxTokens }),
+      ...generationOptions(provider, { temperature, topP, reasoningEffort, maxTokens }),
       system: mapped.system || undefined,
       messages: mapped.messages,
       stream: true
@@ -254,7 +262,8 @@ async function completeWithTools({
   hostedTools,
   runTool,
   maxToolRounds = 4,
-  signal
+  signal,
+  onUsage
 }) {
   assertCapability(provider, "chat");
   if (hasImageContent(messages)) assertCapability(provider, "vision");
@@ -269,13 +278,15 @@ async function completeWithTools({
       headers: authHeaders(provider),
       body: {
         model,
-        ...generationOptions({ temperature, topP, reasoningEffort, maxTokens }),
+        ...generationOptions(provider, { temperature, topP, reasoningEffort, maxTokens }),
         system: mapped.system || undefined,
         messages: nextMessages,
         tools: mappedTools.length ? mappedTools : undefined
       },
       signal
     });
+    const usage = normalizedUsage(json.usage);
+    if (usage) onUsage?.(usage);
     const toolUses = extractToolUses(json);
     if (!toolUses.length && json.stop_reason === "pause_turn") {
       nextMessages.push({ role: "assistant", content: json.content || [] });
@@ -301,7 +312,7 @@ async function completeWithTools({
 }
 
 async function completeText(params) {
-  const { provider, model, messages, temperature, topP, reasoningEffort, maxTokens, signal, tools, hostedTools } = params;
+  const { provider, model, messages, temperature, topP, reasoningEffort, maxTokens, signal, tools, hostedTools, onUsage } = params;
   if (tools?.length || hostedTools?.length) return completeWithTools(params);
   assertCapability(provider, "chat");
   if (hasImageContent(messages)) assertCapability(provider, "vision");
@@ -310,12 +321,14 @@ async function completeText(params) {
     headers: authHeaders(provider),
     body: {
       model,
-      ...generationOptions({ temperature, topP, reasoningEffort, maxTokens }),
+      ...generationOptions(provider, { temperature, topP, reasoningEffort, maxTokens }),
       system: mapped.system || undefined,
       messages: mapped.messages
     },
     signal
   });
+  const usage = normalizedUsage(json.usage);
+  if (usage) onUsage?.(usage);
   return extractText(json) || JSON.stringify(json);
 }
 

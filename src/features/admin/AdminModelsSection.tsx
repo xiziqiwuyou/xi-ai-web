@@ -38,6 +38,7 @@ type AdminModelsSectionProps = {
   displayNameMissing: boolean;
   requestNameMissing: boolean;
   contextWindowInvalid: boolean;
+  maxOutputTokensInvalid: boolean;
   maxInputCharactersInvalid: boolean;
   onApplyPreset: (presetId: string, vendor: ModelVendorEntry) => void;
   onSelect: (modelId: string) => void;
@@ -144,6 +145,7 @@ export function AdminModelsSection({
   displayNameMissing,
   requestNameMissing,
   contextWindowInvalid,
+  maxOutputTokensInvalid,
   maxInputCharactersInvalid,
   onApplyPreset,
   onSelect,
@@ -734,6 +736,23 @@ export function AdminModelsSection({
                 aria-describedby={showFieldErrors && contextWindowInvalid ? "admin-model-context-error" : undefined}
               />
               {showFieldErrors && contextWindowInvalid ? <small id="admin-model-context-error" className="admin-field-error">至少填写 4,096 Token</small> : null}
+            </label>
+            <label htmlFor="admin-model-max-output-tokens">
+              最大输出 Token 数
+              <input
+                id="admin-model-max-output-tokens"
+                aria-label="最大输出 Token 数"
+                type="number"
+                min={1}
+                max={1048576}
+                step={1024}
+                value={form.maxOutputTokens}
+                onChange={(event) => onChange({ maxOutputTokens: Number(event.target.value) })}
+                required
+                aria-invalid={showFieldErrors && maxOutputTokensInvalid}
+                aria-describedby={showFieldErrors && maxOutputTokensInvalid ? "admin-model-max-output-error" : undefined}
+              />
+              {showFieldErrors && maxOutputTokensInvalid ? <small id="admin-model-max-output-error" className="admin-field-error">填写 1 至 1,048,576 Token</small> : null}
             </label>
             <label htmlFor="admin-model-max-input-characters">
               最大输入字符数

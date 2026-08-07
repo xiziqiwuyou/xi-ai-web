@@ -130,6 +130,7 @@ export type ModelCatalogEntry = {
   defaultFor: ModelDefaultFor[];
   enabled: boolean;
   contextWindowTokens?: number;
+  maxOutputTokens?: number;
   maxInputCharacters?: number;
   mediaConfig?: MediaEndpointConfig;
 };
@@ -821,6 +822,7 @@ export type ChatStreamPayload = {
   responseVerbosity?: OpenAIResponseVerbosity;
   includeUsage?: boolean;
   maxTokens?: number;
+  streamOutput?: boolean;
   content: string;
   displayContent?: string;
   attachments?: ChatAttachment[];
@@ -1361,6 +1363,7 @@ export type ChatStreamEvent =
       conversation: ConversationSummary;
       userMessage: Message;
       assistantMessageId: string;
+      deliveryMode?: "native-stream" | "buffered";
     }
   | { type: "token"; token: string }
   | { type: "error"; error: string }

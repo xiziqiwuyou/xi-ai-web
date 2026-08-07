@@ -23,6 +23,9 @@ test("default model registry exposes stable vendors and resolved public labels",
   const catalog = defaultModelCatalog();
   assert(catalog.every((entry) => entry.vendorId === entry.vendor));
   assert(catalog.every((entry) => entry.vendorLabel === vendors.find((vendor) => vendor.id === entry.vendorId)?.label));
+  assert(catalog.every((entry) => Number.isSafeInteger(entry.maxOutputTokens) && entry.maxOutputTokens > 0));
+  assert.equal(catalog.find((entry) => entry.id === "claude-sonnet-5")?.maxOutputTokens, 128_000);
+  assert.equal(catalog.find((entry) => entry.id === "claude-haiku-4-5")?.maxOutputTokens, 64_000);
 
   vendors[0].label = "changed";
   assert.equal(defaultModelVendors()[0].label, "OpenAI");
@@ -50,6 +53,24 @@ test("legacy models migrate to default vendor IDs without changing runtime adapt
   assert.equal(registry.modelCatalog[0].vendorId, "anthropic");
   assert.equal(registry.modelCatalog[0].vendor, "anthropic");
   assert.equal(registry.modelCatalog[0].vendorLabel, "Claude");
+  assert.equal(registry.modelCatalog[0].maxOutputTokens, 16_384);
+});
+
+test("model output limits preserve explicit values and stay within the shared bound", () => {
+  assert.equal(normalizeCatalogEntry({
+    vendor: "anthropic",
+    model: "claude-custom",
+    label: "Claude Custom",
+    capabilities: ["chat"],
+    maxOutputTokens: 32_768
+  }).maxOutputTokens, 32_768);
+  assert.equal(normalizeCatalogEntry({
+    vendor: "openai-compatible",
+    model: "oversized-output",
+    label: "Oversized Output",
+    capabilities: ["chat"],
+    maxOutputTokens: 9_999_999
+  }).maxOutputTokens, 1_048_576);
 });
 
 test("streaming is stripped from model capabilities and remains a chat session concern", () => {

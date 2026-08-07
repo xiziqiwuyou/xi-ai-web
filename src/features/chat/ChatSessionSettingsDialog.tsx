@@ -503,7 +503,7 @@ export default function ChatSessionSettingsDialog({
               options={imageAttachmentLimitOptions}
               onChange={(value) => onSettingsChange({ maxImageAttachments: cleanSettingChoice(Number(value), chatImageAttachmentLimitValues, 4) })}
             />
-            <SettingToggle label="流式输出" description="仅控制对话生成时是否实时显示文本" checked={settings.streamOutput} onChange={(streamOutput) => onSettingsChange({ streamOutput })} />
+            <SettingToggle label="流式输出" description="开启时使用上游原生流式响应；关闭后等待完整回复再显示" checked={settings.streamOutput} onChange={(streamOutput) => onSettingsChange({ streamOutput })} />
             <MenuSetting
               className="figma-tool-mode-menu"
               label="工具调用方式"

@@ -16,6 +16,7 @@ export type ModelPreset = {
   capabilities: ModelCapability[];
   defaultFor: ModelDefaultFor[];
   contextWindowTokens?: number;
+  maxOutputTokens?: number;
   maxInputCharacters?: number;
   mediaConfig?: MediaEndpointConfig;
 };
@@ -32,6 +33,15 @@ function presetContextWindowTokens(preset: ModelPresetSource) {
   if (preset.vendor === "kimi") return 262_144;
   if (preset.vendor === "qwen") return 1_000_000;
   return 128_000;
+}
+
+function presetMaxOutputTokens(preset: ModelPresetSource) {
+  const model = preset.model.toLowerCase();
+  if (preset.vendor === "anthropic") {
+    if (/haiku-4-5(?:-|$)/.test(model)) return 64_000;
+    if (/(?:fable-5|sonnet-5|opus-4-[678]|sonnet-4-6)(?:-|$)/.test(model)) return 128_000;
+  }
+  return 16_384;
 }
 
 function shippedHostedCapabilities(preset: ModelPresetSource): ModelCapability[] {
@@ -394,6 +404,7 @@ export const modelCatalogPresets: ModelPreset[] = baseModelCatalogPresets.map((p
   ...preset,
   endpointProtocol: preset.endpointProtocol || defaultEndpointProtocolForVendor(preset.vendor),
   contextWindowTokens: preset.contextWindowTokens || presetContextWindowTokens(preset),
+  maxOutputTokens: preset.maxOutputTokens || presetMaxOutputTokens(preset),
   maxInputCharacters: preset.maxInputCharacters || 100_000,
   capabilities: [...new Set([...preset.capabilities, ...shippedHostedCapabilities(preset)])]
 }));
