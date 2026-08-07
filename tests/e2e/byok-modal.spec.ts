@@ -99,6 +99,34 @@ test("Shell type-3 JWT handoff exchanges into a session-only API Key", async ({ 
   expect(await page.evaluate((key) => window.localStorage.getItem(key), providerStorageKey)).toBeNull();
 });
 
+test("Shell type-3 JWT handoff uses the appended token when the placeholder was not replaced", async ({ page }) => {
+  const shellJwt = "header.payload.appended-shell-jwt-value";
+  const placeholder = "{{x_s_token}}";
+  let exchangeCalls = 0;
+  await page.route("**/api/public/shell-token/exchange", async (route) => {
+    exchangeCalls += 1;
+    expect(route.request().postDataJSON()).toEqual({ token: shellJwt });
+    await route.fulfill({ json: { apiKey: "sk-shell-appended-2468" } });
+  });
+
+  await page.goto(
+    `/#/jwt_auth?x_s_token=${placeholder}/#/jwt_auth?x_s_token=${encodeURIComponent(shellJwt)}`
+  );
+  await expect(page).toHaveURL(/\/chat$/);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect.poll(() => page.evaluate((key) => window.sessionStorage.getItem(key), providerStorageKey)).toBe(
+    JSON.stringify({ apiKey: "sk-shell-appended-2468", lastModelId: "" })
+  );
+  expect(exchangeCalls).toBe(1);
+  expect(page.url()).not.toContain("x_s_token");
+  expect(page.url()).not.toContain(placeholder);
+  expect(page.url()).not.toContain(encodeURIComponent(placeholder));
+  expect(page.url()).not.toContain(shellJwt);
+  await expect(page.locator("body")).not.toContainText(shellJwt);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), providerStorageKey)).toBeNull();
+  expect(await indexedDbContains(page, shellJwt)).toBe(false);
+});
+
 test("OneAPI settings handoff accepts raw settings without calling the Shell JWT exchange", async ({ page, apiHarness }) => {
   const apiKey = "sk-oneapi-raw-session-2468";
   const settings = JSON.stringify({
@@ -264,3 +292,29 @@ test("malformed Shell type-3 handoff is scrubbed without an exchange request", a
   expect(apiHarness.requests).not.toContain("POST /api/public/shell-token/exchange");
   expect(page.url()).not.toContain("x_s_token");
 });
+
+for (const scenario of [
+  {
+    name: "more than two JWT route segments",
+    fragment: "/#/jwt_auth?x_s_token=header.payload.first-valid-token/#/jwt_auth?x_s_token=header.payload.second-valid-token/#/jwt_auth?x_s_token=header.payload.third-valid-token"
+  },
+  {
+    name: "a repeated route without a final token",
+    fragment: "/#/jwt_auth?x_s_token=header.payload.first-valid-token/#/jwt_auth?mode=handoff"
+  },
+  {
+    name: "an invalid final token instead of falling back to the first token",
+    fragment: "/#/jwt_auth?x_s_token=header.payload.first-valid-token/#/jwt_auth?x_s_token=not-a-jwt"
+  }
+]) {
+  test(`Shell type-3 handoff rejects ${scenario.name} without an exchange request`, async ({ page, apiHarness }) => {
+    await page.goto(scenario.fragment);
+    await expect(page).toHaveURL(/\/chat$/);
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("alert")).toContainText("外部登录令牌无效");
+    expect(apiHarness.requests).not.toContain("POST /api/public/shell-token/exchange");
+    expect(page.url()).not.toContain("x_s_token");
+    expect(await page.evaluate((key) => window.localStorage.getItem(key), providerStorageKey)).toBeNull();
+  });
+}

@@ -55,3 +55,24 @@
 - desktop/mobile secondary E2E (93 passed, 1 skipped)
 - progress-sync E2E (4 passed, 4 skipped)
 - `docker compose config`: not run; Docker CLI unavailable
+
+## Post-v0.0.7 Shell Handoff Compatibility Repair
+
+The immutable `v0.0.7` tag is unchanged. A follow-up working-tree repair now
+handles external systems that leave `{{x_s_token}}` in the first route and
+append a second `/#/jwt_auth?x_s_token=...` route. The parser accepts one
+normal route or exactly two explicit route segments, uses only the final
+segment in the latter case, requires a three-part URL-safe JWT, and rejects
+ambiguous or malformed repeated routes before exchange.
+
+Fresh evidence for this repair:
+
+- `npm run check`
+- `npm run build`
+- `npm run privacy`
+- `npm run ui-contract`
+- `npm run feature-audit`
+- `npm run test:security` (11 passed)
+- `npm run test:server` (81 passed)
+- focused BYOK E2E on desktop and mobile (36 passed)
+- `npm run release-check`

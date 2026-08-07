@@ -2,6 +2,9 @@ import type { UserProviderConfig } from "../../types";
 
 const storageKey = "cherry-web-user-provider";
 const maxShellJwtChars = 8_192;
+const shellJwtRoutePrefix = "/jwt_auth?";
+const repeatedShellJwtRoute = "/#/jwt_auth?";
+const shellJwtPattern = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u;
 const maxOneApiSettingsChars = 12_288;
 const maxOneApiApiKeyChars = 4_096;
 const maxOneApiUrlChars = 2_048;
@@ -17,6 +20,14 @@ export const emptyShellJwtHandoff: ShellJwtHandoff = {
   token: "",
   error: ""
 };
+
+function invalidShellJwtHandoff(): ShellJwtHandoff {
+  return {
+    present: true,
+    token: "",
+    error: "外部登录令牌无效，请手动填写 API Key"
+  };
+}
 
 export type OneApiSettingsHandoffErrorCode =
   | ""
@@ -147,22 +158,26 @@ export function parseOneApiSettingsHandoff(hash: string): OneApiSettingsHandoff 
 
 export function parseShellJwtHandoff(hash: string): ShellJwtHandoff {
   const fragment = String(hash || "").replace(/^#/u, "");
-  const queryIndex = fragment.indexOf("?");
-  const route = (queryIndex >= 0 ? fragment.slice(0, queryIndex) : fragment).replace(/\/+$/u, "") || "/";
-  if (route !== "/jwt_auth") return emptyShellJwtHandoff;
+  if (fragment === "/jwt_auth") return invalidShellJwtHandoff();
+  if (!fragment.startsWith(shellJwtRoutePrefix)) return emptyShellJwtHandoff;
 
-  const query = queryIndex >= 0 ? fragment.slice(queryIndex + 1) : "";
-  const token = cleanText(new URLSearchParams(query).get("x_s_token"));
+  const segments = fragment.split(repeatedShellJwtRoute);
+  if (segments.length > 2) return invalidShellJwtHandoff();
+
+  const query = segments.length === 2
+    ? segments[1]
+    : segments[0].slice(shellJwtRoutePrefix.length);
+  const tokens = new URLSearchParams(query).getAll("x_s_token");
+  if (tokens.length !== 1) return invalidShellJwtHandoff();
+
+  const token = cleanText(tokens[0]);
   const valid = token.length >= 16
     && token.length <= maxShellJwtChars
-    && !/[\u0000-\u001f\u007f]/u.test(token);
+    && !/[\u0000-\u001f\u007f]/u.test(token)
+    && shellJwtPattern.test(token);
   return valid
     ? { present: true, token, error: "" }
-    : {
-        present: true,
-        token: "",
-        error: "外部登录令牌无效，请手动填写 API Key"
-      };
+    : invalidShellJwtHandoff();
 }
 
 function clearHandoffUrl(
