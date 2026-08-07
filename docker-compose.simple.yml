@@ -7,7 +7,7 @@
 #      docker compose -f docker-compose.simple.yml pull
 #      docker compose -f docker-compose.simple.yml up -d
 #
-# The image is pinned to v0.0.7 for repeatable deployment. Change this line
+# The image is pinned to v0.0.8 for repeatable deployment. Change this line
 # explicitly when upgrading; do not let an old server .env override the tag.
 
 name: xi-ai-web
@@ -15,7 +15,7 @@ name: xi-ai-web
 services:
   xi-ai-web:
     # Prebuilt image: no source checkout and no local build are required.
-    image: ghcr.io/xiziqiwuyou/xi-ai-web:v0.0.7
+    image: ghcr.io/xiziqiwuyou/xi-ai-web:v0.0.8
     pull_policy: always
     restart: unless-stopped
 
