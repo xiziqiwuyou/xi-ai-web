@@ -1,3 +1,59 @@
+# xi-ai-web v0.0.11
+
+## Release status
+
+This patch release repairs Claude Messages streaming and replaces the implicit
+4,096-token output fallback with administrator-managed, model-aware limits.
+
+## Included
+
+- The Chat `streamOutput` preference now reaches the server. Tool-free Claude
+  requests use native Anthropic SSE when enabled and a deliberate complete
+  response when disabled.
+- Native Claude `text_delta` events are forwarded incrementally through the
+  existing bounded xi-ai-web SSE buffer. Thinking deltas remain separate from
+  visible assistant text.
+- Tool-bearing requests retain their bounded complete-response loop and expose
+  an explicit buffered state instead of appearing as a broken native stream.
+- Model catalog entries now include `maxOutputTokens`, with Admin editing,
+  presets, bootstrap, import/export, legacy normalization, and restart
+  persistence covered by regression tests.
+- Claude `max_tokens` uses the selected model's configured limit when the user
+  has not selected a lower manual value. Invalid and oversized values fail
+  before any Provider request.
+- Context-history budgeting reserves the selected model's output limit when no
+  lower manual limit is enabled.
+- Root Compose templates and deployment documentation are pinned to
+  `v0.0.11`.
+
+## Verification
+
+- Type-check, Provider/UI/feature/privacy/security contracts, 93 server tests,
+  six focused desktop/mobile Playwright tests, production build,
+  release-check, and an isolated UI runtime passed locally.
+- Deterministic delayed Anthropic fixtures verified that text deltas are
+  observed before upstream completion.
+- No real Claude Provider Key, deployed reverse-proxy first-token check, local
+  Docker build, or physical-device verification is claimed by this release.
+  The multi-architecture image is built and verified by GitHub Actions.
+
+## Upgrade
+
+Pull the immutable image tag and restart the service:
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+## Rollback
+
+Keep `v0.0.10` available. For Compose, replace the image tag with
+`ghcr.io/xiziqiwuyou/xi-ai-web:v0.0.10`, then run
+`docker compose pull && docker compose up -d`.
+
+---
+
 # xi-ai-web v0.0.10
 
 ## Release status
