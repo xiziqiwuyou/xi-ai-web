@@ -23,9 +23,9 @@
 
 ## P3. Publish
 
-- [ ] Commit the release preparation and create annotated `v0.0.11`.
-- [ ] Push `master` and `v0.0.11` without persisting transport overrides.
-- [ ] Confirm remote branch and peeled tag refs.
-- [ ] Wait for the GitHub Actions container workflow and verify the GHCR
+- [x] Commit the release preparation and create annotated `v0.0.11`.
+- [x] Push `master` and `v0.0.11` without persisting transport overrides.
+- [x] Confirm remote branch and peeled tag refs.
+- [x] Wait for the GitHub Actions container workflow and verify the GHCR
       `linux/amd64` and `linux/arm64` manifests.
-- [ ] Archive and journal the release task, then synchronize final `master`.
+- [x] Archive and journal the release task, then synchronize final `master`.

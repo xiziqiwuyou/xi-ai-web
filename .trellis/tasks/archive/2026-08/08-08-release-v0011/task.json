@@ -3,7 +3,7 @@
   "name": "release-v0011",
   "title": "Release v0.0.11",
   "description": "Publish the verified Claude streaming and model output-limit repair as immutable v0.0.11 and a multi-architecture GHCR image.",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": "release metadata, immutable Git tag, GitHub push, and GHCR multi-architecture image publication",
   "package": null,
@@ -11,7 +11,7 @@
   "creator": "xiziqiwuyou",
   "assignee": "xiziqiwuyou",
   "createdAt": "2026-08-08",
-  "completedAt": null,
+  "completedAt": "2026-08-08",
   "branch": null,
   "base_branch": "master",
   "worktree_path": null,
@@ -21,6 +21,6 @@
   "children": [],
   "parent": null,
   "relatedFiles": [],
-  "notes": "Release material prepared for v0.0.11. Passed type-check, privacy, Provider/UI/feature/chat/automation/search contracts, 11 security tests, 93 server tests, production build, and release-check. Local Docker is unavailable; GitHub Actions owns the linux/amd64 and linux/arm64 image build. No real Claude Key or deployed reverse-proxy smoke was used.",
+  "notes": "Published v0.0.11 from c02afb5. Passed type-check, privacy, Provider/UI/feature/chat/automation/search contracts, 11 security tests, 93 server tests, production build, and release-check. GitHub Actions runs 31205185538 and 31205183661 succeeded. GHCR OCI digest sha256:3dfc1646ba6e5a346b4d72956d0f71d4325714df617b67bd5bc57a275f305abe contains linux/amd64 and linux/arm64. Local Docker is unavailable; no real Claude Key or deployed reverse-proxy smoke was used.",
   "meta": {}
 }
