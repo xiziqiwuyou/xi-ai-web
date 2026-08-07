@@ -340,3 +340,36 @@ Verified official DeepSeek Responses API documentation and added stateless DeepS
 ### Next Steps
 
 - None - task complete
+
+
+## Session 11: Release v0.0.10
+
+**Date**: 2026-08-07
+**Task**: Release v0.0.10
+**Branch**: `master`
+
+### Summary
+
+Published immutable v0.0.10 with verified DeepSeek Responses compatibility, pinned Compose deployment files, release notes, and remote tag verification.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `37b9c14` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
