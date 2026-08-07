@@ -9,7 +9,7 @@
 
 ## P1. Integrate P0 Diagnostics
 
-- [x] Review the pending P0 diagnostics, smoke scripts, tests,
+- [x] Review and commit the pending P0 diagnostics, smoke scripts, tests,
       runtime version projection, Docker runtime files, and documentation.
 - [x] Preserve their explicit real-provider and online-deployment validation
       gaps.
@@ -28,7 +28,7 @@
 
 ## P4. Tag and Push
 
-- [ ] Create annotated `v0.0.9` tag on the release commit.
-- [ ] Push `master` and `v0.0.9` to GitHub using the validated temporary proxy
+- [x] Create annotated `v0.0.9` tag on the release commit.
+- [x] Push `master` and `v0.0.9` to GitHub using the validated temporary proxy
       transport.
-- [ ] Confirm the remote branch and tag refs point to the expected commits.
+- [x] Confirm the remote branch and tag refs point to the expected commits.

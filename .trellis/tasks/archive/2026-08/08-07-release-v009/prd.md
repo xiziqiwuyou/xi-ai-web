@@ -22,15 +22,15 @@ capability/search changes and the P0 production-acceptance diagnostics.
 
 ## Acceptance Criteria
 
-- [ ] `package.json` and `package-lock.json` both report `0.0.9`.
-- [ ] Root Compose templates and README name `v0.0.9` consistently.
-- [ ] Release notes accurately summarize the release and do not claim a real
+- [x] `package.json` and `package-lock.json` both report `0.0.9`.
+- [x] Root Compose templates and README name `v0.0.9` consistently.
+- [x] Release notes accurately summarize the release and do not claim a real
       provider or deployed online smoke passed without evidence.
-- [ ] Type-check, build, privacy, provider, security, server, Chat/search,
+- [x] Type-check, build, privacy, provider, security, server, Chat/search,
       UI-runtime, and release checks pass.
-- [ ] The release tag exists locally and on `origin` and points to the release
+- [x] The release tag exists locally and on `origin` and points to the release
       commit.
-- [ ] No API Key, proxy credential, generated image, or deployment secret is
+- [x] No API Key, proxy credential, generated image, or deployment secret is
       committed or included in release notes.
 
 ## Out Of Scope
