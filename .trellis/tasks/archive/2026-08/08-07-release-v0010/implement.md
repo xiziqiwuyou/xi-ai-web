@@ -22,7 +22,7 @@
 
 ## P3. Publish
 
-- [ ] Commit the release preparation.
-- [ ] Create annotated `v0.0.10` and push `master` plus the tag.
-- [ ] Confirm remote branch and peeled tag refs.
-- [ ] Archive and journal the release task, then synchronize final `master`.
+- [x] Commit the release preparation.
+- [x] Create annotated `v0.0.10` and push `master` plus the tag.
+- [x] Confirm remote branch and peeled tag refs.
+- [x] Archive and journal the release task, then synchronize final `master`.
