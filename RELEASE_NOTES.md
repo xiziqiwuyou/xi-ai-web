@@ -1,3 +1,49 @@
+# xi-ai-web v0.0.10
+
+## Release status
+
+This patch release adds DeepSeek Responses API compatibility while preserving
+the existing administrator-managed endpoint routing boundary.
+
+## Included
+
+- Fresh `deepseek-v4-flash` presets use the existing `openai-responses`
+  protocol; `deepseek-v4-pro` remains on `openai-chat` by default.
+- Existing administrator-edited model endpoint selections are preserved and
+  are not rewritten during startup or upgrade.
+- DeepSeek Responses tool rounds are stateless: the adapter omits
+  `previous_response_id` and carries the complete input, output, and function
+  transcript into each subsequent request.
+- Independent GLM/Kimi web search remains separate from Provider-hosted tools;
+  this release does not enable a DeepSeek-hosted search tool.
+- Root Compose templates and deployment documentation are pinned to
+  `v0.0.10`.
+
+## Verification
+
+- Type-check, production build, provider contracts, feature audit, privacy
+  scan, server tests, automation contracts, Chat local contracts, UI contract,
+  release check, and focused desktop/mobile Admin model E2E passed locally.
+- No real DeepSeek Provider Key, local Docker build, deployed-online smoke, or
+  physical-device verification is claimed by this release.
+
+## Upgrade
+
+Pull the immutable image tag and restart the service:
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+## Rollback
+
+Keep `v0.0.9` available. For Compose, replace the image tag with
+`ghcr.io/xiziqiwuyou/xi-ai-web:v0.0.9`, then run
+`docker compose pull && docker compose up -d`.
+
+---
+
 # xi-ai-web v0.0.9
 
 ## Release status

@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Provider protocol and exact regression gates for the release candidate."}
+{"file":".trellis/spec/backend/public-ai-production-boundary.md","reason":"Production acceptance and no-secret release checks."}
