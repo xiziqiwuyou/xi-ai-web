@@ -274,3 +274,36 @@ Removed the shipped Compatible Chat and Compatible Video placeholders, migrated 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 9: Release v0.0.9
+
+**Date**: 2026-08-07
+**Task**: Release v0.0.9
+**Branch**: `master`
+
+### Summary
+
+Published v0.0.9 with Chat vision/search gating, production acceptance diagnostics, versioned Compose templates, release checks, and GitHub tag push. Local validation passed; Docker CLI, live-provider, online deployment, and physical device evidence remain explicit gaps.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `dc61680` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 8
-- **Last Active**: 2026-08-06
+- **Total Sessions**: 9
+- **Last Active**: 2026-08-07
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~276 | Active |
+| `journal-1.md` | ~309 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 9 | 2026-08-07 | Release v0.0.9 | `dc61680` | `master` |
 | 8 | 2026-08-06 | Remove compatible placeholder models | `8fb073a` | `master` |
 | 7 | 2026-08-06 | Cross-device sync approval overlay | `80544d3` | `master` |
 | 6 | 2026-08-06 | Stable low-latency chat streaming | `22e2041` | `master` |
