@@ -307,3 +307,36 @@ Published v0.0.9 with Chat vision/search gating, production acceptance diagnosti
 ### Next Steps
 
 - None - task complete
+
+
+## Session 10: DeepSeek Responses endpoint compatibility
+
+**Date**: 2026-08-07
+**Task**: DeepSeek Responses endpoint compatibility
+**Branch**: `master`
+
+### Summary
+
+Verified official DeepSeek Responses API documentation and added stateless DeepSeek Responses routing for deepseek-v4-flash while preserving Chat Completions for v4-pro and existing models. Added provider, catalog, admin, feature, server, build, privacy, release-check, automation, and desktop/mobile E2E coverage.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a95ec1f` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 9
+- **Total Sessions**: 10
 - **Last Active**: 2026-08-07
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~309 | Active |
+| `journal-1.md` | ~342 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 10 | 2026-08-07 | DeepSeek Responses endpoint compatibility | `a95ec1f` | `master` |
 | 9 | 2026-08-07 | Release v0.0.9 | `dc61680` | `master` |
 | 8 | 2026-08-06 | Remove compatible placeholder models | `8fb073a` | `master` |
 | 7 | 2026-08-06 | Cross-device sync approval overlay | `80544d3` | `master` |
