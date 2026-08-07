@@ -407,3 +407,36 @@ Implemented native Claude streaming controls, model-aware maximum output limits,
 ### Next Steps
 
 - None - task complete
+
+
+## Session 13: Release v0.0.11
+
+**Date**: 2026-08-08
+**Task**: Release v0.0.11
+**Branch**: `master`
+
+### Summary
+
+Published the Claude streaming and model-aware output-limit repair as v0.0.11; GitHub Actions verified and pushed the amd64/arm64 GHCR OCI image with immutable digest sha256:3dfc1646ba6e5a346b4d72956d0f71d4325714df617b67bd5bc57a275f305abe.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c02afb5` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
