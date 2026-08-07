@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 
 import {
   formatSearchContext,
+  IndependentSearchError,
   isSearchServiceReady,
   normalizeSearchService,
   runIndependentWebSearch
 } from "../server/search/registry.mjs";
+import { resolveRequestedTools } from "../server/tools/registry.mjs";
 
 const originalFetch = globalThis.fetch;
 
@@ -79,6 +81,16 @@ async function testNormalizationAndReadiness() {
     apiKey: "kimi-key",
     model: "kimi-contract"
   }), true);
+  await assert.rejects(
+    runIndependentWebSearch({
+      upstreamBaseUrl: "https://api.xi-ai.cn",
+      service: { provider: "glm", apiKey: "" },
+      query: "missing key"
+    }),
+    (error) => error instanceof IndependentSearchError &&
+      error.status === 400 &&
+      error.code === "SEARCH_KEY_REQUIRED"
+  );
 }
 
 async function testGlmRequestAndNormalization() {
@@ -249,6 +261,11 @@ async function testKimiToolLoop() {
 }
 
 async function testBoundsAndMalformedResponses() {
+  const invalidResponse = (error) => (
+    error instanceof IndependentSearchError &&
+    error.status === 502 &&
+    error.code === "SEARCH_RESPONSE_INVALID"
+  );
   const repeatingToolResponse = (index) => jsonResponse({
     choices: [{
       message: {
@@ -280,7 +297,7 @@ async function testBoundsAndMalformedResponses() {
         },
         query: "loop"
       }),
-      /4-round limit/
+      invalidResponse
     );
   });
 
@@ -297,7 +314,7 @@ async function testBoundsAndMalformedResponses() {
         },
         query: "malformed"
       }),
-      /malformed search_result array/
+      invalidResponse
     );
   });
 
@@ -315,7 +332,7 @@ async function testBoundsAndMalformedResponses() {
         },
         query: "malformed"
       }),
-      /empty final answer/
+      invalidResponse
     );
   });
 
@@ -333,7 +350,7 @@ async function testBoundsAndMalformedResponses() {
         },
         query: "malformed"
       }),
-      /malformed tool_calls/
+      invalidResponse
     );
   });
 }
@@ -360,9 +377,9 @@ async function testCredentialRedaction() {
       caught = error;
     }
     assert(caught instanceof Error);
-    assert.match(caught.message, /request failed/);
+    assert.equal(caught.code, "SEARCH_NETWORK_FAILED");
     assert(!caught.message.includes(apiKey));
-    assert(caught.message.includes("[redacted]"));
+    assert.equal(caught.message.includes("upstream failure"), false);
   });
 
   await withMockFetch([
@@ -378,9 +395,65 @@ async function testCredentialRedaction() {
         },
         query: "redaction"
       }),
-      (error) => error.message.includes("status 401") && !error.message.includes(apiKey)
+      (error) => (
+        error instanceof IndependentSearchError &&
+        error.status === 401 &&
+        error.code === "SEARCH_AUTH_FAILED" &&
+        !error.message.includes(apiKey)
+      )
     );
   });
+}
+
+async function testErrorClassificationAndCancellation() {
+  const scenarios = [
+    { upstreamStatus: 403, status: 401, code: "SEARCH_AUTH_FAILED" },
+    { upstreamStatus: 404, status: 422, code: "SEARCH_ENDPOINT_UNSUPPORTED" },
+    { upstreamStatus: 429, status: 429, code: "SEARCH_RATE_LIMITED" },
+    { upstreamStatus: 503, status: 502, code: "SEARCH_UPSTREAM_UNAVAILABLE" }
+  ];
+
+  for (const scenario of scenarios) {
+    await withMockFetch([() => jsonResponse({}, scenario.upstreamStatus)], async () => {
+      await assert.rejects(
+        runIndependentWebSearch({
+          upstreamBaseUrl: "https://api.xi-ai.cn",
+          service: { provider: "glm", apiKey: "classification-key" },
+          query: "classification"
+        }),
+        (error) => (
+          error instanceof IndependentSearchError &&
+          error.status === scenario.status &&
+          error.code === scenario.code
+        )
+      );
+    });
+  }
+
+  await withMockFetch([() => {
+    throw new DOMException("aborted", "AbortError");
+  }], async () => {
+    await assert.rejects(
+      runIndependentWebSearch({
+        upstreamBaseUrl: "https://api.xi-ai.cn",
+        service: { provider: "glm", apiKey: "abort-key" },
+        query: "abort"
+      }),
+      (error) => error?.name === "AbortError"
+    );
+  });
+}
+
+function testIndependentSearchDoesNotRequireModelCapabilities() {
+  const resolved = resolveRequestedTools({
+    settings: [{ name: "web_search", enabled: true }],
+    entry: { vendor: "openai", capabilities: ["chat"] },
+    requestedNames: ["web_search"]
+  });
+  assert.equal(resolved.searchTools.length, 1);
+  assert.equal(resolved.hostedTools.length, 0);
+  assert.equal(resolved.localTools.length, 0);
+  assert.deepEqual(resolved.unavailable, []);
 }
 
 async function testManagedUpstreamOverridesClientUrl() {
@@ -458,6 +531,8 @@ try {
   await testKimiToolLoop();
   await testBoundsAndMalformedResponses();
   await testCredentialRedaction();
+  await testErrorClassificationAndCancellation();
+  testIndependentSearchDoesNotRequireModelCapabilities();
   await testManagedUpstreamOverridesClientUrl();
   await testFormattedContext();
   console.log("search contracts passed");

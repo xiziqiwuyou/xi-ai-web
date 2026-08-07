@@ -20,6 +20,7 @@ import {
   preferredModelFor
 } from "../../components/workbench";
 import { createChatAttachment } from "./attachmentUtils";
+import { supportsChatImageInput } from "./chatCapabilities";
 import {
   boundedChatAttachments,
   chatAttachmentsForRequest,
@@ -86,7 +87,6 @@ import type {
   ModelCatalogEntry,
   PromptPreset,
   PublicBootstrapPayload,
-  SearchProviderKind,
   ToolSetting,
   UserProviderConfig
 } from "../../types";
@@ -110,6 +110,12 @@ type StreamingRenderState = {
   conversationId: string;
   messageId: string;
   content: string;
+};
+
+type PendingModelChange = {
+  conversationId: string;
+  targetModelId: string;
+  imageCount: number;
 };
 
 const STREAMING_PERSIST_INTERVAL_MS = 300;
@@ -155,6 +161,7 @@ function ChatModule({
   const [chatSkills, setChatSkills] = useState<AgentSkillDefinition[]>([]);
   const [streamingConversationId, setStreamingConversationId] = useState("");
   const [clearConversationId, setClearConversationId] = useState("");
+  const [pendingModelChange, setPendingModelChange] = useState<PendingModelChange | null>(null);
   const knowledgeCatalog = useKnowledgeCatalog();
   const conversationsRef = useRef(conversationList);
   const initializedRef = useRef(false);
@@ -165,6 +172,8 @@ function ChatModule({
   const streamingFrameRef = useRef<number | null>(null);
   const streamingPersistTimerRef = useRef<number | null>(null);
   const titleSummariesInFlightRef = useRef(new Set<string>());
+  const chatModelsRef = useRef<ModelCatalogEntry[]>([]);
+  const lastModelIdRef = useRef("");
 
   useEffect(() => () => {
     abortRef.current?.abort();
@@ -179,12 +188,15 @@ function ChatModule({
   }, []);
 
   const chatModels = useMemo(() => modelsForCapability(modelCatalog, "chat"), [modelCatalog]);
+  chatModelsRef.current = chatModels;
+  lastModelIdRef.current = userProvider.lastModelId || "";
   const displayedConversations = useMemo(
     () => displayedSessionStack(conversationList, sessionUi),
     [conversationList, sessionUi]
   );
   const connectionReady = isUserProviderReady(userProvider);
-  const searchReady = connectionReady;
+  const searchConfigured = connectionReady;
+  const independentSearchEnabled = Boolean(toolSettings.find((tool) => tool.name === "web_search")?.enabled);
   const assistantAvatarUrl = assistantAvatarPresets.find((preset) => preset.id === chatSettings.assistantAvatarId)?.image || assistantAvatarPresets[0].image;
   const userAvatarUrl = chatSettings.userAvatar ||
     personalAvatarPresets.find((preset) => preset.id === chatSettings.userAvatarPresetId)?.image ||
@@ -252,6 +264,14 @@ function ChatModule({
       ...current,
       [id]: { ...(current[id] || defaultSessionUi(false)), ...patch }
     }));
+  }, []);
+
+  const setRequestPhase = useCallback((id: string, requestPhase: SessionUiState["requestPhase"]) => {
+    setSessionUi((current) => {
+      const ui = current[id] || defaultSessionUi(false);
+      if (ui.requestPhase === requestPhase) return current;
+      return { ...current, [id]: { ...ui, requestPhase } };
+    });
   }, []);
 
   const createConversation = useCallback(() => {
@@ -390,6 +410,26 @@ function ChatModule({
     });
   }, [conversationList]);
 
+  useEffect(() => {
+    if (connectionReady && independentSearchEnabled) return;
+    setSessionUi((current) => {
+      let changed = false;
+      const next = Object.fromEntries(Object.entries(current).map(([id, ui]) => {
+        if (!ui.searchProvider) return [id, ui];
+        changed = true;
+        return [id, {
+          ...ui,
+          searchProvider: "" as const,
+          requestPhase: "idle" as const,
+          notice: independentSearchEnabled
+            ? "API Key 已移除，联网搜索已关闭。"
+            : "联网搜索已由后台关闭。"
+        }];
+      }));
+      return changed ? next : current;
+    });
+  }, [connectionReady, independentSearchEnabled]);
+
   const modelForSession = useCallback(
     (conversationId: string) => {
       const requestedId = sessionUi[conversationId]?.modelId;
@@ -446,6 +486,7 @@ function ChatModule({
       }
 
       if (event.type === "token") {
+        setRequestPhase(conversationId, "generating");
         if (!chatSettings.streamOutput) return;
         const stream = streamingRenderRef.current;
         if (!stream || stream.conversationId !== conversationId) return;
@@ -456,10 +497,12 @@ function ChatModule({
       }
 
       if (event.type === "error") {
+        setRequestPhase(conversationId, "failed");
         patchSessionUi(conversationId, { notice: event.error });
         return;
       }
 
+      setRequestPhase(conversationId, "idle");
       const finalMessageId = streamingMessageIdRef.current;
       clearStreamingSchedules();
       streamingRenderRef.current = null;
@@ -485,7 +528,8 @@ function ChatModule({
       commitConversations,
       patchSessionUi,
       scheduleStreamingPersistence,
-      scheduleStreamingRender
+      scheduleStreamingRender,
+      setRequestPhase
     ]
   );
 
@@ -507,7 +551,11 @@ function ChatModule({
       patchSessionUi(conversation.id, { notice: "当前没有可用的对话模型。" });
       return;
     }
-    if (ui.attachments.some((attachment) => attachment.kind === "image") && !selectedModel.capabilities.includes("vision")) {
+    if (ui.searchProvider && !rawContent) {
+      patchSessionUi(conversation.id, { notice: "启用联网搜索时，请先输入要搜索的问题。" });
+      return;
+    }
+    if (ui.attachments.some((attachment) => attachment.kind === "image") && !supportsChatImageInput(selectedModel)) {
       patchSessionUi(conversation.id, { notice: "当前模型不支持图片输入。" });
       return;
     }
@@ -538,7 +586,7 @@ function ChatModule({
     const selectedSkills = chatSkills.filter((skill) => (ui.skillIds || []).includes(skill.id));
     const selectedApp = appPresets.find((app) => app.enabled && app.id === ui.appId);
     const compatibilityOptions = {
-      searchReady,
+      searchReady: searchConfigured,
       invocationMode: chatSettings.toolInvocationMode
     };
     const incompatibleSkill = selectedSkills.find((skill) => !skillCompatibility(skill, toolSettings, selectedModel, compatibilityOptions).compatible);
@@ -547,8 +595,13 @@ function ChatModule({
       patchSessionUi(conversation.id, { notice: `Skill“${incompatibleSkill.name}”不可用：${compatibility.reason}` });
       return;
     }
+    const selectedSkillTools = selectedSkills.flatMap((skill) => skill.allowedTools);
+    if (selectedSkillTools.includes("web_search") && !ui.searchProvider) {
+      patchSessionUi(conversation.id, { notice: "当前 Skill 需要联网搜索，请先选择智谱 GLM 或 Kimi。" });
+      return;
+    }
     const allowedTools = [...new Set([
-      ...selectedSkills.flatMap((skill) => skill.allowedTools),
+      ...selectedSkillTools,
       ...(ui.searchProvider ? ["web_search"] : [])
     ])];
     const toolsCompatibility = toolSetCompatibility(allowedTools, toolSettings, selectedModel, compatibilityOptions);
@@ -556,9 +609,8 @@ function ChatModule({
       patchSessionUi(conversation.id, { notice: toolsCompatibility.reason });
       return;
     }
-    const inferredSearchProvider: SearchProviderKind = selectedModel.vendor === "kimi" ? "kimi" : "glm";
-    const requestedSearchService = allowedTools.includes("web_search")
-      ? searchServiceForUserProvider(ui.searchProvider || inferredSearchProvider, userProvider)
+    const requestedSearchService = allowedTools.includes("web_search") && ui.searchProvider
+      ? searchServiceForUserProvider(ui.searchProvider, userProvider)
       : undefined;
     if (allowedTools.includes("web_search") && !requestedSearchService) {
       patchSessionUi(conversation.id, { notice: "当前 API Key 无法用于联网搜索，请先更新访问配置。" });
@@ -601,13 +653,14 @@ function ChatModule({
     }
 
     patchSessionUi(conversation.id, { draft: "", appId: "", notice: "" });
+    setRequestPhase(conversation.id, ui.searchProvider ? "searching" : "generating");
     setStreamingConversationId(conversation.id);
     const controller = new AbortController();
     abortRef.current = controller;
     const selectedHistory = selectChatHistory(requestConversation.messages, chatSettings);
     const attachmentLimits = {
       imageLimit: chatSettings.maxImageAttachments,
-      includeImages: selectedModel.capabilities.includes("vision")
+      includeImages: supportsChatImageInput(selectedModel)
     };
     const messageAttachments = boundedChatAttachments(ui.attachments, attachmentLimits);
     const requestAttachments = chatAttachmentsForRequest(selectedHistory, messageAttachments, attachmentLimits);
@@ -639,11 +692,13 @@ function ChatModule({
         knowledgeBaseIds.length ? knowledgeCatalog.csrfToken : ""
       );
       patchSessionUi(conversation.id, { attachments: [] });
+      setRequestPhase(conversation.id, "idle");
     } catch (error) {
       renderStreamingConversation(true);
       clearStreamingSchedules();
       streamingRenderRef.current = null;
       const aborted = controller.signal.aborted;
+      setRequestPhase(conversation.id, aborted ? "cancelled" : "failed");
       const messageId = abortRef.current === controller ? streamingMessageIdRef.current : "";
       if (messageId) {
         commitConversations((current) => settleStreamingMessage(
@@ -690,6 +745,11 @@ function ChatModule({
     event.target.value = "";
     if (!files.length) return;
 
+    if (!supportsChatImageInput(modelForSession(conversationId))) {
+      patchSessionUi(conversationId, { notice: "当前模型不支持图片输入。" });
+      return;
+    }
+
     const currentCount = imageAttachmentCount(sessionUi[conversationId]?.attachments || []);
     const availableSlots = Math.max(0, chatSettings.maxImageAttachments - currentCount);
     if (!availableSlots) {
@@ -714,6 +774,15 @@ function ChatModule({
 
     setSessionUi((current) => {
       const ui = current[conversationId] || defaultSessionUi(false);
+      const latestModels = chatModelsRef.current;
+      const latestModel = latestModels.find((model) => model.id === ui.modelId)
+        || preferredModelFor(latestModels, "chat", lastModelIdRef.current);
+      if (!supportsChatImageInput(latestModel)) {
+        return {
+          ...current,
+          [conversationId]: { ...ui, notice: "当前模型不支持图片输入。" }
+        };
+      }
       const remainingSlots = Math.max(0, chatSettings.maxImageAttachments - imageAttachmentCount(ui.attachments));
       const accepted = attachments.slice(0, remainingSlots);
       const overflowCount = Math.max(
@@ -759,9 +828,44 @@ function ChatModule({
     }
   };
 
-  const changeModel = (conversationId: string, modelId: string) => {
-    patchSessionUi(conversationId, { modelId });
+  const applyModelChange = (conversationId: string, modelId: string) => {
+    patchSessionUi(conversationId, { modelId, notice: "", requestPhase: "idle" });
     onUserProviderChange({ lastModelId: modelId });
+  };
+
+  const changeModel = (conversationId: string, modelId: string) => {
+    const targetModel = chatModels.find((model) => model.id === modelId);
+    if (!targetModel) {
+      patchSessionUi(conversationId, { notice: "所选模型已不可用，请重新选择。" });
+      return;
+    }
+    const ui = sessionUi[conversationId] || defaultSessionUi(false);
+    const imageCount = imageAttachmentCount(ui.attachments);
+    if (imageCount && !supportsChatImageInput(targetModel)) {
+      setPendingModelChange({ conversationId, targetModelId: modelId, imageCount });
+      return;
+    }
+    applyModelChange(conversationId, modelId);
+  };
+
+  const confirmPendingModelChange = () => {
+    if (!pendingModelChange) return;
+    const { conversationId, targetModelId, imageCount } = pendingModelChange;
+    setSessionUi((current) => {
+      const ui = current[conversationId] || defaultSessionUi(false);
+      return {
+        ...current,
+        [conversationId]: {
+          ...ui,
+          modelId: targetModelId,
+          attachments: ui.attachments.filter((attachment) => attachment.kind !== "image"),
+          requestPhase: "idle",
+          notice: `已移除 ${imageCount} 张图片并切换模型。`
+        }
+      };
+    });
+    onUserProviderChange({ lastModelId: targetModelId });
+    setPendingModelChange(null);
   };
 
   const summarizeConversationTitle = async (conversation: Conversation) => {
@@ -925,7 +1029,7 @@ function ChatModule({
               models={chatModels}
               skills={chatSkills}
               tools={toolSettings}
-              searchReady={searchReady}
+              searchConfigured={searchConfigured}
               knowledgeAuthenticated={knowledgeCatalog.status === "authenticated"}
               knowledgeBases={knowledgeCatalog.bases}
               apps={appPresets.filter((app) => app.enabled)}
@@ -939,7 +1043,12 @@ function ChatModule({
               onOpenSettings={openSettings}
               onToggle={() => toggleConversation(conversation, ui)}
               onTogglePinned={() => toggleConversationPinned(conversation)}
-              onDraftChange={(draft) => patchSessionUi(conversation.id, { draft })}
+              onDraftChange={(draft) => patchSessionUi(conversation.id, {
+                draft,
+                requestPhase: ui.requestPhase === "failed" || ui.requestPhase === "cancelled"
+                  ? "idle"
+                  : ui.requestPhase
+              })}
               onAddSkill={(skillId) => patchSessionUi(conversation.id, { skillIds: [...new Set([...(ui.skillIds || []), skillId])] })}
               onRemoveSkill={(skillId) => patchSessionUi(conversation.id, { skillIds: (ui.skillIds || []).filter((id) => id !== skillId) })}
               onSelectApp={(appId) => patchSessionUi(conversation.id, { appId })}
@@ -947,7 +1056,7 @@ function ChatModule({
               onModelChange={(modelId) => changeModel(conversation.id, modelId)}
               onSearchProviderChange={(searchProvider) => {
                 if (!searchProvider) {
-                  patchSessionUi(conversation.id, { searchProvider: "", notice: "" });
+                  patchSessionUi(conversation.id, { searchProvider: "", requestPhase: "idle", notice: "" });
                   return;
                 }
                 const searchTool = toolSettings.find((tool) => tool.name === "web_search");
@@ -960,7 +1069,7 @@ function ChatModule({
                   onRequestApiConfig();
                   return;
                 }
-                patchSessionUi(conversation.id, { searchProvider, notice: "" });
+                patchSessionUi(conversation.id, { searchProvider, requestPhase: "idle", notice: "" });
               }}
               onKnowledgeChange={(knowledgeBaseIds) => patchSessionUi(conversation.id, {
                 knowledgeBaseIds,
@@ -972,10 +1081,17 @@ function ChatModule({
               })}
               onContextMessageCountChange={updateContextMessageCount}
               onImageInput={(event) => void attachImage(conversation.id, event)}
+              onImageInputBlocked={() => patchSessionUi(conversation.id, {
+                notice: "当前模型不支持图片输入。"
+              })}
               onLongPaste={(text) => void attachPastedText(conversation.id, text)}
               onRemoveImage={(attachmentId) => patchSessionUi(conversation.id, {
                 attachments: ui.attachments.filter((attachment) => attachment.id !== attachmentId),
                 notice: ""
+              })}
+              onRemoveAllImages={() => patchSessionUi(conversation.id, {
+                attachments: ui.attachments.filter((attachment) => attachment.kind !== "image"),
+                notice: "已移除不兼容的图片附件。"
               })}
               onClear={() => setClearConversationId(conversation.id)}
               onSend={() => void sendMessage(conversation)}
@@ -1001,6 +1117,16 @@ function ChatModule({
         confirmLabel="清除消息"
         onCancel={() => setClearConversationId("")}
         onConfirm={() => clearConversationId && clearMessages(clearConversationId)}
+      />
+      <ConfirmationDialog
+        open={Boolean(pendingModelChange)}
+        title="切换到不支持图片的模型？"
+        description={pendingModelChange
+          ? `当前有 ${pendingModelChange.imageCount} 张待发送图片。继续切换到 ${compactModelLabel(chatModels.find((model) => model.id === pendingModelChange.targetModelId)) || "所选模型"} 将移除这些图片。`
+          : "继续切换将移除待发送图片。"}
+        confirmLabel="切换并移除图片"
+        onCancel={() => setPendingModelChange(null)}
+        onConfirm={confirmPendingModelChange}
       />
     </section>
   );

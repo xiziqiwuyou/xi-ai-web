@@ -13,6 +13,7 @@ import { retrieveContext, formatRetrievedContext } from "./knowledge/retrieval.m
 import { createProviderAdapter } from "./providers/registry.mjs";
 import {
   formatSearchContext,
+  IndependentSearchError,
   isSearchServiceReady,
   runIndependentWebSearch
 } from "./search/registry.mjs";
@@ -1243,6 +1244,15 @@ function publicProviderError(error, ...connections) {
     if (connection?.apiKey) message = message.replaceAll(connection.apiKey, "[redacted]");
   });
   return compact(message, 700);
+}
+
+function sendIndependentSearchError(res, error) {
+  return res.status(error.status).json({
+    error: {
+      code: error.code,
+      message: error.message
+    }
+  });
 }
 
 async function prepareIndependentSearch({ resolvedTools, service, query, signal, trace }) {
@@ -2843,15 +2853,27 @@ app.post(
     }
     const controller = createRequestAbortController(req, res);
     const cloudKnowledge = await prepareCloudKnowledge(req, displayContent, controller.signal);
+    const independentSearchService = resolvedTools.searchTools.length
+      ? {
+          ...(
+            req.body?.searchService &&
+            typeof req.body.searchService === "object" &&
+            !Array.isArray(req.body.searchService)
+              ? req.body.searchService
+              : {}
+          ),
+          apiKey: connection.apiKey
+        }
+      : undefined;
     let searchContext = "";
     if (resolvedTools.searchTools.length) {
-      if (!isSearchServiceReady(req.body?.searchService, { upstreamBaseUrl: db.settings.upstreamBaseUrl })) {
+      if (!isSearchServiceReady(independentSearchService, { upstreamBaseUrl: db.settings.upstreamBaseUrl })) {
         throw httpError(400, "请先配置独立联网搜索服务的 API Key");
       }
       try {
         searchContext = await prepareIndependentSearch({
           resolvedTools,
-          service: req.body.searchService,
+          service: independentSearchService,
           query: displayContent,
           signal: controller.signal,
           trace: toolContext.trace
@@ -2860,6 +2882,9 @@ app.post(
         if (req.upstreamTimedOut) throw httpError(504, "上游服务响应超时");
         if (searchError?.name === "AbortError" || controller.signal.aborted) {
           throw httpError(499, "请求已取消");
+        }
+        if (searchError instanceof IndependentSearchError) {
+          return sendIndependentSearchError(res, searchError);
         }
         throw httpError(502, publicProviderError(searchError, connection, req.body?.searchService));
       }
@@ -3152,6 +3177,7 @@ app.post(
     } catch (error) {
       if (req.upstreamTimedOut) throw httpError(504, "上游服务响应超时");
       if (error?.name === "AbortError" || controller.signal.aborted) throw httpError(499, "请求已取消");
+      if (error instanceof IndependentSearchError) return sendIndependentSearchError(res, error);
       throw httpError(502, publicProviderError(error, connection, req.body?.searchService));
     }
   })

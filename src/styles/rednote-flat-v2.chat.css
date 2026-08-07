@@ -995,6 +995,18 @@
   color: var(--xhs-red);
 }
 
+.figma-session-tools > .figma-image-input-button[aria-disabled="true"] {
+  cursor: not-allowed;
+  color: color-mix(in srgb, var(--xhs-muted) 62%, transparent);
+  opacity: 0.68;
+}
+
+.figma-session-tools > .figma-image-input-button[aria-disabled="true"]:hover,
+.figma-session-tools > .figma-image-input-button[aria-disabled="true"]:focus-visible {
+  background: var(--xhs-soft-2);
+  color: var(--xhs-muted);
+}
+
 .figma-session-tools > button.clear {
   margin-left: auto;
 }
@@ -1055,6 +1067,10 @@
 .figma-context-count-menu .figma-menu-trigger-value strong {
   font-size: 10px;
   font-weight: 500;
+}
+
+.figma-search-provider-menu.searching .figma-menu-trigger {
+  cursor: progress;
 }
 
 .figma-reasoning-menu .figma-menu-popover {
@@ -1356,6 +1372,41 @@
   scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: color-mix(in srgb, var(--xhs-muted) 24%, transparent) transparent;
+}
+
+.figma-image-attachments.incompatible .figma-image-attachment.image {
+  border-color: color-mix(in srgb, var(--xhs-danger) 40%, var(--xhs-line));
+}
+
+.figma-incompatible-images {
+  display: flex;
+  min-width: 0;
+  grid-column: 1 / -1;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--xhs-danger);
+  font-size: 10px;
+}
+
+.figma-incompatible-images span {
+  min-width: 0;
+}
+
+.figma-incompatible-images button {
+  min-height: 28px;
+  flex: 0 0 auto;
+  padding: 4px 9px;
+  border: 1px solid color-mix(in srgb, var(--xhs-danger) 35%, var(--xhs-line));
+  border-radius: 8px;
+  background: transparent;
+  color: var(--xhs-danger);
+  font-size: 10px;
+}
+
+.figma-incompatible-images button:hover,
+.figma-incompatible-images button:focus-visible {
+  background: color-mix(in srgb, var(--xhs-danger) 8%, transparent);
 }
 
 .figma-image-attachment {
@@ -2159,6 +2210,10 @@
     grid-template-columns: minmax(0, 1fr);
     gap: 4px;
     padding: 0;
+  }
+
+  .figma-incompatible-images {
+    align-items: flex-start;
   }
 
   .figma-image-attachment {

@@ -34,6 +34,15 @@ const KIMI_WEB_SEARCH_TOOL = Object.freeze({
   function: Object.freeze({ name: "$web_search" })
 });
 
+export class IndependentSearchError extends Error {
+  constructor(status, code, message) {
+    super(message);
+    this.name = "IndependentSearchError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
 function isRecord(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -84,21 +93,48 @@ function endpointUrl(baseUrl, path) {
 }
 
 function normalizeQuery(value) {
-  if (typeof value !== "string") throw new Error("Search query must be a string");
+  if (typeof value !== "string") {
+    throw new IndependentSearchError(400, "SEARCH_QUERY_INVALID", "联网搜索问题格式无效");
+  }
   const query = truncateUnicode(value.trim(), MAX_QUERY_CHARS);
-  if (!query) throw new Error("Search query is required");
+  if (!query) throw new IndependentSearchError(400, "SEARCH_QUERY_REQUIRED", "请先输入要搜索的问题");
   return query;
 }
 
-function redactSecret(value, secret) {
-  const message = truncateUnicode(value || "Search request failed", 400);
-  return secret ? message.split(secret).join("[redacted]") : message;
+function searchHttpError(label, status) {
+  if (status === 401 || status === 403) {
+    return new IndependentSearchError(
+      401,
+      "SEARCH_AUTH_FAILED",
+      `${label}鉴权失败，请检查当前 API Key 是否支持该搜索服务`
+    );
+  }
+  if (status === 404 || status === 405) {
+    return new IndependentSearchError(
+      422,
+      "SEARCH_ENDPOINT_UNSUPPORTED",
+      `${label}端点不可用，请切换搜索厂商或联系管理员检查上游配置`
+    );
+  }
+  if (status === 429) {
+    return new IndependentSearchError(
+      429,
+      "SEARCH_RATE_LIMITED",
+      `${label}请求过于频繁，请稍后重试`
+    );
+  }
+  if (status >= 500) {
+    return new IndependentSearchError(502, "SEARCH_UPSTREAM_UNAVAILABLE", `${label}服务暂时不可用`);
+  }
+  return new IndependentSearchError(502, "SEARCH_REQUEST_FAILED", `${label}请求失败`);
 }
 
-function safeFailureMessage(error, secret) {
-  if (error?.name === "AbortError") return "Search request was aborted";
-  const message = error instanceof Error ? error.message : String(error || "Search request failed");
-  return redactSecret(message, secret);
+function malformedSearchResponse(label, detail) {
+  return new IndependentSearchError(
+    502,
+    "SEARCH_RESPONSE_INVALID",
+    `${label}返回格式异常${detail ? `：${detail}` : ""}`
+  );
 }
 
 async function postJson(label, url, apiKey, body, signal) {
@@ -115,26 +151,33 @@ async function postJson(label, url, apiKey, body, signal) {
       signal
     });
   } catch (error) {
-    const wrapped = new Error(`${label} request failed: ${safeFailureMessage(error, apiKey)}`);
-    if (error?.name === "AbortError") wrapped.name = "AbortError";
-    throw wrapped;
+    if (error?.name === "AbortError") {
+      const aborted = new Error("Search request was aborted");
+      aborted.name = "AbortError";
+      throw aborted;
+    }
+    throw new IndependentSearchError(
+      502,
+      "SEARCH_NETWORK_FAILED",
+      `${label}网络连接失败`
+    );
   }
 
   if (!response || typeof response.ok !== "boolean") {
-    throw new Error(`${label} returned an invalid HTTP response`);
+    throw malformedSearchResponse(label, "HTTP 响应无效");
   }
   if (!response.ok) {
     const status = Number.isFinite(Number(response.status)) ? Number(response.status) : "unknown";
-    throw new Error(`${label} request failed with status ${status}`);
+    throw searchHttpError(label, status);
   }
 
   let payload;
   try {
     payload = await response.json();
   } catch {
-    throw new Error(`${label} returned malformed JSON`);
+    throw malformedSearchResponse(label, "JSON 无法解析");
   }
-  if (!isRecord(payload)) throw new Error(`${label} returned a malformed response`);
+  if (!isRecord(payload)) throw malformedSearchResponse(label, "响应结构无效");
   return payload;
 }
 
@@ -295,7 +338,7 @@ export function isSearchServiceReady(value, options) {
 
 async function runGlmSearch(service, query, signal) {
   const payload = await postJson(
-    "GLM web search",
+    "智谱 GLM 联网搜索",
     endpointUrl(service.baseUrl, "/paas/v4/web_search"),
     service.apiKey,
     {
@@ -336,7 +379,7 @@ async function runKimiSearch(service, query, signal) {
 
   for (let round = 1; round <= MAX_KIMI_ROUNDS; round += 1) {
     const payload = await postJson(
-      "Kimi web search",
+      "Kimi 联网搜索",
       url,
       service.apiKey,
       {
@@ -387,15 +430,28 @@ async function runKimiSearch(service, query, signal) {
 
 export async function runIndependentWebSearch({ service: inputService, query: inputQuery, signal, upstreamBaseUrl } = {}) {
   const service = normalizeSearchService(inputService, { upstreamBaseUrl });
-  if (!service.provider) throw new Error("Unsupported search service provider");
-  if (!validHttpBaseUrl(service.baseUrl)) throw new Error("Search service base URL must be a valid HTTP(S) URL");
-  if (!service.apiKey) throw new Error("Search service API key is required");
-  if (service.provider === "kimi" && !service.model) throw new Error("Kimi search model is required");
+  if (!service.provider) {
+    throw new IndependentSearchError(400, "SEARCH_PROVIDER_INVALID", "不支持该联网搜索厂商");
+  }
+  if (!validHttpBaseUrl(service.baseUrl)) {
+    throw new IndependentSearchError(500, "SEARCH_UPSTREAM_INVALID", "管理员配置的联网搜索地址无效");
+  }
+  if (!service.apiKey) {
+    throw new IndependentSearchError(400, "SEARCH_KEY_REQUIRED", "请先填写 API Key");
+  }
+  if (service.provider === "kimi" && !service.model) {
+    throw new IndependentSearchError(500, "SEARCH_MODEL_REQUIRED", "Kimi 联网搜索模型未配置");
+  }
 
   const query = normalizeQuery(inputQuery);
-  return service.provider === "glm"
-    ? runGlmSearch(service, query, signal)
-    : runKimiSearch(service, query, signal);
+  try {
+    return await (service.provider === "glm"
+      ? runGlmSearch(service, query, signal)
+      : runKimiSearch(service, query, signal));
+  } catch (error) {
+    if (error instanceof IndependentSearchError || error?.name === "AbortError") throw error;
+    throw malformedSearchResponse(service.provider === "glm" ? "智谱 GLM 联网搜索" : "Kimi 联网搜索", "响应结构无效");
+  }
 }
 
 export function formatSearchContext(result) {

@@ -36,6 +36,7 @@ import { FigmaMenu, getFloatingHorizontalOffset, getFloatingVerticalPlacement } 
 import { compactModelLabel } from "../../components/workbench";
 import { createClientId } from "../../utils/clientId";
 import ChatMessageContent from "./ChatMessageContent";
+import { countIncompatibleChatImages, supportsChatImageInput } from "./chatCapabilities";
 import {
   chatContextMessageCountValues,
   cleanSettingChoice,
@@ -46,7 +47,7 @@ import {
 } from "./chatSessionSettings";
 import ChatCommandPalette, { type ChatCommandOption } from "./ChatCommandPalette";
 import { activeChatCommand, chatCommandMatches, removeChatCommand } from "./chatCommands";
-import { skillCompatibility, toolCompatibility } from "../automation/toolCompatibility";
+import { skillCompatibility } from "../automation/toolCompatibility";
 import CloudKnowledgeSelector from "../knowledge-cloud/CloudKnowledgeSelector";
 import KnowledgeCitationList from "../knowledge-cloud/KnowledgeCitationList";
 import { normalizeKnowledgeBaseIds } from "../knowledge-cloud/integrationState";
@@ -75,6 +76,7 @@ export type SessionUiState = {
   searchProvider: SearchProviderKind | "";
   knowledgeBaseIds: string[];
   reasoningEffort: ReasoningEffort;
+  requestPhase: "idle" | "searching" | "generating" | "failed" | "cancelled";
   notice: string;
 };
 
@@ -144,6 +146,7 @@ export function defaultSessionUi(collapsed: boolean, knowledgeBaseIds: string[] 
     searchProvider: "",
     knowledgeBaseIds: normalizeKnowledgeBaseIds(knowledgeBaseIds),
     reasoningEffort: "default",
+    requestPhase: "idle",
     notice: ""
   };
 }
@@ -192,7 +195,7 @@ export type ChatSessionBlockProps = {
   models: ModelCatalogEntry[];
   skills: AgentSkillDefinition[];
   tools: ToolSetting[];
-  searchReady: boolean;
+  searchConfigured: boolean;
   knowledgeAuthenticated: boolean;
   knowledgeBases: KnowledgeBase[];
   apps: AppPreset[];
@@ -217,8 +220,10 @@ export type ChatSessionBlockProps = {
   onReasoningEffortChange: (value: ReasoningEffort) => void;
   onContextMessageCountChange: (value: ChatContextMessageCount) => void;
   onImageInput: (event: ChangeEvent<HTMLInputElement>) => void;
+  onImageInputBlocked: () => void;
   onLongPaste: (text: string) => void;
   onRemoveImage: (attachmentId: string) => void;
+  onRemoveAllImages: () => void;
   onClear: () => void;
   onSend: () => void;
   onStop: () => void;
@@ -230,7 +235,7 @@ export function ChatSessionBlock({
   models,
   skills,
   tools,
-  searchReady,
+  searchConfigured,
   knowledgeAuthenticated,
   knowledgeBases,
   apps,
@@ -255,8 +260,10 @@ export function ChatSessionBlock({
   onReasoningEffortChange,
   onContextMessageCountChange,
   onImageInput,
+  onImageInputBlocked,
   onLongPaste,
   onRemoveImage,
+  onRemoveAllImages,
   onClear,
   onSend,
   onStop
@@ -278,6 +285,7 @@ export function ChatSessionBlock({
   const commandListId = useId();
   const modelListId = `${modelPopoverId}-list`;
   const modelValueDescriptionId = `${modelPopoverId}-value`;
+  const imageInputDescriptionId = `${modelPopoverId}-image-input`;
   const [activeModelVendor, setActiveModelVendor] = useState<ModelVendorTab>(() => vendorTabForModel(selectedModel));
   const [commandActiveIndex, setCommandActiveIndex] = useState(0);
   const [dismissedCommand, setDismissedCommand] = useState("");
@@ -289,7 +297,20 @@ export function ChatSessionBlock({
   const selectedModelInVendor = vendorModels.some((model) => model.id === selectedModel?.id);
   const command = settings.enableCommandMenu ? activeChatCommand(ui.draft) : null;
   const searchTool = tools.find((tool) => tool.name === "web_search");
-  const searchCompatibility = toolCompatibility(searchTool, selectedModel, { searchReady });
+  const imageInputEnabled = supportsChatImageInput(selectedModel);
+  const incompatibleImageCount = countIncompatibleChatImages(ui.attachments, selectedModel);
+  const searchProviderLabel = ui.searchProvider === "glm" ? "智谱 GLM" : "Kimi";
+  const searchTriggerText = !ui.searchProvider
+    ? "网络搜索"
+    : ui.requestPhase === "searching"
+      ? `${searchProviderLabel} · 搜索中`
+      : ui.requestPhase === "generating"
+        ? `${searchProviderLabel} · 正在生成`
+        : ui.requestPhase === "failed"
+          ? `${searchProviderLabel} · 搜索失败`
+          : ui.requestPhase === "cancelled"
+            ? `${searchProviderLabel} · 已停止`
+            : `网络搜索 · ${searchProviderLabel}`;
   const commandIdentity = command ? `${command.kind}:${command.start}:${command.token}` : "";
   const commandOptions = useMemo<ChatCommandOption[]>(() => {
     if (!command) return [];
@@ -307,7 +328,7 @@ export function ChatSessionBlock({
       .filter((skill) => chatCommandMatches(command.query, skill.name, skill.description))
       .map((skill) => {
         const compatibility = skillCompatibility(skill, tools, selectedModel, {
-          searchReady,
+          searchReady: searchConfigured,
           invocationMode: settings.toolInvocationMode
         });
         return {
@@ -318,7 +339,7 @@ export function ChatSessionBlock({
           selected: (ui.skillIds || []).includes(skill.id)
         };
       });
-  }, [apps, command, searchReady, selectedModel, settings.toolInvocationMode, skills, tools, ui.appId, ui.skillIds]);
+  }, [apps, command, searchConfigured, selectedModel, settings.toolInvocationMode, skills, tools, ui.appId, ui.skillIds]);
   const commandOpen = Boolean(command && commandIdentity !== dismissedCommand);
   const visibleVendorModelCount = Math.min(3, vendorModels.length);
   const displayMessages: Message[] = conversation.messages.length
@@ -842,7 +863,7 @@ export function ChatSessionBlock({
             <div className="figma-session-controls-track">
               <div className="figma-session-tools">
                 <FigmaMenu
-                  className={`figma-search-provider-menu${ui.searchProvider ? " active" : ""}`}
+                  className={`figma-search-provider-menu${ui.searchProvider ? " active" : ""}${ui.requestPhase === "searching" ? " searching" : ""}`}
                   label="网络搜索厂商"
                   value={ui.searchProvider || "off"}
                   options={searchProviderOptions}
@@ -850,11 +871,9 @@ export function ChatSessionBlock({
                     value === "glm" || value === "kimi" ? value : ""
                   )}
                   ariaLabel="网络搜索"
-                  disabled={streaming || !searchCompatibility.compatible}
+                  disabled={streaming || !searchTool?.enabled}
                   triggerIcon={<Globe2 size={14} aria-hidden="true" />}
-                  triggerText={ui.searchProvider
-                    ? `网络搜索 · ${ui.searchProvider === "glm" ? "智谱 GLM" : "Kimi"}`
-                    : "网络搜索"}
+                  triggerText={searchTriggerText}
                 />
                 {knowledgeAuthenticated ? (
                   <CloudKnowledgeSelector
@@ -867,18 +886,36 @@ export function ChatSessionBlock({
                 ) : null}
                 <button
                   type="button"
-                  onClick={() => imageInputRef.current?.click()}
-                  title={`图片输入，单次最多 ${settings.maxImageAttachments} 张`}
+                  className="figma-image-input-button"
+                  onClick={() => {
+                    if (!imageInputEnabled) {
+                      onImageInputBlocked();
+                      return;
+                    }
+                    imageInputRef.current?.click();
+                  }}
+                  disabled={streaming}
+                  aria-disabled={!imageInputEnabled}
+                  aria-describedby={imageInputDescriptionId}
+                  title={imageInputEnabled
+                    ? `图片输入，单次最多 ${settings.maxImageAttachments} 张`
+                    : "当前模型不支持图片输入"}
                 >
                   <ImageIcon size={14} />
                   图片输入
                 </button>
+                <span id={imageInputDescriptionId} className="figma-visually-hidden">
+                  {imageInputEnabled
+                    ? `当前模型支持图片输入，单次最多 ${settings.maxImageAttachments} 张`
+                    : "当前模型不支持图片输入"}
+                </span>
                 <input
                   ref={imageInputRef}
                   type="file"
                   hidden
                   multiple
                   accept="image/png,image/jpeg,image/webp,image/gif"
+                  disabled={streaming || !imageInputEnabled}
                   onChange={onImageInput}
                 />
                 <FigmaMenu
@@ -926,12 +963,21 @@ export function ChatSessionBlock({
               </div>
 
               {ui.attachments.length ? (
-                <div className="figma-image-attachments" aria-label="待发送附件">
+                <div
+                  className={`figma-image-attachments${incompatibleImageCount ? " incompatible" : ""}`}
+                  aria-label="待发送附件"
+                >
                   <div className="figma-image-attachments-summary">
                     <span>{ui.attachments.every((attachment) => attachment.kind === "image")
                       ? `已选择 ${imageAttachmentCount(ui.attachments)} / ${settings.maxImageAttachments}`
                       : `已添加 ${ui.attachments.length} 个附件 · 图片 ${imageAttachmentCount(ui.attachments)} / ${settings.maxImageAttachments}`}</span>
                   </div>
+                  {incompatibleImageCount ? (
+                    <div className="figma-incompatible-images" role="alert">
+                      <span>当前模型不支持图片输入，需移除图片或更换模型后再发送。</span>
+                      <button type="button" onClick={onRemoveAllImages}>移除图片</button>
+                    </div>
+                  ) : null}
                   <div className="figma-image-attachments-list">
                     {ui.attachments.map((attachment) => (
                       <div key={attachment.id} className={`figma-image-attachment ${attachment.kind}`} data-testid="chat-image-attachment">

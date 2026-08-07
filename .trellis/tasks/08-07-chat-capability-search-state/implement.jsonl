@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Chat control, dialog, accessibility, and responsive interaction rules"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Per-conversation transient state and storage boundaries"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Shared model capability and request type contracts"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Bounded provider errors and HTTP status mapping"}
+{"file": ".trellis/spec/backend/public-ai-production-boundary.md", "reason": "BYOK, managed upstream, attachments, and search privacy boundary"}
+{"file": ".trellis/spec/frontend/chat-capability-search.md", "reason": "Capability and independent search contracts discovered during implementation"}

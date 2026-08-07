@@ -21,6 +21,7 @@ This directory contains guidelines for frontend development. Fill in each file w
 | [State Management](./state-management.md) | Root, URL, feature, storage, and overlay state | Active |
 | [Quality Guidelines](./quality-guidelines.md) | Verification, browser tests, and review contracts | Active |
 | [Type Safety](./type-safety.md) | Shared types, route guards, and runtime boundaries | Active |
+| [Chat Capability And Independent Search](./chat-capability-search.md) | Vision attachment gating and explicit GLM/Kimi search state | Active |
 
 ---
 

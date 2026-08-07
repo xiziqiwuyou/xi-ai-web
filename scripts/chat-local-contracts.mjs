@@ -49,6 +49,9 @@ const chatCommands = await importTsSource(
 const chatSessionSettings = await importTsSource(
   fs.readFileSync(path.join(rootDir, "src/features/chat/chatSessionSettings.ts"), "utf8")
 );
+const chatCapabilities = await importTsSource(
+  fs.readFileSync(path.join(rootDir, "src/features/chat/chatCapabilities.ts"), "utf8")
+);
 const workflowRuntime = await importTsSource(
   fs.readFileSync(path.join(rootDir, "src/features/automation/workflowRuntime.ts"), "utf8")
 );
@@ -57,6 +60,8 @@ const now = "2026-06-13T13:50:00.000Z";
 assert.equal(chatSessionSettings.defaultChatSessionSettings.messageFontSize, 13, "new Chat sessions must default to 13px message text");
 assert.equal(chatSessionSettings.sanitizeChatSessionSettings({ messageFontSize: 18 }).messageFontSize, 18, "saved valid Chat message sizes must be preserved");
 assert.equal(chatSessionSettings.sanitizeChatSessionSettings({ messageFontSize: 12 }).messageFontSize, 13, "invalid saved Chat message sizes must fall back to the current default");
+assert.equal(chatCapabilities.supportsChatImageInput({ capabilities: ["chat", "vision"] }), true, "vision must enable Chat image input");
+assert.equal(chatCapabilities.supportsChatImageInput({ capabilities: ["chat", "image", "imageEdit"] }), false, "image generation/edit capabilities must not enable Chat image input");
 const conversation = {
   id: "thread-1",
   title: "NextChat local thread",
@@ -428,6 +433,13 @@ assert(chatModule.includes("ConfirmationDialog"), "Chat clear messages must use 
 assert(chatModule.includes("maxImageAttachments"), "Chat settings must own the session image limit");
 assert(chatModule.includes("multiple"), "Chat image input must accept multiple files");
 assert(chatModule.includes("figma-image-attachments"), "Chat must render all pending image attachments");
+assert(chatModule.includes("supportsChatImageInput"), "Chat image entry and send paths must share the vision capability predicate");
+assert(chatModule.includes('disabled={streaming || !imageInputEnabled}'), "the hidden Chat image input must be disabled for non-vision models");
+assert(chatModule.includes("setPendingModelChange"), "switching away from a vision model with pending images must require confirmation");
+assert(chatModule.includes("启用联网搜索时，请先输入要搜索的问题"), "attachment-only messages must not trigger independent search");
+assert(chatModule.includes('setRequestPhase(conversation.id, ui.searchProvider ? "searching" : "generating")'), "Chat must distinguish independent search from model generation");
+assert(!chatModule.includes("inferredSearchProvider"), "Chat must not infer an independent search provider from the selected model");
+assert(chatModule.includes("当前 Skill 需要联网搜索，请先选择智谱 GLM 或 Kimi"), "Skills must not bypass explicit independent-search provider selection");
 assert(chatModule.includes("consumeAssistantLaunch"), "Chat must consume the versioned assistant launch contract");
 assert(chatModule.includes("conversation.assistantId && item.enabled !== false"), "Chat requests must resolve the exact enabled conversation assistant");
 assert(chatModule.includes("figma-session-assistant"), "Chat sessions must expose their bound assistant identity");

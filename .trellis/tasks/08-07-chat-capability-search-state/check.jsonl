@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Frontend test and browser verification contract"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Backend quality and trust-boundary checks"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Cross-layer model capability and search state verification"}
+{"file": ".trellis/spec/frontend/chat-capability-search.md", "reason": "Final cross-layer review checklist for Chat capability and search"}
