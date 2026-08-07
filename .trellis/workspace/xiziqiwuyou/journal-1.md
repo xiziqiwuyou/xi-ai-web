@@ -373,3 +373,37 @@ Published immutable v0.0.10 with verified DeepSeek Responses compatibility, pinn
 ### Next Steps
 
 - None - task complete
+
+
+## Session 12: Claude streaming and model output limits
+
+**Date**: 2026-08-08
+**Task**: Claude streaming and model output limits
+**Branch**: `master`
+
+### Summary
+
+Implemented native Claude streaming controls, model-aware maximum output limits, buffered delivery status, Admin persistence, and comprehensive regression coverage; real-provider and production proxy smoke remain separate deployment checks.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `35eb687` | (see git log) |
+| `8114e66` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 11
-- **Last Active**: 2026-08-07
+- **Total Sessions**: 12
+- **Last Active**: 2026-08-08
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~375 | Active |
+| `journal-1.md` | ~409 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 12 | 2026-08-08 | Claude streaming and model output limits | `35eb687`, `8114e66` | `master` |
 | 11 | 2026-08-07 | Release v0.0.10 | `37b9c14` | `master` |
 | 10 | 2026-08-07 | DeepSeek Responses endpoint compatibility | `a95ec1f` | `master` |
 | 9 | 2026-08-07 | Release v0.0.9 | `dc61680` | `master` |
