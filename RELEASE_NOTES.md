@@ -1,3 +1,58 @@
+# xi-ai-web v0.0.9
+
+## Release status
+
+This patch release hardens the Chat image/search boundary and adds repeatable
+production-acceptance diagnostics for a self-hosted deployment.
+
+## Included
+
+- Chat image attachments now require the selected model's `vision` capability.
+  Image generation and editing capabilities no longer enable Chat image input.
+- Switching from a vision model with pending images to a non-vision model asks
+  for confirmation. Catalog changes preserve incompatible previews and block
+  send until the user removes the images or chooses a compatible model.
+- GLM and Kimi independent search are explicitly armed per in-memory Chat
+  session and run only when a textual message is sent. Search failures do not
+  silently fall back to ordinary Chat.
+- Independent search uses the primary session-only Chat API Key. Client-supplied
+  alternate search keys and URLs are ignored by the Chat route.
+- Health and Admin runtime versions are sourced from `package.json`.
+  `/api/diagnostics/sse`, `npm run smoke`, and `npm run smoke:live` provide
+  credential-free deployment diagnostics and opt-in live-provider checks.
+- Root Compose templates are pinned to `v0.0.9`.
+
+## Verification
+
+- Type-check, production build, privacy scan, UI contract, feature audit,
+  provider contracts, Chat/search contracts, security tests, server tests,
+  runtime UI checks, and release check passed locally.
+- Chat capability/search Playwright coverage passed across desktop and mobile
+  projects.
+- No real provider Key, deployed online smoke, local Docker build, or physical
+  mobile browser test is claimed by this release.
+
+## Upgrade
+
+Pull the immutable image tag and restart the service:
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+Run `npm run smoke` or the documented credential-free command against the
+public application origin after deployment. Use a new disposable Key only when
+opting into `npm run smoke:live`.
+
+## Rollback
+
+Keep `v0.0.8` available. For Compose, replace the image tag with
+`ghcr.io/xiziqiwuyou/xi-ai-web:v0.0.8`, then run
+`docker compose pull && docker compose up -d`.
+
+---
+
 # xi-ai-web v0.0.8
 
 ## Release status

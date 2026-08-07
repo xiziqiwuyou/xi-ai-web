@@ -5,6 +5,8 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { APP_VERSION } from "../server/app-version.mjs";
+import { runDeploymentSmoke } from "./production-smoke.mjs";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const distIndex = path.join(rootDir, "dist", "index.html");
@@ -223,6 +225,9 @@ for (const forbidden of ["node:sqlite", "DatabaseSync", "STORAGE_DRIVER", "app-d
 const dockerfileSource = fs.readFileSync(path.join(rootDir, "Dockerfile"), "utf8");
 const composeSource = fs.readFileSync(path.join(rootDir, "deploy", "app", "docker-compose.yml"), "utf8");
 assert(/\bUSER\s+node\b/u.test(dockerfileSource), "Production image must run as the node user");
+for (const required of ["scripts/production-smoke.mjs", "scripts/live-provider-smoke.mjs"]) {
+  assert(dockerfileSource.includes(required), `Production image is missing the smoke tool: ${required}`);
+}
 for (const required of ["read_only: true", "cap_drop:", "no-new-privileges:true", "pids_limit:", "/api/ready"]) {
   assert(composeSource.includes(required), `Compose runtime hardening is missing: ${required}`);
 }
@@ -257,6 +262,14 @@ child.stderr.on("data", (chunk) => {
 try {
   await waitForHealth(child);
 
+  const deploymentSmoke = await runDeploymentSmoke({
+    baseUrl,
+    expectedVersion: APP_VERSION,
+    allowInsecureHttp: true,
+    minSseGapMs: 150
+  });
+  assert(deploymentSmoke.ok && deploymentSmoke.version === APP_VERSION, "Production smoke version check failed");
+
   const unauthOps = await request("/api/admin/ops");
   assert(unauthOps.response.status === 401, "Unauthenticated admin ops must return 401 in production");
 
@@ -270,6 +283,7 @@ try {
 
   const ops = await getJson("/api/admin/ops", { headers: { Cookie: cookie } });
   assert(ops.runtime?.mode === "production", "Ops runtime mode should be production");
+  assert(ops.runtime?.version === APP_VERSION, "Ops runtime version must match package.json");
   assert(ops.runtime?.metadataFile?.endsWith("app-data.json"), "Ops runtime should report the JSON metadata file");
   assert(ops.checklist?.some((item) => item.id === "admin-password" && item.ok), "Ops checklist did not pass admin-password");
   assert(ops.checklist?.some((item) => item.id === "session-secret" && item.ok), "Ops checklist did not pass session-secret");

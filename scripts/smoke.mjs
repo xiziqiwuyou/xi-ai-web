@@ -1,61 +1,19 @@
-const baseUrl = process.env.SMOKE_URL || "http://localhost:8787";
+import { APP_VERSION } from "../server/app-version.mjs";
+import {
+  publicSmokeFailure,
+  runDeploymentSmoke
+} from "./production-smoke.mjs";
 
-async function get(path) {
-  const response = await fetch(`${baseUrl}${path}`);
-  const text = await response.text();
-  if (!response.ok) throw new Error(`${path} returned ${response.status}: ${text.slice(0, 300)}`);
-  return { response, text };
+try {
+  const report = await runDeploymentSmoke({
+    baseUrl: process.env.SMOKE_URL || "http://localhost:8787",
+    expectedVersion: process.env.SMOKE_EXPECTED_VERSION || APP_VERSION,
+    allowInsecureHttp: String(process.env.SMOKE_ALLOW_INSECURE_HTTP || "").toLowerCase() === "true",
+    timeoutMs: process.env.SMOKE_TIMEOUT_MS,
+    minSseGapMs: process.env.SMOKE_MIN_SSE_GAP_MS
+  });
+  console.log(JSON.stringify(report, null, 2));
+} catch (error) {
+  console.error(JSON.stringify(publicSmokeFailure(error), null, 2));
+  process.exitCode = 1;
 }
-
-async function request(path) {
-  const response = await fetch(`${baseUrl}${path}`);
-  const text = await response.text();
-  return { response, text };
-}
-
-function assert(condition, message) {
-  if (!condition) throw new Error(message);
-}
-
-const root = await get("/");
-assert(root.text.includes('id="root"'), "Root HTML does not contain app root");
-
-const admin = await get("/xizi2333");
-assert(admin.text.includes('id="root"'), "Admin HTML does not contain app root");
-
-const health = JSON.parse((await get("/api/health")).text);
-assert(health.ok, "Health endpoint is not ok");
-
-const bootstrap = JSON.parse((await get("/api/public/bootstrap")).text);
-const bootstrapJson = JSON.stringify(bootstrap);
-assert(
-  JSON.stringify(bootstrap.menuItems?.map((item) => item.id)) === JSON.stringify([
-    "chat", "image", "agents", "workflows", "ppt", "mindmap", "assistants", "translate"
-  ]),
-  "Public bootstrap menu order is incomplete"
-);
-assert(!bootstrapJson.includes("apiKey"), "Public bootstrap leaked apiKey");
-assert(!bootstrapJson.includes("baseUrl"), "Public bootstrap leaked baseUrl");
-assert(!bootstrapJson.includes("adminEntryEnabled"), "Public bootstrap leaked admin entry flag");
-assert(!bootstrapJson.includes("checklist"), "Public bootstrap leaked admin operations checklist");
-assert(!bootstrapJson.includes("backups"), "Public bootstrap leaked admin backups");
-assert(Array.isArray(bootstrap.langflowWorkflows), "Public bootstrap is missing the workflow catalog");
-assert(
-  !bootstrap.langflowWorkflows.some((workflow) => Object.prototype.hasOwnProperty.call(workflow, "flowId")),
-  "Public bootstrap leaked a private Langflow Flow ID"
-);
-assert(!bootstrapJson.includes("LANGFLOW_API_KEY"), "Public bootstrap leaked Langflow configuration");
-assert(!bootstrap.menuItems?.some((item) => item.id === "settings"), "Public bootstrap contains settings menu");
-assert(!bootstrap.conversations?.length, "Public bootstrap contains conversation summaries");
-
-const conversations = await request("/api/conversations");
-assert(conversations.response.status === 410, "Legacy public conversation list route must return 410");
-const conversationDetail = await request("/api/conversations/smoke");
-assert(conversationDetail.response.status === 410, "Legacy public conversation detail route must return 410");
-
-for (const retiredRoute of ["/api/bootstrap", "/api/auth/status", "/api/auth/login", "/api/auth/logout"]) {
-  const retired = await request(retiredRoute);
-  assert(retired.response.status === 404, `${retiredRoute} must remain removed`);
-}
-
-console.log(`Smoke passed for ${baseUrl}`);

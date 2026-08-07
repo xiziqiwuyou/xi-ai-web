@@ -1,6 +1,6 @@
 {
   "name": "xi-ai-web",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "private": true,
   "type": "module",
   "engines": {
@@ -14,6 +14,7 @@
     "start": "node server/index.mjs --production",
     "clean:cache": "node scripts/clean-cache.mjs",
     "smoke": "node scripts/smoke.mjs",
+    "smoke:live": "node scripts/live-provider-smoke.mjs",
     "release-check": "npm run build && node scripts/release-check.mjs",
     "ui-contract": "node scripts/ui-contract.mjs",
     "ui-runtime": "node scripts/ui-runtime.mjs",

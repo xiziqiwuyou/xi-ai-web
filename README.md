@@ -106,7 +106,7 @@ docker run -d \
   xi-ai-web
 ```
 
-The unified deployment template is available at [`docker-compose.yml`](docker-compose.yml), with a complete environment sample in [`.env.example`](.env.example). It pulls the pinned prebuilt `ghcr.io/xiziqiwuyou/xi-ai-web:v0.0.8` image and keeps optional services behind Compose profiles. The server does not need a source checkout or a local image build:
+The unified deployment template is available at [`docker-compose.yml`](docker-compose.yml), with a complete environment sample in [`.env.example`](.env.example). It pulls the pinned prebuilt `ghcr.io/xiziqiwuyou/xi-ai-web:v0.0.9` image and keeps optional services behind Compose profiles. The server does not need a source checkout or a local image build:
 
 ```bash
 mkdir -p /opt/xi-ai-web
@@ -223,6 +223,35 @@ After deployment:
 6. Send one short Chat message with a known working model.
 7. Test one image model if image generation is part of the rollout.
 8. Export Admin metadata from `/xizi2333` and verify it does not contain public BYOK credentials.
+
+### Credential-free deployment check
+
+`npm run smoke` checks the public application origin without a provider Key. It verifies the root and Admin shell, health/readiness, release version, public bootstrap privacy, core Chat/Image model availability, retired conversation routes, and the short diagnostic SSE stream. The diagnostic stream is fixed data and never contacts a model provider.
+
+```bash
+SMOKE_URL=https://chat.xi-api.cn npm run smoke
+```
+
+The command compares the deployed health version with the local `package.json` version. Use `SMOKE_EXPECTED_VERSION` only when intentionally checking a different release. Remote HTTP origins are rejected; local HTTP is allowed for a local server. Set `SMOKE_ALLOW_INSECURE_HTTP=true` only for an explicitly controlled non-production target.
+
+### Opt-in live Chat/Image check
+
+`npm run smoke:live` is credential-gated and is never part of CI or the default quality gate. It sends a fixed short prompt through the xi-ai-web application, not directly to a provider. The application still chooses the managed upstream and endpoint protocol. Results contain only status, timing, model metadata, token counts, and image MIME/byte counts; prompts, output text, image URLs, and the Key are not printed or written.
+
+Provide model IDs explicitly so a costly image request cannot happen accidentally:
+
+```bash
+export LIVE_SMOKE_URL=https://chat.xi-api.cn
+export LIVE_SMOKE_CHAT_MODEL_ID=<enabled-chat-model-id>
+export LIVE_SMOKE_IMAGE_MODEL_ID=<enabled-image-model-id>
+read -rsp "Disposable API Key: " LIVE_SMOKE_API_KEY; echo
+npm run smoke:live
+unset LIVE_SMOKE_API_KEY LIVE_SMOKE_CHAT_MODEL_ID LIVE_SMOKE_IMAGE_MODEL_ID
+```
+
+Set `LIVE_SMOKE_EDIT_IMAGE_PATH` only when a disposable local source image is available and the selected image model supports editing. Do not place these variables in `.env`, shell history, CI configuration, screenshots, or issue reports. When running from the image-only Compose deployment, use `docker compose exec -T -e LIVE_SMOKE_API_KEY -e LIVE_SMOKE_CHAT_MODEL_ID -e LIVE_SMOKE_IMAGE_MODEL_ID xi-ai-web npm run smoke:live` after exporting the variables in the operator shell.
+
+The deployment check exposes `/api/diagnostics/sse`, a rate-limited fixed two-event stream used only to identify reverse-proxy buffering. It does not accept a URL, Key, prompt, or arbitrary payload.
 
 ## Optional Cloud Knowledge
 

@@ -295,3 +295,11 @@ const asset = await importPublicImageAsset(req.body.url, {
   timeoutMs: IMAGE_IMPORT_TIMEOUT_MS
 });
 ```
+
+## 8. Production Acceptance Diagnostics
+
+- `GET /api/diagnostics/sse` is a public, rate-limited, fixed two-event transport probe. It accepts no query, body, URL, prompt, or credential and never contacts an upstream provider.
+- The route must send `Content-Type: text/event-stream`, `Cache-Control: no-cache, no-transform`, `Connection: keep-alive`, and `X-Accel-Buffering: no`. The first event and terminal event are intentionally separated so an operator-side smoke check can identify reverse-proxy buffering.
+- Health and Admin operations project `APP_VERSION` from the root `package.json`; do not add independent hard-coded product version strings to route handlers.
+- `scripts/smoke.mjs` is credential-free and may compare a deployed health version with the local release version. `scripts/live-provider-smoke.mjs` is opt-in, sends requests only through the xi-ai-web application, and must report no prompt, response text, image URL, API Key, or request body.
+- Missing live-provider credentials or model/source-image inputs are explicit skips or configuration failures, never a passing provider result. Local contract and browser evidence must remain separate from `live-api` and `online-smoke` evidence.

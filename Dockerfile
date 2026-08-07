@@ -20,6 +20,7 @@ RUN npm ci --omit=dev \
   && chown -R node:node /app
 COPY --chown=node:node --from=build /app/dist ./dist
 COPY --chown=node:node server ./server
+COPY --chown=node:node scripts/production-smoke.mjs scripts/smoke.mjs scripts/live-provider-smoke.mjs ./scripts/
 COPY --chown=node:node README.md ./README.md
 
 EXPOSE 8787

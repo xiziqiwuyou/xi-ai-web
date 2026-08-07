@@ -100,6 +100,8 @@ import {
   createImageGenerationTimingStore,
   normalizeImageTimingKey
 } from "./image-generation-timing.mjs";
+import { APP_VERSION } from "./app-version.mjs";
+import { handleSseDiagnostic } from "./sse-diagnostic.mjs";
 import {
   parsePptDeckModelOutput,
   pptDeckToMarkdown,
@@ -628,7 +630,7 @@ function buildAdminOpsPayload() {
 
   return {
     runtime: {
-      version: "0.3.0",
+      version: APP_VERSION,
       node: process.version,
       mode: isProduction ? "production" : "development",
       uptimeSeconds: Math.round(process.uptime()),
@@ -759,6 +761,11 @@ const requestGuards = {
     scope: "progress-sync",
     maxRequests: Number(process.env.PROGRESS_SYNC_RATE_LIMIT_MAX || 240),
     maxConcurrent: Number(process.env.PROGRESS_SYNC_MAX_CONCURRENT || 16)
+  }),
+  diagnostics: createRequestGuard({
+    scope: "diagnostics",
+    maxRequests: 60,
+    maxConcurrent: 4
   })
 };
 
@@ -808,6 +815,7 @@ app.use(
 );
 
 app.use("/api/chat/stream", requestGuards.chat);
+app.use("/api/diagnostics/sse", requestGuards.diagnostics);
 app.use("/api/chat/title", requestGuards.chat);
 app.use("/api/image/optimize-prompt", requestGuards.generation);
 app.use("/api/image/import", requestGuards.imageImport);
@@ -2035,12 +2043,14 @@ function sanitizePromptPreset(body, existing) {
 app.get("/api/health", (req, res) => {
   res.json({
     ok: true,
-    version: "0.3.0",
+    version: APP_VERSION,
     adminConfigured: adminCredentialStore.configured,
     knowledge: publicKnowledgeRuntimeStatus(knowledgeRuntime),
     langflow: publicLangflowStatus(langflowConfig)
   });
 });
+
+app.get("/api/diagnostics/sse", handleSseDiagnostic);
 
 app.get("/api/ready", (req, res) => {
   const readiness = buildReadinessPayload();
