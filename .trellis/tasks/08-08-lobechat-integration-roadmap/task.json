@@ -21,7 +21,9 @@
   "children": [
     "08-08-chat-branching-message-actions",
     "08-08-conversation-retrieval-archive",
-    "08-08-secure-local-artifact-workspace"
+    "08-08-secure-local-artifact-workspace",
+    "08-08-remote-mcp-secure-foundation",
+    "08-08-chat-branch-history-navigation"
   ],
   "parent": null,
   "relatedFiles": [],
