@@ -660,6 +660,7 @@
 .figma-conversation-manager-header > button:focus-visible,
 .figma-conversation-manager-command:focus-visible,
 .figma-conversation-manager-main:focus-visible,
+.figma-branch-family-toggle:focus-visible,
 .figma-conversation-view-tabs > button:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--xhs-primary-fill) 48%, transparent);
   outline-offset: 2px;
@@ -873,6 +874,130 @@ button.figma-conversation-manager-main:hover:not(:disabled) {
   opacity: 0.4;
 }
 
+.figma-conversation-manager-list .figma-branch-family-list {
+  gap: 8px;
+}
+
+.figma-conversation-manager-list .figma-branch-family {
+  display: block;
+  padding: 0;
+  overflow: hidden;
+  border-color: var(--xhs-line);
+  background: var(--xhs-surface);
+}
+
+.figma-conversation-manager-list .figma-branch-family:hover {
+  border-color: var(--xhs-line-strong);
+  background: var(--xhs-surface);
+}
+
+.figma-branch-family-toggle {
+  display: flex;
+  width: 100%;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 0;
+  background: var(--xhs-soft-2);
+  color: var(--xhs-ink);
+  text-align: left;
+}
+
+.figma-branch-family-toggle:hover:not(:disabled) {
+  background: var(--xhs-soft-3);
+}
+
+.figma-branch-family-toggle:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.figma-branch-family-toggle > span {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+}
+
+.figma-branch-family-toggle > span > svg {
+  color: var(--xhs-primary-fill);
+}
+
+.figma-branch-family-toggle strong,
+.figma-branch-family-toggle small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.figma-branch-family-toggle strong {
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.figma-branch-family-toggle small {
+  color: var(--xhs-muted);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.figma-conversation-manager-list .figma-branch-node-list {
+  gap: 3px;
+  padding: 6px;
+}
+
+.figma-conversation-manager-list .figma-branch-node {
+  display: block;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+}
+
+.figma-conversation-manager-list .figma-branch-node:hover {
+  border-color: transparent;
+  background: transparent;
+}
+
+.figma-branch-node-row {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  gap: 6px;
+  margin-inline-start: calc(var(--figma-branch-depth, 0) * 14px);
+  padding: 4px;
+  border-inline-start: 2px solid color-mix(in srgb, var(--xhs-primary-fill) 18%, var(--xhs-line));
+  border-radius: 6px;
+}
+
+.figma-branch-node.current > .figma-branch-node-row {
+  border-inline-start-color: var(--xhs-primary-fill);
+  background: color-mix(in srgb, var(--xhs-primary-fill) 7%, transparent);
+}
+
+.figma-branch-node.archived > .figma-branch-node-row {
+  background: color-mix(in srgb, var(--xhs-soft-2) 76%, transparent);
+}
+
+.figma-branch-node .figma-conversation-manager-main small {
+  flex-wrap: wrap;
+}
+
+.figma-branch-node .figma-conversation-manager-main small b {
+  color: var(--xhs-ink);
+  font-size: inherit;
+  font-weight: 700;
+}
+
+.figma-branch-current-label {
+  color: var(--xhs-primary-fill);
+  font-weight: 750;
+}
+
 .figma-conversation-manager-empty {
   display: grid;
   min-height: 180px;
@@ -933,6 +1058,29 @@ button.figma-conversation-manager-main:hover:not(:disabled) {
   .figma-conversation-manager-list li {
     gap: 4px;
     padding: 5px;
+  }
+
+  .figma-conversation-manager-list .figma-branch-family,
+  .figma-conversation-manager-list .figma-branch-node {
+    padding: 0;
+  }
+
+  .figma-branch-family-toggle {
+    min-height: 48px;
+    padding: 8px;
+  }
+
+  .figma-branch-family-toggle > span {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .figma-branch-family-toggle small {
+    grid-column: 2;
+  }
+
+  .figma-branch-node-row {
+    margin-inline-start: calc(var(--figma-branch-depth, 0) * 9px);
+    padding: 3px;
   }
 
   .figma-conversation-manager-main {

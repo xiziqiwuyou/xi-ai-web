@@ -1220,6 +1220,9 @@ function ChatModule({
   };
 
   const topModel = displayedConversations[0] ? modelForSession(displayedConversations[0].id) : undefined;
+  const currentConversationId = displayedConversations.find((conversation) =>
+    sessionUi[conversation.id] && !sessionUi[conversation.id].collapsed
+  )?.id || "";
 
   const openConversationManager = (trigger: HTMLButtonElement) => {
     conversationManagerTriggerRef.current = trigger;
@@ -1392,6 +1395,7 @@ function ChatModule({
       <ChatConversationManager
         open={conversationManagerOpen}
         conversations={conversationList}
+        currentConversationId={currentConversationId}
         mutationsDisabled={Boolean(
           streamingConversationId ||
           requestInFlightConversationIdRef.current ||

@@ -95,6 +95,8 @@ const mcpSecurity = readProjectFile("server/mcp/security.mjs");
 const mcpClient = readProjectFile("server/mcp/client.mjs");
 const mcpRoutes = readProjectFile("server/mcp/routes.mjs");
 const chatSessionSettings = readProjectFile("src/features/chat/ChatSessionSettingsDialog.tsx");
+const chatConversationManager = readProjectFile("src/features/chat/ChatConversationManager.tsx");
+const chatBranchHistory = readProjectFile("src/features/chat/conversationBranchHistory.ts");
 const server = readProjectFile("server/index.mjs");
 const imageTimingStore = readProjectFile("server/image-generation-timing.mjs");
 const providerRegistry = readProjectFile("server/providers/registry.mjs");
@@ -127,6 +129,14 @@ assert(
     && adminConsole.includes("discoverMcpServer")
     && api.includes("discoverMcpServer"),
   "Admin MCP configuration must stay reachable through the shared AI navigation"
+);
+assert(
+  chatConversationManager.includes('view === "branches"')
+    && chatConversationManager.includes("figma-branch-family-toggle")
+    && chatBranchHistory.includes("conversationBranchHistoryLimits")
+    && chatBranchHistory.includes("filterConversationBranchHistory")
+    && !chatBranchHistory.includes("fetch("),
+  "Chat branch history must stay a bounded local projection with explicit Branches navigation"
 );
 assert(freshCatalog.every((entry, index) => entry.order === index), "Fresh model catalogs must expose compact model order");
 assert(

@@ -82,6 +82,11 @@ const conversationFixtures: Conversation[] = [
       status: "done",
       createdAt: "2026-08-01T08:00:00.000Z"
     }],
+    branch: {
+      parentConversationId: "manager-branch",
+      sourceMessageId: "manager-branch-user",
+      mode: "retry"
+    },
     archivedAt: "2026-08-02T08:00:00.000Z",
     createdAt: "2026-08-01T08:00:00.000Z",
     updatedAt: "2026-08-01T08:00:00.000Z"
@@ -160,6 +165,60 @@ test("local search stays request-free and the manager is stable across themes an
   const minimumTarget = isMobileProject(testInfo.project.name) ? 44 : 36;
   expect(controlHeights.every((height) => height >= minimumTarget)).toBe(true);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+});
+
+test("branch history keeps ancestor context and reuses explicit open and restore flows", async ({ page, apiHarness }, testInfo) => {
+  const requestCount = apiHarness.requests.length;
+  const chatRequestCount = apiHarness.chatRequests.length;
+  let dialog = await openConversationManager(page);
+  await dialog.getByRole("tab", { name: /分支 1/ }).click();
+
+  const family = dialog.locator('[data-branch-family-id="manager-parent"]');
+  await expect(family).toBeVisible();
+  await expect(family.locator(".figma-branch-family-toggle")).toHaveAttribute("aria-expanded", "true");
+  await expect(family.locator('[data-branch-history-id="manager-parent"] [aria-current="page"]')).toBeVisible();
+  await expect(family.locator('[data-branch-history-id="manager-branch"]')).toContainText("继续分支");
+  await expect(family.locator('[data-branch-history-id="manager-archived"]')).toContainText("重试分支");
+
+  const archivedNode = family.locator('[data-branch-history-id="manager-archived"]');
+  await expect(archivedNode.getByRole("button", { name: /打开分支/ })).toHaveCount(0);
+  await expect(archivedNode.getByRole("button", { name: /恢复分支/ })).toBeVisible();
+  const branchControlHeights = await family.locator("button").evaluateAll((buttons) =>
+    buttons.filter((button) => button.getClientRects().length > 0).map((button) => button.getBoundingClientRect().height)
+  );
+  const minimumTarget = isMobileProject(testInfo.project.name) ? 44 : 36;
+  expect(branchControlHeights.every((height) => height >= minimumTarget)).toBe(true);
+  expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+  await expect(page.locator('[data-scroll-owner="dialog"]:visible')).toHaveCount(1);
+
+  const search = dialog.getByRole("searchbox");
+  await search.fill("历史内容");
+  await expect(family.locator('[data-branch-history-id="manager-parent"]')).toBeVisible();
+  await expect(family.locator('[data-branch-history-id="manager-branch"]')).toBeVisible();
+  await expect(family.locator('[data-branch-history-id="manager-archived"]')).toBeVisible();
+  await search.fill("");
+
+  await family.locator('[data-branch-history-id="manager-branch"]')
+    .getByRole("button", { name: /打开分支/ })
+    .click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.locator(".figma-chat-session").first()).toHaveAttribute("data-conversation-id", "manager-branch");
+  await expect(page.locator('[data-conversation-id="manager-branch"]')).not.toHaveClass(/collapsed/);
+
+  dialog = await openConversationManager(page);
+  await dialog.getByRole("tab", { name: /分支 1/ }).click();
+  await dialog.locator('[data-branch-history-id="manager-archived"]')
+    .getByRole("button", { name: /恢复分支/ })
+    .click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.locator(".figma-chat-session").first()).toHaveAttribute("data-conversation-id", "manager-archived");
+  await expect.poll(async () => {
+    const records = await readWorkspaceRecords<Conversation>(page, "conversations");
+    return records.find((conversation) => conversation.id === "manager-archived")?.archivedAt;
+  }).toBeUndefined();
+
+  expect(apiHarness.requests).toHaveLength(requestCount);
+  expect(apiHarness.chatRequests).toHaveLength(chatRequestCount);
 });
 
 test("archive survives reload, keeps the branch independent, and restore opens the conversation on top", async ({ page, apiHarness }) => {
@@ -271,6 +330,35 @@ test("streaming keeps search available but blocks open, archive, and handler byp
   const archiveButton = branchRow.getByRole("button", { name: "归档会话 发布计划 · 分支", exact: true });
   await expect(archiveButton).toBeDisabled();
 
+  await search.fill("");
+  await dialog.getByRole("tab", { name: /分支 1/ }).click();
+  const family = dialog.locator('[data-branch-family-id="manager-parent"]');
+  const familyToggle = family.locator(".figma-branch-family-toggle");
+  await expect(familyToggle).toBeEnabled();
+  await familyToggle.click();
+  await expect(familyToggle).toHaveAttribute("aria-expanded", "false");
+  await familyToggle.click();
+  const branchOpen = family.locator('[data-branch-history-id="manager-branch"]')
+    .getByRole("button", { name: /打开分支/ });
+  const archivedRestore = family.locator('[data-branch-history-id="manager-archived"]')
+    .getByRole("button", { name: /恢复分支/ });
+  await expect(branchOpen).toBeDisabled();
+  await expect(archivedRestore).toBeDisabled();
+
+  await branchOpen.evaluate((button) => {
+    (button as HTMLButtonElement).disabled = false;
+    (button as HTMLButtonElement).click();
+  });
+  await archivedRestore.evaluate((button) => {
+    (button as HTMLButtonElement).disabled = false;
+    (button as HTMLButtonElement).click();
+  });
+  await expect(dialog).toBeVisible();
+  const guardedRecords = await readWorkspaceRecords<Conversation>(page, "conversations");
+  expect(guardedRecords.find((conversation) => conversation.id === "manager-archived")?.archivedAt).toBeTruthy();
+
+  await dialog.getByRole("tab", { name: /活跃/ }).click();
+  await expect(archiveButton).toBeVisible();
   await archiveButton.evaluate((button) => {
     (button as HTMLButtonElement).disabled = false;
     (button as HTMLButtonElement).click();

@@ -42,9 +42,14 @@ const workspaceArchive = await import(workspaceArchiveUrl);
 const archive = await importTsSource(archiveSource, {
   "../workspace/workspaceArchive": workspaceArchiveUrl
 });
-const retrieval = await importTsSource(
+const retrievalUrl = moduleUrlFromSource(
   fs.readFileSync(path.join(rootDir, "src/features/chat/conversationRetrieval.ts"), "utf8"),
   { "../workspace/workspaceArchive": workspaceArchiveUrl }
+);
+const retrieval = await import(retrievalUrl);
+const branchHistory = await importTsSource(
+  fs.readFileSync(path.join(rootDir, "src/features/chat/conversationBranchHistory.ts"), "utf8"),
+  { "./conversationRetrieval": retrievalUrl }
 );
 const artifacts = await import(artifactWorkspaceUrl);
 const attachmentContext = await importTsSource(
@@ -238,6 +243,167 @@ assert.equal(restoredConversation.archivedAt, undefined);
 assert.equal(restoredConversation.pinned, false);
 assert.equal(restoredConversation.updatedAt, restoredAt);
 assert.equal(archivedConversation.archivedAt, archivedAt, "restoring must not mutate the archived source");
+
+const branchRoot = {
+  ...structuredClone(conversation),
+  id: "branch-root",
+  title: "Branch root",
+  preview: "root preview"
+};
+const branchChild = {
+  ...structuredClone(conversation),
+  id: "branch-child",
+  title: "Branch child",
+  preview: "child preview",
+  branch: {
+    parentConversationId: branchRoot.id,
+    sourceMessageId: "m2",
+    mode: "edit"
+  }
+};
+const archivedSibling = {
+  ...structuredClone(conversation),
+  id: "branch-archived",
+  title: "Archived sibling",
+  preview: "archived preview",
+  archivedAt,
+  branch: {
+    parentConversationId: branchRoot.id,
+    sourceMessageId: "m2",
+    mode: "retry"
+  }
+};
+const nestedBranch = {
+  ...structuredClone(conversation),
+  id: "branch-nested",
+  title: "Nested needle",
+  preview: "nested preview",
+  branch: {
+    parentConversationId: branchChild.id,
+    sourceMessageId: "m3",
+    mode: "continue"
+  }
+};
+nestedBranch.messages = [{
+  id: "nested-message",
+  role: "user",
+  content: "ordinary nested content",
+  attachments: [{
+    id: "nested-private",
+    kind: "text",
+    name: "private-lineage.txt",
+    mimeType: "text/plain",
+    size: 15,
+    text: "private lineage"
+  }],
+  createdAt: now
+}];
+const orphanBranch = {
+  ...structuredClone(conversation),
+  id: "branch-orphan",
+  title: "Orphan branch",
+  branch: {
+    parentConversationId: "missing-parent",
+    sourceMessageId: "missing-message",
+    mode: "continue"
+  }
+};
+const cycleFirst = {
+  ...structuredClone(conversation),
+  id: "cycle-first",
+  title: "Cycle first",
+  branch: {
+    parentConversationId: "cycle-second",
+    sourceMessageId: "cycle-message-1",
+    mode: "continue"
+  }
+};
+const cycleSecond = {
+  ...structuredClone(conversation),
+  id: "cycle-second",
+  title: "Cycle second",
+  branch: {
+    parentConversationId: "cycle-first",
+    sourceMessageId: "cycle-message-2",
+    mode: "edit"
+  }
+};
+const neutralConversation = {
+  ...structuredClone(conversation),
+  id: "branch-neutral",
+  title: "Neutral conversation"
+};
+const branchFixtures = [
+  branchRoot,
+  branchChild,
+  archivedSibling,
+  nestedBranch,
+  orphanBranch,
+  cycleFirst,
+  cycleSecond,
+  neutralConversation,
+  { ...structuredClone(branchRoot), title: "Duplicate root" }
+];
+const branchFixturesBefore = JSON.stringify(branchFixtures);
+const branchProjection = branchHistory.buildConversationBranchHistory(branchFixtures);
+assert.equal(JSON.stringify(branchFixtures), branchFixturesBefore, "branch history projection must not mutate input");
+assert.deepEqual(
+  branchProjection.families.map((family) => family.id),
+  ["branch-root", "branch-orphan", "cycle-second"],
+  "neutral and duplicate records must not create branch families"
+);
+assert.equal(branchProjection.families[0].nodeCount, 4);
+assert.equal(branchProjection.families[0].hasArchived, true);
+assert.deepEqual(
+  branchProjection.families[0].root.children.map((node) => node.conversation.id),
+  ["branch-child", "branch-archived"],
+  "siblings must retain the current conversation order"
+);
+assert.equal(branchProjection.families[0].root.children[0].children[0].conversation.id, "branch-nested");
+assert.equal(branchProjection.families[1].root.status, "orphan");
+assert.equal(branchProjection.families[2].root.status, "invalid");
+assert.equal(branchProjection.families[2].root.children[0].conversation.id, "cycle-first");
+
+const filteredBranchProjection = branchHistory.filterConversationBranchHistory(branchProjection, "nested needle");
+assert.deepEqual(
+  filteredBranchProjection.families[0].root.children.map((node) => node.conversation.id),
+  ["branch-child"],
+  "branch search must remove unrelated siblings"
+);
+assert.equal(
+  filteredBranchProjection.families[0].root.children[0].children[0].conversation.id,
+  "branch-nested",
+  "branch search must retain every matching descendant ancestor"
+);
+assert.equal(
+  branchHistory.filterConversationBranchHistory(branchProjection, "private lineage").families.length,
+  0,
+  "branch search must not inspect attachment text"
+);
+
+const deepBranches = [branchRoot];
+let deepParentId = branchRoot.id;
+for (let index = 0; index < branchHistory.conversationBranchHistoryLimits.maxDepth + 3; index += 1) {
+  const id = `deep-branch-${index}`;
+  deepBranches.push({
+    ...structuredClone(conversation),
+    id,
+    title: id,
+    branch: {
+      parentConversationId: deepParentId,
+      sourceMessageId: `deep-message-${index}`,
+      mode: "continue"
+    }
+  });
+  deepParentId = id;
+}
+const deepProjection = branchHistory.buildConversationBranchHistory(deepBranches);
+assert.equal(deepProjection.truncated, true, "deep branch histories must report bounded truncation");
+assert.equal(
+  deepProjection.families[0].nodeCount,
+  branchHistory.conversationBranchHistoryLimits.maxDepth + 1,
+  "branch traversal must stop at the configured depth"
+);
 
 const artifactHtml = artifacts.createArtifact({
   title: "安全页面",
