@@ -573,3 +573,36 @@ Added an Admin-only remote MCP foundation with bounded HTTPS profiles, DNS-pinne
 ### Next Steps
 
 - None - task complete
+
+
+## Session 18: Conversation branch history navigation
+
+**Date**: 2026-08-08
+**Task**: Conversation branch history navigation
+**Branch**: `master`
+
+### Summary
+
+Added bounded local conversation branch-family navigation in the chat manager, including active/archived restore guards, responsive nested UI, contract coverage, E2E verification, and branch-history specifications.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6be7f88` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
