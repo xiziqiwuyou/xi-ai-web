@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 16
+- **Total Sessions**: 17
 - **Last Active**: 2026-08-08
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~542 | Active |
+| `journal-1.md` | ~575 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 17 | 2026-08-08 | Remote MCP secure foundation | `273f2e2` | `master` |
 | 16 | 2026-08-08 | Secure local artifact workspace | `15dab6d` | `master` |
 | 15 | 2026-08-08 | Complete local conversation retrieval and archive | `74c6a70` | `master` |
 | 14 | 2026-08-08 | LobeChat capability roadmap and chat branching | `137fa6b`, `9b82e20` | `master` |

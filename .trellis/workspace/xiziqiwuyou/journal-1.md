@@ -540,3 +540,36 @@ Added a browser-local artifact workspace for explicit code-block saves, bounded 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 17: Remote MCP secure foundation
+
+**Date**: 2026-08-08
+**Task**: Remote MCP secure foundation
+**Branch**: `master`
+
+### Summary
+
+Added an Admin-only remote MCP foundation with bounded HTTPS profiles, DNS-pinned SSRF-safe JSON-RPC discovery, redacted errors, rate limits, no-execution gate, responsive Admin UI, privacy and E2E coverage, and backend/frontend code-spec contracts. Full local validation passed; no remote push or release was performed.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `273f2e2` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
