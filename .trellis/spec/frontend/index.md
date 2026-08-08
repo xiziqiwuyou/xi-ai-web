@@ -17,6 +17,7 @@ This directory contains guidelines for frontend development. Fill in each file w
 | [Directory Structure](./directory-structure.md) | Module organization and file layout | To fill |
 | [Component Guidelines](./component-guidelines.md) | Component patterns, overlays, styling, accessibility | Active |
 | [Admin Console Design](./admin-console-design.md) | Admin information architecture, shell, navigation, workbench, responsive rules | Active |
+| [Admin MCP Management](./admin-mcp-management.md) | Private MCP profile CRUD and display-only discovery UI | Active |
 | [Hook Guidelines](./hook-guidelines.md) | Custom hooks, data fetching patterns | To fill |
 | [State Management](./state-management.md) | Root, URL, feature, storage, and overlay state | Active |
 | [Quality Guidelines](./quality-guidelines.md) | Verification, browser tests, and review contracts | Active |

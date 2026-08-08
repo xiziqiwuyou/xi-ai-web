@@ -1,5 +1,6 @@
 import type {
   AdminBootstrapPayload,
+  McpServerProfile,
   ModelCatalogEntry,
   ModelVendorEntry,
   ProviderKind
@@ -98,6 +99,22 @@ function normalizedModelVendors(
   return vendors;
 }
 
+function normalizedMcpServers(value: unknown): McpServerProfile[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is McpServerProfile => {
+    if (!item || typeof item !== "object") return false;
+    const profile = item as Partial<McpServerProfile>;
+    return Boolean(
+      typeof profile.id === "string" &&
+      typeof profile.label === "string" &&
+      typeof profile.endpoint === "string" &&
+      typeof profile.enabled === "boolean" &&
+      typeof profile.createdAt === "string" &&
+      typeof profile.updatedAt === "string"
+    );
+  });
+}
+
 export function normalizeAdminBootstrapPayload<T extends Partial<AdminBootstrapPayload>>(
   payload: T
 ): AdminBootstrapPayload & T {
@@ -119,6 +136,7 @@ export function normalizeAdminBootstrapPayload<T extends Partial<AdminBootstrapP
     appPresets: Array.isArray(payload.appPresets) ? payload.appPresets : [],
     promptPresets: Array.isArray(payload.promptPresets) ? payload.promptPresets : [],
     langflowWorkflows: Array.isArray(payload.langflowWorkflows) ? payload.langflowWorkflows : [],
+    mcpServers: normalizedMcpServers(payload.mcpServers),
     toolSettings: Array.isArray(payload.toolSettings) ? payload.toolSettings : []
   } as AdminBootstrapPayload & T;
 }

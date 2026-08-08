@@ -65,6 +65,37 @@ export type AdminLangflowWorkflow = LangflowWorkflow & {
   updatedAt: string;
 };
 
+export type McpServerProfile = {
+  id: string;
+  label: string;
+  endpoint: string;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type McpToolDescriptor = {
+  name: string;
+  label: string;
+  description: string;
+  inputSchema?: Record<string, unknown>;
+  requiresApproval: true;
+  untrusted: true;
+};
+
+export type McpDiscoveryResult = {
+  profileId: string;
+  protocolVersion: string;
+  tools: McpToolDescriptor[];
+  truncated: boolean;
+  discoveredAt: string;
+};
+
+export type McpDiscoveryResponse = {
+  profile: McpServerProfile;
+  discovery: McpDiscoveryResult;
+};
+
 export type FeatureSettings = {
   chat: { enabledProviderIds: string[] };
   image: { enabledProviderIds: string[]; defaultModel?: string };
@@ -238,6 +269,7 @@ export type AdminBootstrapPayload = {
   promptPresets: PromptPreset[];
   langflow: LangflowStatus;
   langflowWorkflows: AdminLangflowWorkflow[];
+  mcpServers: McpServerProfile[];
   toolSettings?: ToolSetting[];
 };
 

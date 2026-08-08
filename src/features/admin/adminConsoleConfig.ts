@@ -6,6 +6,7 @@ import {
   Gauge,
   KeyRound,
   Layers3,
+  Network,
   ServerCog,
   Settings,
   ToggleLeft,
@@ -21,6 +22,7 @@ import type {
   ModelCatalogEntry,
   ModelDefaultFor,
   ModelEndpointProtocol,
+  McpServerProfile,
   ModuleId,
   PromptPreset,
   ProviderKind
@@ -79,9 +81,16 @@ export type LangflowWorkflowDraft = {
   enabled: boolean;
 };
 
+export type McpServerDraft = {
+  label: string;
+  endpoint: string;
+  enabled: boolean;
+};
+
 export type AdminSectionId =
   | "overview"
   | "tools"
+  | "mcp"
   | "site"
   | "menus"
   | "models"
@@ -124,6 +133,7 @@ export const adminNavigationGroups: Array<{
     items: [
       { id: "models", label: "模型目录", icon: Layers3 },
       { id: "tools", label: "工具权限", icon: ServerCog },
+      { id: "mcp", label: "MCP 服务", icon: Network },
       { id: "workflows", label: "工作流发布", icon: Workflow }
     ]
   },
@@ -170,6 +180,10 @@ export const adminSectionDetails: Record<AdminSectionId, { title: string; descri
   tools: {
     title: "工具权限",
     description: "控制应用工具、独立联网搜索和厂商托管工具。"
+  },
+  mcp: {
+    title: "MCP 服务",
+    description: "管理公开 MCP 服务并查看其工具能力；当前版本仅支持发现，不执行远程工具。"
   },
   site: {
     title: "站点设置",
@@ -353,6 +367,12 @@ export const emptyLangflowWorkflowDraft: LangflowWorkflowDraft = {
   enabled: true
 };
 
+export const emptyMcpServerDraft: McpServerDraft = {
+  label: "新 MCP 服务",
+  endpoint: "",
+  enabled: true
+};
+
 export const promptModuleOptions: Array<{ value: ModuleId; label: string }> = [
   { value: "chat", label: "对话" },
   { value: "image", label: "绘画" },
@@ -454,6 +474,15 @@ export function langflowWorkflowPayload(draft: LangflowWorkflowDraft): Partial<A
     tags: [...new Set(draft.tags.split(/[,，\r\n]+/).map((tag) => tag.trim()).filter(Boolean))],
     order: draft.order,
     enabled: draft.enabled
+  };
+}
+
+export function mcpServerDraft(entry?: McpServerProfile): McpServerDraft {
+  if (!entry) return emptyMcpServerDraft;
+  return {
+    label: entry.label,
+    endpoint: entry.endpoint,
+    enabled: entry.enabled
   };
 }
 

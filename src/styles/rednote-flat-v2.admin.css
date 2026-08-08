@@ -4101,3 +4101,171 @@
     transition: none;
   }
 }
+
+.admin-mcp-section {
+  display: grid;
+  gap: 14px;
+}
+
+.admin-mcp-boundary-note {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--xhs-red) 24%, var(--xhs-line));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--xhs-red) 6%, var(--xhs-surface));
+  color: var(--xhs-text);
+}
+
+.admin-mcp-boundary-note svg {
+  margin-top: 1px;
+  color: var(--xhs-red);
+}
+
+.admin-mcp-boundary-note p,
+.admin-mcp-boundary-note span {
+  margin: 0;
+}
+
+.admin-mcp-boundary-note p {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.admin-mcp-boundary-note span {
+  color: var(--xhs-muted);
+}
+
+.admin-mcp-form > label > small {
+  display: block;
+  margin-top: 5px;
+  color: var(--xhs-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.admin-mcp-discovery {
+  display: grid;
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--xhs-line);
+}
+
+.admin-mcp-discovery-heading {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.admin-mcp-discovery-heading h3,
+.admin-mcp-discovery-heading p {
+  margin: 0;
+}
+
+.admin-mcp-discovery-heading h3 {
+  font-size: 15px;
+}
+
+.admin-mcp-discovery-heading p {
+  margin-top: 4px;
+  color: var(--xhs-muted);
+  font-size: 11px;
+}
+
+.admin-mcp-discovery-heading > span {
+  flex: 0 0 auto;
+  padding: 4px 7px;
+  border: 1px solid var(--xhs-line);
+  border-radius: 999px;
+  color: var(--xhs-muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.admin-mcp-tool-list {
+  display: grid;
+  gap: 8px;
+}
+
+.admin-mcp-tool-row {
+  display: grid;
+  gap: 7px;
+  padding: 11px 12px;
+  border: 1px solid var(--xhs-line);
+  border-radius: 9px;
+  background: var(--xhs-surface);
+}
+
+.admin-mcp-tool-row > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.admin-mcp-tool-row code {
+  color: var(--xhs-muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.admin-mcp-tool-row p {
+  margin: 0;
+  color: var(--xhs-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.admin-mcp-tool-row pre {
+  max-height: 160px;
+  margin: 0;
+  padding: 8px;
+  overflow: auto;
+  border-radius: 7px;
+  background: var(--xhs-soft-2);
+  color: var(--xhs-text);
+  font: 11px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.is-spinning {
+  animation: admin-mcp-spin 0.9s linear infinite;
+}
+
+@keyframes admin-mcp-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 720px) {
+  .admin-mcp-boundary-note {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-mcp-discovery-heading {
+    flex-direction: column;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .is-spinning {
+    animation: none;
+  }
+}
+
+@media (min-width: 1101px) {
+  .admin-console-inner.is-models-active .admin-model-detail-form .admin-form-actions {
+    position: sticky;
+    z-index: 2;
+    bottom: -14px;
+    margin-top: 0;
+    padding-bottom: 2px;
+    background: var(--xhs-surface);
+  }
+}

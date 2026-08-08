@@ -89,6 +89,11 @@ const adminCss = readProjectFile("src/styles/rednote-flat-v2.admin.css");
 const adminConsoleConfig = readProjectFile("src/features/admin/adminConsoleConfig.ts");
 const modelCatalogPresets = readProjectFile("src/features/admin/modelCatalogPresets.ts");
 const adminValidation = readProjectFile("src/features/admin/adminValidation.ts");
+const adminMcpSection = readProjectFile("src/features/admin/AdminMcpSection.tsx");
+const mcpContract = readProjectFile("server/mcp/contract.mjs");
+const mcpSecurity = readProjectFile("server/mcp/security.mjs");
+const mcpClient = readProjectFile("server/mcp/client.mjs");
+const mcpRoutes = readProjectFile("server/mcp/routes.mjs");
 const chatSessionSettings = readProjectFile("src/features/chat/ChatSessionSettingsDialog.tsx");
 const server = readProjectFile("server/index.mjs");
 const imageTimingStore = readProjectFile("server/image-generation-timing.mjs");
@@ -101,6 +106,28 @@ const appData = fs.existsSync(appDataPath) ? JSON.parse(fs.readFileSync(appDataP
 const currentCatalog = normalizeModelCatalog(appData.modelCatalog || [], []);
 const freshCatalog = defaultModelCatalog();
 const freshAssistants = defaultAssistants();
+assert(
+  types.includes("McpServerProfile")
+    && types.includes("McpDiscoveryResult")
+    && !types.slice(types.indexOf("export type PublicBootstrapPayload"), types.indexOf("export type AdminBootstrapPayload")).includes("mcpServers"),
+  "MCP profiles must remain an Admin-only bootstrap contract"
+);
+assert(
+  server.includes("mcpServers")
+    && mcpContract.includes("MCP_EXECUTION_NOT_AVAILABLE")
+    && mcpSecurity.includes("pinnedLookup")
+    && mcpClient.includes("tools/list")
+    && mcpRoutes.includes("/tools/call"),
+  "MCP secure discovery foundation must remain wired with an explicit execution gate"
+);
+assert(
+  adminConsoleConfig.includes('id: "mcp"')
+    && adminConsole.includes('activeSection === "mcp"')
+    && adminMcpSection.includes("发现工具")
+    && adminConsole.includes("discoverMcpServer")
+    && api.includes("discoverMcpServer"),
+  "Admin MCP configuration must stay reachable through the shared AI navigation"
+);
 assert(freshCatalog.every((entry, index) => entry.order === index), "Fresh model catalogs must expose compact model order");
 assert(
   freshCatalog.some((entry) => entry.vendor === "openai" && entry.model === "gpt-5.4-mini" && entry.capabilities.includes("chat")),

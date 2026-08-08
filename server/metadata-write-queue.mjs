@@ -1,13 +1,19 @@
 const DEFAULT_WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
-export function createMetadataWriteQueue({ methods = DEFAULT_WRITE_METHODS } = {}) {
+export function createMetadataWriteQueue({
+  methods = DEFAULT_WRITE_METHODS,
+  shouldQueue = () => true
+} = {}) {
   const writeMethods = methods instanceof Set
     ? methods
     : new Set(Array.from(methods || [], (method) => String(method).toUpperCase()));
   let tail = Promise.resolve();
 
   return function metadataWriteQueue(req, res, next) {
-    if (!writeMethods.has(String(req.method || "").toUpperCase())) return next();
+    if (
+      !writeMethods.has(String(req.method || "").toUpperCase()) ||
+      !shouldQueue(req)
+    ) return next();
 
     const previous = tail;
     let unlock;

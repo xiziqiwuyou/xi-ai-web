@@ -70,6 +70,21 @@ test("metadata queue does not serialize read-only requests", () => {
   assert.equal(calls, 2);
 });
 
+test("metadata queue can bypass an explicitly read-only POST", async () => {
+  const queue = createMetadataWriteQueue({ shouldQueue: (req) => req.path !== "/discover" });
+  const events = [];
+  const writeResponse = new TestResponse();
+  const discoveryRequest = new TestRequest("POST");
+  discoveryRequest.path = "/discover";
+
+  queue(new TestRequest("PATCH"), writeResponse, () => events.push("write"));
+  queue(discoveryRequest, new TestResponse(), () => events.push("discover"));
+  await flushQueue();
+
+  assert.deepEqual(events, ["discover", "write"]);
+  writeResponse.emit("finish");
+});
+
 test("metadata queue does not treat a consumed request stream as a disconnected client", async () => {
   const queue = createMetadataWriteQueue();
   const request = new TestRequest("POST");

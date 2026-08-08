@@ -1,0 +1,9 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Verify endpoint validation, DNS checks, redirect handling, and redaction."}
+{"file":".trellis/spec/backend/public-ai-production-boundary.md","reason":"Verify Admin/public boundary and no open proxy behavior."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Verify Admin surface boundaries, no public route, focus, and mobile containment."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Verify MCP profiles contain no credentials and public bootstrap remains safe."}
+{"file":".trellis/tasks/08-08-remote-mcp-secure-foundation/prd.md","reason":"Check every P4 foundation acceptance criterion and out-of-scope rule."}
+{"file":".trellis/tasks/08-08-remote-mcp-secure-foundation/design.md","reason":"Check cross-layer data flow and rollback boundary."}
+{"file":".trellis/tasks/08-08-remote-mcp-secure-foundation/implement.md","reason":"Check ordered implementation and validation gates."}
+{"file":".trellis/spec/backend/remote-mcp-foundation.md","reason":"Verify API, SSRF, bounded transport, redaction, and no-execution requirements."}
+{"file":".trellis/spec/frontend/admin-mcp-management.md","reason":"Verify private Admin-only UI, explicit discovery, display-only results, and viewport containment."}

@@ -95,6 +95,13 @@ import {
 } from "./data/assistant-catalog.mjs";
 import { createMetadataWriteQueue } from "./metadata-write-queue.mjs";
 import { createAdminCredentialStore } from "./admin-credentials.mjs";
+import { createMcpAdminRouter } from "./mcp/routes.mjs";
+import {
+  McpError,
+  assertMcpServerCollection,
+  normalizeMcpServers
+} from "./mcp/contract.mjs";
+import { assertSafeMcpEndpoint } from "./mcp/security.mjs";
 import { createModelUsageStore, trackModelUsageResponse } from "./model-usage.mjs";
 import {
   createImageGenerationTimingStore,
@@ -215,6 +222,7 @@ function createDefaultData() {
     promptPresets: defaultPromptPresets(),
     langflowWorkflows: [],
     toolSettings: normalizeToolSettings(),
+    mcpServers: [],
     conversations: []
   };
 }
@@ -391,6 +399,7 @@ function normalizeData(raw) {
     promptPresets: normalizePromptPresets(data.promptPresets, fallback.promptPresets),
     langflowWorkflows: normalizeLangflowWorkflows(data.langflowWorkflows, fallback.langflowWorkflows),
     toolSettings: normalizeToolsData(data.toolSettings || fallback.toolSettings),
+    mcpServers: normalizeMcpServers(data.mcpServers),
     conversations: Array.isArray(data.conversations) ? data.conversations : []
   };
 }
@@ -699,6 +708,21 @@ function loadData() {
 let db = loadData();
 progressSyncService.updateConfig(db.settings.progressSync);
 let upstreamState = { state: "ready", reason: null };
+const allowLocalMcpEndpoints = !isProduction
+  && String(process.env.MCP_ALLOW_LOCAL_ENDPOINTS || "").toLowerCase() === "true";
+const allowInsecureMcpHttp = String(process.env.MCP_ALLOW_INSECURE_HTTP || "").toLowerCase() === "true";
+
+async function validateMcpProfiles(profiles) {
+  const normalized = assertMcpServerCollection(profiles);
+  return Promise.all(normalized.map(async (profile) => {
+    const target = await assertSafeMcpEndpoint(profile.endpoint, {
+      production: isProduction,
+      allowLocal: allowLocalMcpEndpoints,
+      allowInsecureHttp: allowInsecureMcpHttp
+    });
+    return { ...profile, endpoint: target.url };
+  }));
+}
 
 try {
   db.settings.upstreamBaseUrl = await assertManagedUpstreamBaseUrl(db.settings.upstreamBaseUrl, {
@@ -761,6 +785,11 @@ const requestGuards = {
     scope: "progress-sync",
     maxRequests: Number(process.env.PROGRESS_SYNC_RATE_LIMIT_MAX || 240),
     maxConcurrent: Number(process.env.PROGRESS_SYNC_MAX_CONCURRENT || 16)
+  }),
+  mcpDiscovery: createRequestGuard({
+    scope: "mcp-discovery",
+    maxRequests: Number(process.env.MCP_DISCOVERY_IP_RATE_LIMIT_MAX || 24),
+    maxConcurrent: Number(process.env.MCP_DISCOVERY_MAX_CONCURRENT || 2)
   }),
   diagnostics: createRequestGuard({
     scope: "diagnostics",
@@ -832,6 +861,7 @@ app.use("/api/public/shell-token/exchange", (req, res, next) => {
   next();
 });
 app.use("/api/public/shell-token/exchange", requestGuards.shellAuth);
+app.use("/api/admin/mcp-servers/:id/discover", requireAdmin, requestGuards.mcpDiscovery);
 
 // Keep large media payloads available while preventing ordinary JSON endpoints
 // from inheriting the 32 MB parser limit.
@@ -845,6 +875,7 @@ app.use("/api/retrieval/embed", express.json({ limit: "512kb", strict: true }));
 app.use("/api/media/video/status", express.json({ limit: "1mb", strict: true }));
 app.use("/api/generate", express.json({ limit: "32mb", strict: true }));
 app.use("/api/public/shell-token/exchange", express.json({ limit: "16kb", strict: true }));
+app.use("/api/admin/mcp-servers", express.json({ limit: "64kb", strict: true }));
 app.use(express.json({ limit: "2mb", strict: true }));
 
 function httpError(status, message) {
@@ -2176,7 +2207,23 @@ app.post("/api/admin/logout", (req, res) => {
 
 const adminRouter = express.Router();
 adminRouter.use(requireAdmin);
-adminRouter.use(createMetadataWriteQueue());
+adminRouter.use(createMetadataWriteQueue({
+  shouldQueue: (req) => !/^\/mcp-servers\/[^/]+\/(?:discover|tools\/call)$/u.test(req.path)
+}));
+adminRouter.use(
+  "/mcp-servers",
+  createMcpAdminRouter({
+    getProfiles: () => db.mcpServers,
+    setProfiles: (profiles) => {
+      db.mcpServers = profiles;
+    },
+    save: () => saveData(),
+    audit: appendAudit,
+    production: isProduction,
+    allowLocal: allowLocalMcpEndpoints,
+    allowInsecureHttp: allowInsecureMcpHttp
+  })
+);
 
 adminRouter.get("/bootstrap", (req, res) => {
   res.json({
@@ -2190,7 +2237,8 @@ adminRouter.get("/bootstrap", (req, res) => {
     promptPresets: db.promptPresets,
     langflow: publicLangflowStatus(langflowConfig),
     langflowWorkflows: db.langflowWorkflows,
-    toolSettings: normalizeToolSettings(db.toolSettings)
+    toolSettings: normalizeToolSettings(db.toolSettings),
+    mcpServers: db.mcpServers
   });
 });
 
@@ -2552,7 +2600,8 @@ function adminMetadataPayload() {
     appPresets: db.appPresets,
     promptPresets: db.promptPresets,
     langflowWorkflows: db.langflowWorkflows,
-    toolSettings: normalizeToolSettings(db.toolSettings)
+    toolSettings: normalizeToolSettings(db.toolSettings),
+    mcpServers: db.mcpServers
   };
 }
 
@@ -2565,7 +2614,8 @@ const allowedMetadataKeys = new Set([
   "appPresets",
   "promptPresets",
   "langflowWorkflows",
-  "toolSettings"
+  "toolSettings",
+  "mcpServers"
 ]);
 
 function findCredentialLikeKeys(value, pathParts = [], matches = []) {
@@ -2621,7 +2671,10 @@ function buildMetadataImport(body) {
     langflowWorkflows: Array.isArray(source.langflowWorkflows)
       ? normalizeLangflowWorkflows(source.langflowWorkflows, db.langflowWorkflows)
       : db.langflowWorkflows,
-    toolSettings: Array.isArray(source.toolSettings) ? normalizeToolsData(source.toolSettings) : normalizeToolsData(db.toolSettings)
+    toolSettings: Array.isArray(source.toolSettings) ? normalizeToolsData(source.toolSettings) : normalizeToolsData(db.toolSettings),
+    mcpServers: Array.isArray(source.mcpServers)
+      ? assertMcpServerCollection(source.mcpServers)
+      : db.mcpServers
   };
 }
 
@@ -2635,7 +2688,8 @@ function metadataImportReport(nextData) {
     appPresets: nextData.appPresets.length,
     promptPresets: nextData.promptPresets.length,
     langflowWorkflows: nextData.langflowWorkflows.length,
-    toolSettings: nextData.toolSettings.length
+    toolSettings: nextData.toolSettings.length,
+    mcpServers: nextData.mcpServers.length
   };
   const changed = Object.entries(counts)
     .filter(([key, count]) => current[key]?.length !== count)
@@ -2658,6 +2712,7 @@ adminRouter.get("/metadata-export", (req, res) => {
 adminRouter.patch("/metadata-import", asyncRoute(async (req, res) => {
   const nextData = buildMetadataImport(req.body);
   nextData.settings.oneapiSettingsHandoffEnabled = db.settings.oneapiSettingsHandoffEnabled;
+  nextData.mcpServers = await validateMcpProfiles(nextData.mcpServers);
   try {
     nextData.settings.upstreamBaseUrl = await assertManagedUpstreamBaseUrl(nextData.settings.upstreamBaseUrl, {
       production: isProduction,
@@ -2679,6 +2734,7 @@ adminRouter.patch("/metadata-import", asyncRoute(async (req, res) => {
   db.promptPresets = nextData.promptPresets;
   db.langflowWorkflows = nextData.langflowWorkflows;
   db.toolSettings = nextData.toolSettings;
+  db.mcpServers = nextData.mcpServers;
   progressSyncService.updateConfig(db.settings.progressSync);
   if (knowledgeRuntime?.upstreamRef) knowledgeRuntime.upstreamRef.current = db.settings.upstreamBaseUrl;
   saveData();
@@ -2703,6 +2759,7 @@ adminRouter.post("/backups/:name/restore", asyncRoute(async (req, res) => {
   const backupPath = safeBackupPath(req.params.name);
   const restored = normalizeData(JSON.parse(fs.readFileSync(backupPath, "utf8")));
   restored.settings.oneapiSettingsHandoffEnabled = db.settings.oneapiSettingsHandoffEnabled;
+  restored.mcpServers = await validateMcpProfiles(restored.mcpServers);
   try {
     restored.settings.upstreamBaseUrl = await assertManagedUpstreamBaseUrl(restored.settings.upstreamBaseUrl, {
       production: isProduction,
@@ -3869,6 +3926,15 @@ app.use((error, req, res, next) => {
 app.use((error, req, res, next) => {
   if (res.headersSent) return next(error);
   const status = error.status || 500;
+  if (error instanceof McpError) {
+    if (status >= 500) console.error(`MCP request failed: ${error.code}`);
+    return res.status(status).json({
+      error: {
+        code: error.code,
+        message: error.message
+      }
+    });
+  }
   if (status >= 500) console.error(error);
   res.status(status).json({ error: error.message || "服务器错误" });
 });

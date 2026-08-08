@@ -16,6 +16,7 @@ import { AdminAppsSection } from "./AdminAppsSection";
 import { AdminAssistantsSection } from "./AdminAssistantsSection";
 import { AdminAuditSection } from "./AdminAuditSection";
 import { AdminLangflowSection } from "./AdminLangflowSection";
+import { AdminMcpSection } from "./AdminMcpSection";
 import { AdminModelsSection } from "./AdminModelsSection";
 import { AdminOverviewSection } from "./AdminOverviewSection";
 import { AdminPromptsSection } from "./AdminPromptsSection";
@@ -36,10 +37,12 @@ import {
   emptyAppPresetDraft,
   emptyAssistantDraft,
   emptyLangflowWorkflowDraft,
+  emptyMcpServerDraft,
   emptyModelDraft,
   emptyPromptPresetDraft,
   langflowWorkflowDraft,
   langflowWorkflowPayload,
+  mcpServerDraft,
   modelDraft,
   promptPresetDraft,
   toggleArrayValue,
@@ -49,6 +52,7 @@ import {
   type AppPresetDraft,
   type AssistantDraft,
   type LangflowWorkflowDraft,
+  type McpServerDraft,
   type ModelDraft,
   type PromptPresetDraft
 } from "./adminConsoleConfig";
@@ -61,6 +65,7 @@ import type {
   AppPreset,
   Assistant,
   MenuItem,
+  McpDiscoveryResult,
   ModelCapability,
   ModelVendorEntry,
   ModuleId,
@@ -133,6 +138,11 @@ export function AdminConsole({
   const [langflowWorkflowForm, setLangflowWorkflowForm] = useState<LangflowWorkflowDraft>(
     langflowWorkflowDraft(selectedLangflowWorkflow)
   );
+  const [selectedMcpProfileId, setSelectedMcpProfileId] = useState<string | "new">(
+    bootstrap.mcpServers[0]?.id || "new"
+  );
+  const selectedMcpProfile = bootstrap.mcpServers.find((entry) => entry.id === selectedMcpProfileId);
+  const [mcpForm, setMcpForm] = useState<McpServerDraft>(mcpServerDraft(selectedMcpProfile));
   const [toolDraft, setToolDraft] = useState<ToolSetting[]>(bootstrap.toolSettings || []);
   const [opsSummary, setOpsSummary] = useState<AdminOpsPayload | null>(null);
   const [backups, setBackups] = useState<AdminBackupItem[]>([]);
@@ -168,6 +178,11 @@ export function AdminConsole({
   useEffect(() => {
     setLangflowWorkflowForm(langflowWorkflowDraft(selectedLangflowWorkflow));
   }, [selectedLangflowWorkflow]);
+
+  useEffect(() => {
+    if (selectedMcpProfileId === "new") return;
+    setMcpForm(mcpServerDraft(selectedMcpProfile));
+  }, [selectedMcpProfile, selectedMcpProfileId]);
 
   useEffect(() => {
     void loadOperations();
@@ -378,8 +393,14 @@ export function AdminConsole({
       ? undefined
       : nextBootstrap.modelCatalog.find((entry) => entry.id === selectedModelId);
     const nextModel = retainedModel || nextBootstrap.modelCatalog[0];
+    const retainedMcp = selectedMcpProfileId === "new"
+      ? undefined
+      : nextBootstrap.mcpServers.find((profile) => profile.id === selectedMcpProfileId);
+    const nextMcp = retainedMcp || nextBootstrap.mcpServers[0];
 
     onBootstrapChange(nextBootstrap);
+    setSelectedMcpProfileId(nextMcp?.id || "new");
+    setMcpForm(mcpServerDraft(nextMcp));
     setShowModelFieldErrors(false);
     if (nextModel) {
       setSelectedModelId(nextModel.id);
@@ -452,6 +473,72 @@ export function AdminConsole({
     } catch (err: unknown) {
       onError(err instanceof Error ? err.message : "工具权限保存失败");
     }
+  };
+
+  const saveMcpServer = async (event: FormEvent) => {
+    event.preventDefault();
+    onError("");
+    onNotice("");
+    const label = mcpForm.label.trim();
+    const endpoint = mcpForm.endpoint.trim();
+    if (!label || !endpoint) {
+      onError("请填写 MCP 服务显示名称和 HTTPS 地址");
+      return;
+    }
+    try {
+      const profile = selectedMcpProfileId === "new"
+        ? await api.createMcpServer({ label, endpoint, enabled: mcpForm.enabled })
+        : await api.updateMcpServer(selectedMcpProfileId, { label, endpoint, enabled: mcpForm.enabled });
+      const mcpServers = selectedMcpProfileId === "new"
+        ? [...bootstrap.mcpServers, profile]
+        : bootstrap.mcpServers.map((item) => item.id === profile.id ? profile : item);
+      onBootstrapChange({ ...bootstrap, mcpServers });
+      setSelectedMcpProfileId(profile.id);
+      setMcpForm(mcpServerDraft(profile));
+      onNotice("MCP 服务已保存");
+    } catch (err: unknown) {
+      onError(err instanceof Error ? err.message : "MCP 服务保存失败");
+    }
+  };
+
+  const discoverMcpServer = async (): Promise<McpDiscoveryResult> => {
+    if (selectedMcpProfileId === "new") throw new Error("请先保存 MCP 服务");
+    onError("");
+    onNotice("");
+    try {
+      const response = await api.discoverMcpServer(selectedMcpProfileId);
+      onNotice(`已发现 ${response.discovery.tools.length} 个远程工具（仅展示）`);
+      return response.discovery;
+    } catch (err: unknown) {
+      onError(err instanceof Error ? err.message : "MCP 工具发现失败");
+      throw err instanceof Error ? err : new Error("MCP 工具发现失败");
+    }
+  };
+
+  const deleteMcpServer = async (profileId: string) => {
+    onError("");
+    onNotice("");
+    try {
+      await api.deleteMcpServer(profileId);
+      const mcpServers = bootstrap.mcpServers.filter((item) => item.id !== profileId);
+      const nextProfile = mcpServers[0];
+      onBootstrapChange({ ...bootstrap, mcpServers });
+      setSelectedMcpProfileId(nextProfile?.id || "new");
+      setMcpForm(mcpServerDraft(nextProfile));
+      onNotice("MCP 服务已删除");
+    } catch (err: unknown) {
+      onError(err instanceof Error ? err.message : "MCP 服务删除失败");
+    }
+  };
+
+  const requestMcpDelete = () => {
+    if (selectedMcpProfileId === "new" || !selectedMcpProfile) return;
+    requestConfirmation({
+      title: `删除 MCP 服务“${selectedMcpProfile.label}”？`,
+      description: "删除后将移除管理员保存的服务地址，当前版本不会影响远程服务本身。",
+      confirmLabel: "删除服务",
+      action: () => deleteMcpServer(selectedMcpProfile.id)
+    });
   };
 
   const loadAuditLog = async () => {
@@ -923,6 +1010,26 @@ export function AdminConsole({
           tools={toolDraft}
           onEnabledChange={(name, enabled) => setToolDraft((current) => current.map((item) => item.name === name ? { ...item, enabled } : item))}
           onSave={() => void saveToolSettings()}
+        />
+      ) : null}
+
+      {activeSection === "mcp" ? (
+        <AdminMcpSection
+          profiles={bootstrap.mcpServers}
+          selectedProfileId={selectedMcpProfileId}
+          form={mcpForm}
+          onSelect={(profileId) => {
+            setSelectedMcpProfileId(profileId);
+            if (profileId === "new") setMcpForm(emptyMcpServerDraft);
+          }}
+          onCreate={() => {
+            setSelectedMcpProfileId("new");
+            setMcpForm(emptyMcpServerDraft);
+          }}
+          onChange={(patch) => setMcpForm((current) => ({ ...current, ...patch }))}
+          onSubmit={saveMcpServer}
+          onDelete={requestMcpDelete}
+          onDiscover={discoverMcpServer}
         />
       ) : null}
 

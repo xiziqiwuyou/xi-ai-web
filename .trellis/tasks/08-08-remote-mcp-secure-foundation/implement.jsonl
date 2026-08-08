@@ -1,0 +1,9 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend route, security, rate-limit, and metadata conventions."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"SSRF, authentication, rate-limit, redaction, and safe error boundaries."}
+{"file":".trellis/spec/backend/public-ai-production-boundary.md","reason":"Public versus Admin request and upstream trust boundaries."}
+{"file":".trellis/spec/frontend/index.md","reason":"Admin navigation, form, dialog, and responsive conventions."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Admin two-level navigation, mounted sections, controls, and no public MCP menu."}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"Shared MCP profile and bounded untrusted descriptor types."}
+{"file":".trellis/spec/backend/remote-mcp-foundation.md","reason":"Executable MCP API, SSRF, transport, error, and execution-gate contract."}
+{"file":".trellis/spec/frontend/admin-mcp-management.md","reason":"Admin MCP navigation, explicit discovery interaction, and responsive display-only contract."}
+{"file":".trellis/tasks/08-08-remote-mcp-secure-foundation/design.md","reason":"MCP transport and security design for implementation."}

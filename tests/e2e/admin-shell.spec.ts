@@ -137,6 +137,7 @@ test("authenticated admin console keeps responsive navigation and one scroll own
       "overview",
       "models",
       "tools",
+      "mcp",
       "workflows",
       "assistants",
       "apps",
@@ -347,6 +348,7 @@ test("all admin destinations share the responsive wide content boundary", async 
   const sectionIds = [
     "overview",
     "tools",
+    "mcp",
     "site",
     "menus",
     "models",

@@ -25,6 +25,7 @@ import type {
   AdminLangflowWorkflow,
   LangflowWorkflow,
   MindmapDocument,
+  McpServerProfile,
   ModelCatalogEntry,
   ModelVendorEntry,
   ProviderKind,
@@ -538,6 +539,7 @@ const adminBootstrapFixture: AdminBootstrapPayload = {
   promptPresets: publicBootstrapFixture.promptPresets,
   langflow: publicBootstrapFixture.langflow,
   langflowWorkflows: [],
+  mcpServers: [],
   toolSettings: publicBootstrapFixture.toolSettings
 };
 
@@ -1090,6 +1092,11 @@ export const test = base.extend<BrowserFixtures>({
           return;
         }
 
+        if (request.method() === "GET" && pathname === "/api/admin/mcp-servers") {
+          await route.fulfill({ json: adminBootstrap.mcpServers });
+          return;
+        }
+
         if (request.method() === "PATCH" && pathname === "/api/admin/settings") {
           const payload = request.postDataJSON() as Partial<AdminBootstrapPayload["settings"]>;
           const settings = {
@@ -1121,6 +1128,88 @@ export const test = base.extend<BrowserFixtures>({
           await route.fulfill({
             json: { ok: true, username, reauthenticationRequired: true }
           });
+          return;
+        }
+
+        if (request.method() === "POST" && pathname === "/api/admin/mcp-servers") {
+          const payload = request.postDataJSON() as Partial<McpServerProfile>;
+          const created: McpServerProfile = {
+            id: `mcp-e2e-${adminBootstrap.mcpServers.length + 1}`,
+            label: String(payload.label || "MCP Service"),
+            endpoint: String(payload.endpoint || "https://mcp.example.test/mcp"),
+            enabled: payload.enabled !== false,
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z"
+          };
+          adminBootstrap = {
+            ...adminBootstrap,
+            mcpServers: [...adminBootstrap.mcpServers, created]
+          };
+          await route.fulfill({ status: 201, json: created });
+          return;
+        }
+
+        const mcpAdminMatch = pathname.match(/^\/api\/admin\/mcp-servers\/([^/]+)$/);
+        if (request.method() === "PATCH" && mcpAdminMatch) {
+          const profileId = decodeURIComponent(mcpAdminMatch[1]);
+          const payload = request.postDataJSON() as Partial<McpServerProfile>;
+          const current = adminBootstrap.mcpServers.find((profile) => profile.id === profileId);
+          if (!current) {
+            await route.fulfill({ status: 404, json: { error: "MCP profile not found" } });
+            return;
+          }
+          const updated: McpServerProfile = {
+            ...current,
+            label: typeof payload.label === "string" ? payload.label : current.label,
+            endpoint: typeof payload.endpoint === "string" ? payload.endpoint : current.endpoint,
+            enabled: typeof payload.enabled === "boolean" ? payload.enabled : current.enabled,
+            updatedAt: "2026-01-01T00:00:00.000Z"
+          };
+          adminBootstrap = {
+            ...adminBootstrap,
+            mcpServers: adminBootstrap.mcpServers.map((profile) => profile.id === profileId ? updated : profile)
+          };
+          await route.fulfill({ json: updated });
+          return;
+        }
+
+        const mcpDiscoveryMatch = pathname.match(/^\/api\/admin\/mcp-servers\/([^/]+)\/discover$/);
+        if (request.method() === "POST" && mcpDiscoveryMatch) {
+          const profileId = decodeURIComponent(mcpDiscoveryMatch[1]);
+          const profile = adminBootstrap.mcpServers.find((item) => item.id === profileId);
+          if (!profile) {
+            await route.fulfill({ status: 404, json: { error: { code: "MCP_PROFILE_NOT_FOUND", message: "MCP profile not found" } } });
+            return;
+          }
+          await route.fulfill({
+            json: {
+              profile,
+              discovery: {
+                profileId,
+                protocolVersion: "2025-06-18",
+                truncated: false,
+                discoveredAt: "2026-01-01T00:00:00.000Z",
+                tools: [{
+                  name: "fixture.read",
+                  label: "Fixture read",
+                  description: "Fixture tool",
+                  inputSchema: { type: "object" },
+                  requiresApproval: true,
+                  untrusted: true
+                }]
+              }
+            }
+          });
+          return;
+        }
+
+        if (request.method() === "DELETE" && mcpAdminMatch) {
+          const profileId = decodeURIComponent(mcpAdminMatch[1]);
+          adminBootstrap = {
+            ...adminBootstrap,
+            mcpServers: adminBootstrap.mcpServers.filter((profile) => profile.id !== profileId)
+          };
+          await route.fulfill({ status: 204, body: "" });
           return;
         }
 

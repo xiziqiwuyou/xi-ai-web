@@ -19,6 +19,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Error Handling](./error-handling.md) | Error types, handling strategies | To fill |
 | [Quality Guidelines](./quality-guidelines.md) | Code standards, auth boundaries, forbidden patterns | Active |
 | [Public AI Production Boundary](./public-ai-production-boundary.md) | BYOK Chat/image trust boundary, request contracts, readiness, and deployment | Active |
+| [Remote MCP Secure Foundation](./remote-mcp-foundation.md) | Admin-only MCP profile, SSRF-safe discovery, and execution boundary | Active |
 | [Logging Guidelines](./logging-guidelines.md) | Structured logging, log levels | To fill |
 
 ---

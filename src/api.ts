@@ -50,6 +50,8 @@ import type {
   MenuItem,
   ModelCatalogEntry,
   ModelVendorEntry,
+  McpDiscoveryResponse,
+  McpServerProfile,
   PromptPreset,
   PublicBootstrapPayload,
   SiteSettings,
@@ -153,6 +155,25 @@ export const api = {
     apiJson<MenuItem[]>("/api/admin/menu-items", {
       method: "PATCH",
       body: JSON.stringify({ menuItems })
+    }),
+
+  listMcpServers: () => apiJson<McpServerProfile[]>("/api/admin/mcp-servers"),
+  createMcpServer: (profile: Pick<McpServerProfile, "label" | "endpoint" | "enabled">) =>
+    apiJson<McpServerProfile>("/api/admin/mcp-servers", {
+      method: "POST",
+      body: JSON.stringify(profile)
+    }),
+  updateMcpServer: (id: string, profile: Partial<Pick<McpServerProfile, "label" | "endpoint" | "enabled">>) =>
+    apiJson<McpServerProfile>(`/api/admin/mcp-servers/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(profile)
+    }),
+  deleteMcpServer: (id: string) =>
+    apiJson<void>(`/api/admin/mcp-servers/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  discoverMcpServer: (id: string) =>
+    apiJson<McpDiscoveryResponse>(`/api/admin/mcp-servers/${encodeURIComponent(id)}/discover`, {
+      method: "POST",
+      body: JSON.stringify({})
     }),
 
   generate: (moduleId: GenerationModuleId, payload: GenerationPayload, signal?: AbortSignal) =>
