@@ -606,3 +606,37 @@ Added bounded local conversation branch-family navigation in the chat manager, i
 ### Next Steps
 
 - None - task complete
+
+
+## Session 19: Prepare and publish v0.0.12
+
+**Date**: 2026-08-09
+**Task**: Prepare and publish v0.0.12
+**Branch**: `master`
+
+### Summary
+
+Audited progress since v0.0.11, packaged verified Chat branching/retrieval/artifact/MCP foundation work as v0.0.12, aligned MCP clientInfo version with APP_VERSION, pinned Compose/docs, passed isolated full QA, and prepared the GitHub container release.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `367ef68` | (see git log) |
+| `b30631e` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
