@@ -507,3 +507,36 @@ Implemented P2A browser-local conversation search and reversible archive/restore
 ### Next Steps
 
 - None - task complete
+
+
+## Session 16: Secure local artifact workspace
+
+**Date**: 2026-08-08
+**Task**: Secure local artifact workspace
+**Branch**: `master`
+
+### Summary
+
+Added a browser-local artifact workspace for explicit code-block saves, bounded immutable versions, safe HTML/Markdown/text previews, export, IndexedDB v4 persistence, workspace archive and temporary sync integration. Added desktop/mobile/dark-mode E2E coverage and hardened Markdown resources, artifact merge limits, hydration failure handling, and ID generation.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `15dab6d` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
