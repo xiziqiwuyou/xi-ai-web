@@ -440,3 +440,37 @@ Published the Claude streaming and model-aware output-limit repair as v0.0.11; G
 ### Next Steps
 
 - None - task complete
+
+
+## Session 14: LobeChat capability roadmap and chat branching
+
+**Date**: 2026-08-08
+**Task**: LobeChat capability roadmap and chat branching
+**Branch**: `master`
+
+### Summary
+
+Implemented and verified clean-room chat message actions and immutable branches; recorded the staged LobeChat capability roadmap and P2A retrieval/archive proposal.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `137fa6b` | (see git log) |
+| `9b82e20` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
