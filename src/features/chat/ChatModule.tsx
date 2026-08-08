@@ -19,6 +19,7 @@ import {
   modelsForCapability,
   preferredModelFor
 } from "../../components/workbench";
+import { createClientId } from "../../utils/clientId";
 import { createChatAttachment } from "./attachmentUtils";
 import { supportsChatImageInput } from "./chatCapabilities";
 import {
@@ -28,6 +29,7 @@ import {
   settleStreamingMessage
 } from "./chatAttachmentContext";
 import ChatSessionSettingsDialog from "./ChatSessionSettingsDialog";
+import { createConversationBranchSeed } from "./conversationArchive";
 import {
   attachmentsWithinImageLimit,
   defaultSessionUi,
@@ -82,6 +84,7 @@ import type {
   ChatAttachment,
   ChatStreamEvent,
   Conversation,
+  ConversationBranchMode,
   ConversationSummary,
   Message,
   ModelCatalogEntry,
@@ -168,6 +171,8 @@ function ChatModule({
   const pendingAssistantHandledRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
   const streamingMessageIdRef = useRef("");
+  const requestInFlightConversationIdRef = useRef("");
+  const branchActionInFlightRef = useRef(false);
   const streamingRenderRef = useRef<StreamingRenderState | null>(null);
   const streamingFrameRef = useRef<number | null>(null);
   const streamingPersistTimerRef = useRef<number | null>(null);
@@ -543,10 +548,18 @@ function ChatModule({
     ]
   );
 
-  const sendMessage = async (conversation: Conversation) => {
-    const ui = sessionUi[conversation.id] || defaultSessionUi(false);
+  const sendMessage = async (
+    conversation: Conversation,
+    uiOverride?: SessionUiState,
+    selectedModelOverride?: ModelCatalogEntry
+  ) => {
+    const ui = uiOverride || sessionUi[conversation.id] || defaultSessionUi(false);
     const rawContent = ui.draft.trim();
-    if ((!rawContent && !ui.attachments.length) || streamingConversationId) return;
+    if (
+      (!rawContent && !ui.attachments.length) ||
+      requestInFlightConversationIdRef.current ||
+      streamingConversationId
+    ) return;
     if (!enabled) {
       patchSessionUi(conversation.id, { notice: "当前对话服务暂未开放。" });
       return;
@@ -556,7 +569,7 @@ function ChatModule({
       onRequestApiConfig();
       return;
     }
-    const selectedModel = modelForSession(conversation.id);
+    const selectedModel = selectedModelOverride || modelForSession(conversation.id);
     if (!selectedModel) {
       patchSessionUi(conversation.id, { notice: "当前没有可用的对话模型。" });
       return;
@@ -662,6 +675,7 @@ function ChatModule({
       );
     }
 
+    requestInFlightConversationIdRef.current = conversation.id;
     patchSessionUi(conversation.id, { draft: "", appId: "", notice: "" });
     setRequestPhase(conversation.id, ui.searchProvider ? "searching" : "generating");
     setStreamingConversationId(conversation.id);
@@ -735,7 +749,65 @@ function ChatModule({
         clearStreamingSchedules();
         setStreamingConversationId((current) => current === conversation.id ? "" : current);
       }
+      if (requestInFlightConversationIdRef.current === conversation.id) {
+        requestInFlightConversationIdRef.current = "";
+      }
       void onRefresh();
+    }
+  };
+
+  const createMessageBranch = async (
+    sourceConversation: Conversation,
+    sourceMessageId: string,
+    mode: ConversationBranchMode,
+    editedContent = ""
+  ) => {
+    if (
+      streamingConversationId ||
+      requestInFlightConversationIdRef.current ||
+      branchActionInFlightRef.current
+    ) {
+      patchSessionUi(sourceConversation.id, { notice: "请等待当前回复结束后再创建分支。" });
+      return;
+    }
+    const seed = createConversationBranchSeed(sourceConversation, sourceMessageId, mode, {
+      branchId: createClientId("chat-branch"),
+      editedContent
+    });
+    if (!seed) {
+      patchSessionUi(sourceConversation.id, { notice: "无法从这条消息创建分支，请选择其他消息重试。" });
+      return;
+    }
+
+    branchActionInFlightRef.current = true;
+    const selectedModel = modelForSession(sourceConversation.id);
+    const branchUi: SessionUiState = {
+      ...defaultSessionUi(false),
+      openedAt: Date.now(),
+      modelId: selectedModel?.id || "",
+      draft: seed.draft,
+      attachments: seed.attachments
+    };
+    commitConversations((current) => [
+      seed.conversation,
+      ...current.filter((conversation) => conversation.id !== seed.conversation.id)
+    ]);
+    setSessionUi((current) => ({
+      ...Object.fromEntries(Object.entries(current).map(([id, value]) => [id, { ...value, collapsed: true }])),
+      [seed.conversation.id]: branchUi
+    }));
+
+    if (mode === "continue") {
+      window.setTimeout(() => {
+        branchActionInFlightRef.current = false;
+      }, 0);
+      return;
+    }
+
+    try {
+      await sendMessage(seed.conversation, branchUi, selectedModel);
+    } finally {
+      branchActionInFlightRef.current = false;
     }
   };
 
@@ -1054,6 +1126,7 @@ function ChatModule({
               assistantAvatarUrl={assistantAvatarUrl}
               userAvatarUrl={userAvatarUrl}
               streaming={streamingConversationId === conversation.id}
+              messageActionsDisabled={Boolean(streamingConversationId)}
               onCreateConversation={createConversation}
               onOpenSettings={openSettings}
               onToggle={() => toggleConversation(conversation, ui)}
@@ -1108,6 +1181,9 @@ function ChatModule({
                 attachments: ui.attachments.filter((attachment) => attachment.kind !== "image"),
                 notice: "已移除不兼容的图片附件。"
               })}
+              onContinueFromMessage={(messageId) => void createMessageBranch(conversation, messageId, "continue")}
+              onEditMessageBranch={(messageId, content) => void createMessageBranch(conversation, messageId, "edit", content)}
+              onRetryMessageBranch={(messageId) => void createMessageBranch(conversation, messageId, "retry")}
               onClear={() => setClearConversationId(conversation.id)}
               onSend={() => void sendMessage(conversation)}
               onStop={stopStreaming}

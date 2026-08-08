@@ -1,0 +1,6 @@
+{"file":".trellis/spec/frontend/index.md","reason":"Frontend quality checklist entrypoint."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Verify Chat interaction, accessibility, and layout compliance."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Verify persistence and session-state ownership."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Verify targeted and cross-layer gates."}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"Verify runtime allowlists and optional metadata handling."}
+{"file":".trellis/tasks/08-08-chat-branching-message-actions/research/feature-assessment.md","reason":"Verify clean-room and first-slice boundaries."}

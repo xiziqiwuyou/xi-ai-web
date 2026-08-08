@@ -22,6 +22,7 @@ This directory contains guidelines for frontend development. Fill in each file w
 | [Quality Guidelines](./quality-guidelines.md) | Verification, browser tests, and review contracts | Active |
 | [Type Safety](./type-safety.md) | Shared types, route guards, and runtime boundaries | Active |
 | [Chat Capability And Independent Search](./chat-capability-search.md) | Vision attachment gating and explicit GLM/Kimi search state | Active |
+| [Chat Message Actions And Conversation Branching](./chat-branching.md) | Message actions, immutable branch projection, persistence, and recovery | Active |
 
 ---
 

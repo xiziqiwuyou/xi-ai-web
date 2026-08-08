@@ -40,6 +40,11 @@ const snapshot = {
     messageCount: 1,
     preview: "hello",
     messages: [{ id: "message-1", role: "user", content: "hello", createdAt: now }],
+    branch: {
+      parentConversationId: "conversation-parent",
+      sourceMessageId: "message-parent",
+      mode: "continue"
+    },
     createdAt: now,
     updatedAt: now
   }],
@@ -97,6 +102,11 @@ const envelope = await archive.createWorkspaceExport(snapshot, now);
 assert.equal(envelope.schema, "xi-ai-web.workspace-export");
 assert.equal(envelope.version, 1);
 assert.equal(envelope.counts.conversations, 1);
+assert.deepEqual(envelope.workspace.conversations[0].branch, {
+  parentConversationId: "conversation-parent",
+  sourceMessageId: "message-parent",
+  mode: "continue"
+});
 assert.equal(envelope.counts.userAgents, 1);
 assert.equal(envelope.counts.agentSkills, 1);
 assert.equal(envelope.counts.workflows, 1);
@@ -141,6 +151,7 @@ assert(!archiveSource.includes("userProviderConfig"), "workspace archive must no
 assert(!repositorySource.includes("userProviderConfig"), "workspace repository must not import BYOK storage");
 assert(!archiveSource.includes("searchServiceConfig"), "workspace archive must not import search credentials");
 assert(!repositorySource.includes("searchServiceConfig"), "workspace repository must not import search credentials");
+assert(archiveSource.includes("sanitizeWorkspaceConversationBranch"), "workspace conversations must use the branch metadata allowlist");
 assert(searchServiceSource.includes("window.sessionStorage"), "search credentials must use sessionStorage");
 assert(!searchServiceSource.includes("window.localStorage"), "search credentials must not use localStorage");
 

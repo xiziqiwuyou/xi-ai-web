@@ -1,5 +1,8 @@
-import type { Conversation, Message } from "../../types";
-import { sanitizeWorkspaceMessage } from "../workspace/workspaceArchive";
+import type { ChatAttachment, Conversation, ConversationBranchMode, Message } from "../../types";
+import {
+  sanitizeWorkspaceConversationBranch,
+  sanitizeWorkspaceMessage
+} from "../workspace/workspaceArchive";
 
 export const conversationExportSchema = "xi-ai-web.conversation-export";
 export const conversationExportVersion = 1;
@@ -35,9 +38,20 @@ export type ConversationImportPreview = {
   canReplace: boolean;
 };
 
+export type ConversationBranchSeed = {
+  conversation: Conversation;
+  draft: string;
+  attachments: ChatAttachment[];
+};
+
 function cleanText(value: unknown, maxLength: number) {
   const text = typeof value === "string" ? value.trim() : "";
   return text.length > maxLength ? text.slice(0, maxLength) : text;
+}
+
+function cleanIdentifier(value: unknown, maxLength = 120) {
+  const text = typeof value === "string" ? value.trim() : "";
+  return text && text.length <= maxLength ? text : "";
 }
 
 function sanitizeMessage(value: unknown): Message | null {
@@ -47,7 +61,9 @@ function sanitizeMessage(value: unknown): Message | null {
 
 export function sanitizeConversation(value: unknown): Conversation | null {
   const source = value && typeof value === "object" ? (value as Partial<Conversation>) : null;
-  if (!source?.id || !source.assistantId) return null;
+  if (!source?.id) return null;
+  const id = cleanText(source.id, 120);
+  if (!id) return null;
   const messages = Array.isArray(source.messages)
     ? source.messages
         .map(sanitizeMessage)
@@ -56,7 +72,7 @@ export function sanitizeConversation(value: unknown): Conversation | null {
     : [];
   const createdAt = cleanText(source.createdAt, 80) || new Date().toISOString();
   return {
-    id: cleanText(source.id, 120),
+    id,
     title: cleanText(source.title, 120) || "新对话",
     assistantId: cleanText(source.assistantId, 120),
     pinned: Boolean(source.pinned),
@@ -69,9 +85,117 @@ export function sanitizeConversation(value: unknown): Conversation | null {
       .slice(0, 120) || "",
     messages,
     titleSummaryAt: cleanText(source.titleSummaryAt, 80) || undefined,
+    branch: sanitizeWorkspaceConversationBranch(source.branch, id),
     createdAt,
     updatedAt: cleanText(source.updatedAt, 80) || createdAt
   };
+}
+
+function branchTitle(title: string) {
+  const suffix = " · 分支";
+  const base = cleanText(title, 120 - suffix.length) || "新对话";
+  return base.endsWith(suffix) ? base : `${base}${suffix}`;
+}
+
+function branchPreview(messages: Message[]) {
+  return messages
+    .slice()
+    .reverse()
+    .find((message) => message.content)
+    ?.content.replace(/\s+/g, " ")
+    .slice(0, 120) || "";
+}
+
+function cloneAttachments(attachments?: ChatAttachment[]) {
+  return attachments?.map((attachment) => ({ ...attachment })) || [];
+}
+
+function cloneMessages(messages: Message[]) {
+  return messages.map((message): Message => ({
+    id: message.id,
+    role: message.role,
+    content: message.content,
+    ...(message.attachments?.length ? { attachments: cloneAttachments(message.attachments) } : {}),
+    ...(message.model ? { model: message.model } : {}),
+    ...(message.providerId ? { providerId: message.providerId } : {}),
+    ...(message.knowledgeCitations?.length ? {
+      knowledgeCitations: message.knowledgeCitations.map((citation) => ({
+        ...citation,
+        locator: { ...citation.locator },
+        source: { ...citation.source }
+      }))
+    } : {}),
+    ...(message.usage ? { usage: { ...message.usage } } : {}),
+    ...(message.status ? { status: message.status } : {}),
+    createdAt: message.createdAt
+  }));
+}
+
+export function createConversationBranchSeed(
+  source: Conversation,
+  sourceMessageId: string,
+  mode: ConversationBranchMode,
+  options: {
+    branchId: string;
+    editedContent?: string;
+    now?: string;
+  }
+): ConversationBranchSeed | null {
+  const messageIndex = source.messages.findIndex((message) => message.id === sourceMessageId);
+  const branchId = cleanIdentifier(options.branchId);
+  if (messageIndex < 0 || !branchId || branchId === source.id) return null;
+
+  const sourceMessage = source.messages[messageIndex];
+  if (sourceMessage.status === "streaming") return null;
+
+  let messages: Message[];
+  let draft = "";
+  let attachments: ChatAttachment[] = [];
+
+  if (mode === "continue") {
+    messages = cloneMessages(source.messages.slice(0, messageIndex + 1));
+  } else if (mode === "edit") {
+    if (sourceMessage.role !== "user") return null;
+    messages = cloneMessages(source.messages.slice(0, messageIndex));
+    draft = cleanText(options.editedContent, maxMessageLength);
+    attachments = cloneAttachments(sourceMessage.attachments);
+    if (!draft && !attachments.length) return null;
+  } else {
+    if (sourceMessage.role !== "assistant") return null;
+    const precedingUserIndex = source.messages
+      .slice(0, messageIndex)
+      .map((message, index) => ({ message, index }))
+      .reverse()
+      .find(({ message }) => message.role === "user" && message.status !== "streaming")
+      ?.index;
+    if (precedingUserIndex === undefined) return null;
+    const precedingUserMessage = source.messages[precedingUserIndex];
+    messages = cloneMessages(source.messages.slice(0, precedingUserIndex));
+    draft = cleanText(precedingUserMessage.content, maxMessageLength);
+    attachments = cloneAttachments(precedingUserMessage.attachments);
+    if (!draft && !attachments.length) return null;
+  }
+
+  const now = cleanText(options.now, 80) || new Date().toISOString();
+  const conversation: Conversation = {
+    id: branchId,
+    title: branchTitle(source.title),
+    assistantId: source.assistantId,
+    pinned: false,
+    messageCount: messages.length,
+    preview: branchPreview(messages),
+    messages,
+    titleSummaryAt: undefined,
+    branch: {
+      parentConversationId: source.id,
+      sourceMessageId,
+      mode
+    },
+    createdAt: now,
+    updatedAt: now
+  };
+
+  return { conversation, draft, attachments };
 }
 
 export function createConversationExport(

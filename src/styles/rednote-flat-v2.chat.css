@@ -167,6 +167,21 @@
   color: var(--xhs-danger);
 }
 
+.figma-session-branch {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 7px;
+  border: 1px solid color-mix(in srgb, var(--xhs-primary-fill) 24%, var(--xhs-line));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--xhs-primary-fill) 8%, transparent);
+  color: var(--xhs-muted);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 16px;
+}
+
 .figma-model-trigger,
 .figma-session-toggle {
   display: inline-flex;
@@ -659,6 +674,19 @@
   justify-content: flex-end;
 }
 
+.figma-message-content {
+  display: flex;
+  min-width: 0;
+  max-width: min(78%, 720px);
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.figma-message.user .figma-message-content {
+  align-items: flex-end;
+}
+
 .figma-message-avatar {
   display: grid;
   width: 40px;
@@ -735,6 +763,200 @@
 
 .figma-message-bubble strong {
   font-weight: 800;
+}
+
+.figma-message-content > .figma-message-bubble {
+  max-width: 100%;
+}
+
+.figma-message-history.list .figma-message-content {
+  width: calc(100% - 56px);
+  max-width: calc(100% - 56px);
+}
+
+.figma-message-history.list .figma-message-content > .figma-message-bubble {
+  width: 100%;
+  max-width: 100%;
+}
+
+.figma-message-actions {
+  display: flex;
+  min-height: 36px;
+  align-items: center;
+  gap: 2px;
+  opacity: 0;
+  transform: translateY(-2px);
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.figma-message.user .figma-message-actions {
+  justify-content: flex-end;
+}
+
+.figma-message:hover .figma-message-actions,
+.figma-message:focus-within .figma-message-actions {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.figma-message-actions > button {
+  position: relative;
+  display: inline-grid;
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  place-items: center;
+  background: transparent;
+  color: var(--xhs-muted);
+}
+
+.figma-message-actions > button:hover:not(:disabled),
+.figma-message-actions > button:focus-visible {
+  background: var(--xhs-soft-3);
+  color: var(--xhs-ink);
+}
+
+.figma-message-actions > button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--xhs-primary-fill) 46%, transparent);
+  outline-offset: 1px;
+}
+
+.figma-message-actions > button:disabled {
+  cursor: not-allowed;
+  opacity: 0.38;
+}
+
+.figma-message-actions > button::after {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  z-index: 12;
+  padding: 4px 7px;
+  border: 1px solid var(--xhs-line);
+  border-radius: 7px;
+  background: var(--xhs-ink);
+  color: var(--xhs-bg);
+  content: attr(data-tooltip);
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 14px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 3px);
+  transition: opacity 100ms ease, transform 100ms ease;
+  white-space: nowrap;
+}
+
+.figma-message-actions > button:hover::after,
+.figma-message-actions > button:focus-visible::after {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.figma-message-editor {
+  display: grid;
+  width: min(100%, 640px);
+  min-width: min(480px, 62vw);
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--xhs-primary-fill) 32%, var(--xhs-line));
+  border-radius: 12px;
+  background: var(--xhs-surface);
+  box-shadow: 0 10px 26px color-mix(in srgb, var(--xhs-ink) 9%, transparent);
+}
+
+.figma-message-editor > label {
+  color: var(--xhs-muted);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 16px;
+}
+
+.figma-message-editor > textarea {
+  width: 100%;
+  min-height: 88px;
+  max-height: 240px;
+  resize: vertical;
+  padding: 10px 12px;
+  border: 1px solid var(--xhs-line);
+  border-radius: 10px;
+  outline: 0;
+  background: var(--xhs-bg);
+  color: var(--xhs-ink);
+  font: inherit;
+  line-height: 1.65;
+}
+
+.figma-message-editor > textarea:focus {
+  border-color: color-mix(in srgb, var(--xhs-primary-fill) 54%, var(--xhs-line));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--xhs-primary-fill) 11%, transparent);
+}
+
+.figma-message-editor > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.figma-message-editor button {
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--xhs-line);
+  border-radius: 9px;
+  background: var(--xhs-surface);
+  color: var(--xhs-ink);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.figma-message-editor button.primary {
+  border-color: var(--xhs-primary-fill);
+  background: var(--xhs-primary-fill);
+  color: var(--xhs-on-primary);
+}
+
+.figma-message-editor button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .figma-message-actions {
+    opacity: 1;
+    transform: none;
+  }
+
+  .figma-message-actions > button {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+  }
+
+  .figma-message-editor button {
+    min-height: 44px;
+  }
+
+  .figma-message-actions > button::after {
+    display: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .figma-message-content {
+    max-width: calc(100% - 52px);
+  }
+
+  .figma-message-editor {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .figma-session-branch > span {
+    display: none;
+  }
 }
 
 .figma-code-block {

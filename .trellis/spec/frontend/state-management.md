@@ -445,6 +445,65 @@ if (progressSyncEnabled && sendCode) openProgressSync("send", sendCode);
 
 - A replace confirmation must leave exactly one visible shared dialog. Preserve the restore callback outside the hidden panel for the confirmed operation; cancellation must never apply the snapshot.
 
+## Scenario: Chat Branch Provenance
+
+### 1. Scope / Trigger
+
+- Trigger: a persisted Chat message creates a local continue, edit, or retry branch that must survive IndexedDB hydration and workspace or conversation export/import.
+
+### 2. Signatures
+
+```ts
+type ConversationBranch = {
+  parentConversationId: string;
+  sourceMessageId: string;
+  mode: "continue" | "edit" | "retry";
+};
+
+sanitizeWorkspaceConversationBranch(value: unknown, conversationId: string): Conversation["branch"];
+```
+
+### 3. Contracts
+
+- `Conversation.branch` is optional provenance only. It may contain exactly a parent conversation ID, a source message ID, and one allowed mode.
+- Branch provenance is serialized by the same workspace and conversation archive allowlists as ordinary conversations. It never carries API Keys, URLs, pending draft text, attachments, selected Skills/apps, search state, knowledge selections, request state, or notices.
+- Invalid provenance cannot invalidate its containing conversation. Sanitization drops only `branch` when a value is missing, non-string, blank, longer than 120 characters, self-referential, or has an unsupported mode.
+- A blank `assistantId` remains a valid neutral Chat conversation. Do not use branch persistence changes to force a default assistant or discard such a conversation.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| Valid three-field provenance | Preserve it through IndexedDB and export/import |
+| Parent/source ID exceeds 120 characters | Remove `branch`; do not truncate the ID or drop the conversation |
+| Parent ID equals the current conversation ID | Remove `branch` only |
+| Unsupported mode or missing field | Remove `branch` only |
+| Legacy conversation has no `branch` | Load unchanged |
+
+### 5. Good / Base / Bad Cases
+
+- Good: a retry branch imports with its parent ID and source assistant-message ID intact, while its former composer attachment remains absent from provenance.
+- Base: a legacy neutral conversation without provenance remains exportable and usable.
+- Bad: silently truncating a parent ID until it becomes valid, persisting `SessionUiState`, or rejecting the whole conversation because one optional branch field is malformed.
+
+### 6. Tests Required
+
+- Workspace and conversation archive contracts assert valid round trips, legacy neutrality, malformed provenance removal, self-reference removal, and oversized-ID rejection without truncation.
+- Chat branch contracts assert branch seeds clone history and staged attachments rather than retaining parent-object references.
+
+### 7. Wrong vs Correct
+
+```ts
+// Wrong: makes a malformed optional field destroy the containing record.
+if (!isValidBranch(source.branch)) return null;
+
+// Correct: retain the conversation and remove only unsafe provenance.
+return {
+  ...conversation,
+  branch: sanitizeWorkspaceConversationBranch(source.branch, conversation.id)
+};
+```
+
 ## Common Mistakes
 
 - Persisting feature-local drafts globally during a visual refactor.

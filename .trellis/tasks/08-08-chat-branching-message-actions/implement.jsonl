@@ -1,0 +1,7 @@
+{"file":".trellis/spec/frontend/index.md","reason":"Frontend pre-development and quality routing."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Chat interaction, accessibility, overlay, and layout conventions."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Conversation, IndexedDB, and feature-state ownership rules."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Required contract and browser verification patterns."}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"Shared type and runtime sanitizer boundaries."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Branch metadata crosses type, archive, storage, UI, and test layers."}
+{"file":".trellis/tasks/08-08-chat-branching-message-actions/research/feature-assessment.md","reason":"Clean-room feature selection and deferred-scope rationale."}

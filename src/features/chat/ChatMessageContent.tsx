@@ -48,7 +48,7 @@ const defaultCodeSettings: CodeRenderSettings = {
 const markdownCodeBlockContext = createContext(false);
 const codeRenderSettingsContext = createContext<CodeRenderSettings>(defaultCodeSettings);
 
-async function copyText(value: string) {
+export async function copyTextToClipboard(value: string) {
   try {
     if (navigator.clipboard?.writeText) {
       await navigator.clipboard.writeText(value);
@@ -104,7 +104,7 @@ function ChatCodeBlock({ className, children, node: _node, ...props }: MarkdownC
   }, []);
 
   const copyCode = async () => {
-    const copied = await copyText(code);
+    const copied = await copyTextToClipboard(code);
     setCopyState(copied ? "copied" : "failed");
     if (resetTimerRef.current !== null) window.clearTimeout(resetTimerRef.current);
     resetTimerRef.current = window.setTimeout(() => {

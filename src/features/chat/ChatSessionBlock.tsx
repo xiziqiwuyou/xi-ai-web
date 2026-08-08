@@ -17,14 +17,18 @@ import {
   Check,
   ChevronDown,
   ChevronUp,
+  Copy,
   FileText,
+  GitBranch,
   Globe2,
   History,
   Image as ImageIcon,
   LayoutGrid,
+  Pencil,
   Pin,
   Plus,
   Puzzle,
+  RefreshCw,
   Send,
   Settings2,
   Square,
@@ -35,7 +39,7 @@ import { AssistantAvatar } from "../assistants/AssistantAvatar";
 import { FigmaMenu, getFloatingHorizontalOffset, getFloatingVerticalPlacement } from "../../components/ui";
 import { compactModelLabel } from "../../components/workbench";
 import { createClientId } from "../../utils/clientId";
-import ChatMessageContent from "./ChatMessageContent";
+import ChatMessageContent, { copyTextToClipboard } from "./ChatMessageContent";
 import { countIncompatibleChatImages, supportsChatImageInput } from "./chatCapabilities";
 import {
   chatContextMessageCountValues,
@@ -205,6 +209,7 @@ export type ChatSessionBlockProps = {
   assistantAvatarUrl: string;
   userAvatarUrl: string | null;
   streaming: boolean;
+  messageActionsDisabled: boolean;
   onCreateConversation: () => Conversation | null;
   onOpenSettings: () => void;
   onToggle: () => void;
@@ -224,6 +229,9 @@ export type ChatSessionBlockProps = {
   onLongPaste: (text: string) => void;
   onRemoveImage: (attachmentId: string) => void;
   onRemoveAllImages: () => void;
+  onContinueFromMessage: (messageId: string) => void;
+  onEditMessageBranch: (messageId: string, content: string) => void;
+  onRetryMessageBranch: (messageId: string) => void;
   onClear: () => void;
   onSend: () => void;
   onStop: () => void;
@@ -245,6 +253,7 @@ export function ChatSessionBlock({
   assistantAvatarUrl,
   userAvatarUrl,
   streaming,
+  messageActionsDisabled,
   onCreateConversation,
   onOpenSettings,
   onToggle,
@@ -264,6 +273,9 @@ export function ChatSessionBlock({
   onLongPaste,
   onRemoveImage,
   onRemoveAllImages,
+  onContinueFromMessage,
+  onEditMessageBranch,
+  onRetryMessageBranch,
   onClear,
   onSend,
   onStop
@@ -275,12 +287,16 @@ export function ChatSessionBlock({
   const messageHistoryScrollTimerRef = useRef<number | null>(null);
   const vendorListScrollTimerRef = useRef<number | null>(null);
   const modelListScrollTimerRef = useRef<number | null>(null);
+  const copyFeedbackTimerRef = useRef<number | null>(null);
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [modelPickerPlacement, setModelPickerPlacement] = useState<"down" | "up">("down");
   const [modelPickerOffset, setModelPickerOffset] = useState(0);
   const [vendorListScrolling, setVendorListScrolling] = useState(false);
   const [modelListScrolling, setModelListScrolling] = useState(false);
   const [messageHistoryScrolling, setMessageHistoryScrolling] = useState(false);
+  const [editingMessageId, setEditingMessageId] = useState("");
+  const [editingMessageContent, setEditingMessageContent] = useState("");
+  const [copyFeedback, setCopyFeedback] = useState<{ messageId: string; state: "copied" | "failed" } | null>(null);
   const modelPopoverId = useId();
   const commandListId = useId();
   const modelListId = `${modelPopoverId}-list`;
@@ -391,12 +407,20 @@ export function ChatSessionBlock({
   useEffect(() => {
     if (!ui.collapsed) return;
     setModelPickerOpen(false);
+    setEditingMessageId("");
+    setEditingMessageContent("");
     setMessageHistoryScrolling(false);
     if (messageHistoryScrollTimerRef.current !== null) {
       window.clearTimeout(messageHistoryScrollTimerRef.current);
       messageHistoryScrollTimerRef.current = null;
     }
   }, [ui.collapsed]);
+
+  useEffect(() => {
+    if (!messageActionsDisabled) return;
+    setEditingMessageId("");
+    setEditingMessageContent("");
+  }, [messageActionsDisabled]);
 
   useEffect(() => {
     if (!modelPickerOpen) return;
@@ -460,6 +484,10 @@ export function ChatSessionBlock({
     if (modelListScrollTimerRef.current !== null) {
       window.clearTimeout(modelListScrollTimerRef.current);
       modelListScrollTimerRef.current = null;
+    }
+    if (copyFeedbackTimerRef.current !== null) {
+      window.clearTimeout(copyFeedbackTimerRef.current);
+      copyFeedbackTimerRef.current = null;
     }
   }, []);
 
@@ -607,11 +635,59 @@ export function ChatSessionBlock({
     onToggle();
   };
 
+  const copyMessage = async (message: Message) => {
+    const copied = await copyTextToClipboard(message.content);
+    setCopyFeedback({ messageId: message.id, state: copied ? "copied" : "failed" });
+    if (copyFeedbackTimerRef.current !== null) window.clearTimeout(copyFeedbackTimerRef.current);
+    copyFeedbackTimerRef.current = window.setTimeout(() => {
+      setCopyFeedback(null);
+      copyFeedbackTimerRef.current = null;
+    }, 1800);
+  };
+
+  const beginMessageEdit = (message: Message) => {
+    if (messageActionsDisabled) return;
+    setEditingMessageId(message.id);
+    setEditingMessageContent(message.content);
+  };
+
+  const cancelMessageEdit = (restoreFocus = true) => {
+    const messageId = editingMessageId;
+    setEditingMessageId("");
+    setEditingMessageContent("");
+    if (restoreFocus && messageId) {
+      requestAnimationFrame(() => {
+        document
+          .querySelector<HTMLButtonElement>(`[data-message-id="${CSS.escape(messageId)}"] [data-message-edit-trigger]`)
+          ?.focus({ preventScroll: true });
+      });
+    }
+  };
+
+  const submitMessageEdit = (message: Message) => {
+    if (messageActionsDisabled || (!editingMessageContent.trim() && !message.attachments?.length)) return;
+    onEditMessageBranch(message.id, editingMessageContent);
+    cancelMessageEdit(false);
+  };
+
+  const handleMessageEditorKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>, message: Message) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      cancelMessageEdit();
+      return;
+    }
+    if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && !event.nativeEvent.isComposing) {
+      event.preventDefault();
+      submitMessageEdit(message);
+    }
+  };
+
   return (
     <article
       className={ui.collapsed ? "figma-chat-session collapsed" : "figma-chat-session"}
       data-conversation-id={conversation.id}
       data-pinned={conversation.pinned ? "true" : "false"}
+      data-branch-mode={conversation.branch?.mode || ""}
     >
       <div
         className="figma-session-header"
@@ -734,6 +810,16 @@ export function ChatSessionBlock({
               <span>{assistant?.name || "助手已失效"}</span>
             </span>
           ) : null}
+          {conversation.branch ? (
+            <span
+              className="figma-session-branch"
+              aria-label={`对话分支：${conversation.branch.mode === "edit" ? "编辑" : conversation.branch.mode === "retry" ? "重试" : "继续"}`}
+              title="此对话由历史消息创建分支"
+            >
+              <GitBranch size={12} aria-hidden="true" />
+              <span>分支</span>
+            </span>
+          ) : null}
         </div>
         <div className="figma-session-mobile-actions">
           <button
@@ -821,48 +907,133 @@ export function ChatSessionBlock({
               </nav>
             ) : null}
             <div className="figma-message-track">
-              {visibleMessages.map((message) => (
-                <article id={`chat-message-${message.id}`} key={message.id} className={`figma-message ${message.role}`}>
-                  {message.role === "assistant" ? (
-                    <AssistantAvatar
-                      assistant={assistant}
-                      fallbackImageUrl={assistantAvatarUrl}
-                      className="figma-message-avatar"
-                    />
-                  ) : null}
-                  <div className="figma-message-bubble">
-                    {message.content ? (
-                      <ChatMessageContent
-                        content={message.content}
-                        plainText={message.role === "user" && !settings.renderUserMarkdown}
-                        collapseThinking={settings.collapseThinking}
-                        renderMath={settings.renderMath}
-                        enableSingleDollarMath={settings.enableSingleDollarMath}
-                        codeTheme={settings.codeTheme}
-                        styledCodeBlocks={settings.styledCodeBlocks}
-                        showCodeLineNumbers={settings.showCodeLineNumbers}
-                        collapseCodeBlocks={settings.collapseCodeBlocks}
-                        wrapCode={settings.wrapCode}
-                        enableCodePreview={settings.enableCodePreview}
+              {visibleMessages.map((message) => {
+                const persistedIndex = conversation.messages.findIndex((item) => item.id === message.id);
+                const persisted = persistedIndex >= 0;
+                const canRetry = message.role === "assistant" && conversation.messages
+                  .slice(0, persistedIndex)
+                  .some((item) => item.role === "user" && item.status !== "streaming");
+                const editing = editingMessageId === message.id;
+                const copyState = copyFeedback?.messageId === message.id ? copyFeedback.state : null;
+                return (
+                  <article
+                    id={`chat-message-${message.id}`}
+                    key={message.id}
+                    className={`figma-message ${message.role}`}
+                    data-message-id={persisted ? message.id : undefined}
+                  >
+                    {message.role === "assistant" ? (
+                      <AssistantAvatar
+                        assistant={assistant}
+                        fallbackImageUrl={assistantAvatarUrl}
+                        className="figma-message-avatar"
                       />
-                    ) : message.status === "streaming" ? (
-                      ui.requestPhase === "buffering"
-                        ? <span className="figma-buffered-status" role="status">正在等待完整回复</span>
-                        : <span className="figma-typing" role="status" aria-label="正在生成"><i /><i /><i /></span>
-                    ) : (
-                      <small role="status">
-                        {message.status === "stopped" ? "已停止生成" : "生成失败"}
-                      </small>
-                    )}
-                    <KnowledgeCitationList citations={message.knowledgeCitations} />
-                  </div>
-                  {message.role === "user" ? (
-                    userAvatarUrl
-                      ? <img className="figma-user-avatar image" src={userAvatarUrl} alt="个人头像" />
-                      : <span className="figma-user-avatar">我</span>
-                  ) : null}
-                </article>
-              ))}
+                    ) : null}
+                    <div className="figma-message-content">
+                      {editing ? (
+                        <div className="figma-message-editor">
+                          <label htmlFor={`chat-message-editor-${message.id}`}>编辑消息内容</label>
+                          <textarea
+                            id={`chat-message-editor-${message.id}`}
+                            autoFocus
+                            value={editingMessageContent}
+                            onChange={(event) => setEditingMessageContent(event.target.value)}
+                            onKeyDown={(event) => handleMessageEditorKeyDown(event, message)}
+                            rows={Math.min(8, Math.max(3, editingMessageContent.split("\n").length + 1))}
+                          />
+                          <div>
+                            <button type="button" onClick={() => cancelMessageEdit()}>取消</button>
+                            <button
+                              type="button"
+                              className="primary"
+                              disabled={!editingMessageContent.trim() && !message.attachments?.length}
+                              onClick={() => submitMessageEdit(message)}
+                            >
+                              创建分支并发送
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="figma-message-bubble">
+                          {message.content ? (
+                            <ChatMessageContent
+                              content={message.content}
+                              plainText={message.role === "user" && !settings.renderUserMarkdown}
+                              collapseThinking={settings.collapseThinking}
+                              renderMath={settings.renderMath}
+                              enableSingleDollarMath={settings.enableSingleDollarMath}
+                              codeTheme={settings.codeTheme}
+                              styledCodeBlocks={settings.styledCodeBlocks}
+                              showCodeLineNumbers={settings.showCodeLineNumbers}
+                              collapseCodeBlocks={settings.collapseCodeBlocks}
+                              wrapCode={settings.wrapCode}
+                              enableCodePreview={settings.enableCodePreview}
+                            />
+                          ) : message.status === "streaming" ? (
+                            ui.requestPhase === "buffering"
+                              ? <span className="figma-buffered-status" role="status">正在等待完整回复</span>
+                              : <span className="figma-typing" role="status" aria-label="正在生成"><i /><i /><i /></span>
+                          ) : (
+                            <small role="status">
+                              {message.status === "stopped" ? "已停止生成" : "生成失败"}
+                            </small>
+                          )}
+                          <KnowledgeCitationList citations={message.knowledgeCitations} />
+                        </div>
+                      )}
+                      {persisted && !editing ? (
+                        <div className="figma-message-actions" role="group" aria-label={message.role === "user" ? "用户消息操作" : "助手消息操作"}>
+                          <button
+                            type="button"
+                            data-tooltip={copyState === "copied" ? "已复制" : copyState === "failed" ? "复制失败" : "复制消息"}
+                            aria-label={copyState === "copied" ? "消息已复制" : copyState === "failed" ? "复制消息失败" : "复制消息"}
+                            disabled={!message.content}
+                            onClick={() => void copyMessage(message)}
+                          >
+                            {copyState === "copied" ? <Check size={13} /> : <Copy size={13} />}
+                          </button>
+                          {message.role === "user" ? (
+                            <button
+                              type="button"
+                              data-tooltip="编辑并分支"
+                              data-message-edit-trigger
+                              aria-label="编辑并分支"
+                              disabled={messageActionsDisabled}
+                              onClick={() => beginMessageEdit(message)}
+                            >
+                              <Pencil size={13} />
+                            </button>
+                          ) : canRetry ? (
+                            <button
+                              type="button"
+                              data-tooltip="在新分支重新生成"
+                              aria-label="在新分支重新生成"
+                              disabled={messageActionsDisabled}
+                              onClick={() => onRetryMessageBranch(message.id)}
+                            >
+                              <RefreshCw size={13} />
+                            </button>
+                          ) : null}
+                          <button
+                            type="button"
+                            data-tooltip="从此消息创建分支"
+                            aria-label="从此消息创建分支"
+                            disabled={messageActionsDisabled}
+                            onClick={() => onContinueFromMessage(message.id)}
+                          >
+                            <GitBranch size={13} />
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                    {message.role === "user" ? (
+                      userAvatarUrl
+                        ? <img className="figma-user-avatar image" src={userAvatarUrl} alt="个人头像" />
+                        : <span className="figma-user-avatar">我</span>
+                    ) : null}
+                  </article>
+                );
+              })}
               <div />
             </div>
           </div>

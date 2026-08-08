@@ -185,6 +185,15 @@ assert(chatModuleSource.includes("STREAMING_PERSIST_INTERVAL_MS = 300"), "Chat s
 assert(chatModuleSource.includes("renderStreamingConversation(true)"), "Chat failure handling must persist the final buffered text");
 assert(chatModuleSource.includes('event.deliveryMode === "buffered" ? "buffering" : "generating"'), "Chat meta events must expose native versus buffered delivery");
 assert(chatModuleSource.includes("streamOutput: chatSettings.streamOutput"), "Chat requests must send the saved stream preference to the server");
+assert(chatModuleSource.includes("createConversationBranchSeed"), "Chat must create branches through the pure branch seed helper");
+assert(chatModuleSource.includes("messageActionsDisabled={Boolean(streamingConversationId)}"), "Chat must lock branch actions while any response streams");
+assert(chatModuleSource.includes("requestInFlightConversationIdRef.current"), "Chat branch handlers must share a synchronous request lock");
+assert(chatModuleSource.includes("await sendMessage(seed.conversation, branchUi, selectedModel)"), "edit/retry branches must use the existing send pipeline");
+const sessionBlockSource = fs.readFileSync(path.join(rootDir, "src/features/chat/ChatSessionBlock.tsx"), "utf8");
+for (const actionLabel of ["复制消息", "编辑并分支", "在新分支重新生成", "从此消息创建分支"]) {
+  assert(sessionBlockSource.includes(actionLabel), `Chat message action missing: ${actionLabel}`);
+}
+assert(sessionBlockSource.includes("创建分支并发送"), "inline message editing must expose an explicit send action");
 
 const serialized = JSON.stringify({
   ...envelope,
@@ -245,6 +254,89 @@ assert.equal(retryBase.messages.at(-1).id, "m2");
 
 const editSendBase = archive.forkConversationBeforeUserMessage(conversation, "m1", now);
 assert.equal(editSendBase.messages.length, 0, "editing the first user turn then sending must not keep stale assistant branch");
+
+const branchSource = structuredClone(conversation);
+branchSource.messages[2].attachments = [{
+  id: "branch-image",
+  kind: "image",
+  name: "branch.png",
+  mimeType: "image/png",
+  size: 4,
+  dataUrl: "data:image/png;base64,AAAA"
+}];
+const sourceBeforeBranch = JSON.stringify(branchSource);
+const continueSeed = archive.createConversationBranchSeed(branchSource, "m2", "continue", {
+  branchId: "branch-continue",
+  now
+});
+assert.equal(continueSeed.conversation.messages.at(-1).id, "m2");
+assert.equal(continueSeed.conversation.branch.mode, "continue");
+assert.equal(continueSeed.conversation.branch.parentConversationId, conversation.id);
+assert.equal(continueSeed.draft, "");
+
+const editSeed = archive.createConversationBranchSeed(branchSource, "m3", "edit", {
+  branchId: "branch-edit",
+  editedContent: "edited plan",
+  now
+});
+assert.equal(editSeed.conversation.messages.length, 2);
+assert.equal(editSeed.draft, "edited plan");
+assert.equal(editSeed.attachments[0].id, "branch-image");
+assert.equal(editSeed.conversation.branch.sourceMessageId, "m3");
+
+const retrySeed = archive.createConversationBranchSeed(branchSource, "m4", "retry", {
+  branchId: "branch-retry",
+  now
+});
+assert.equal(retrySeed.conversation.messages.length, 2);
+assert.equal(retrySeed.draft, "draft a plan");
+assert.equal(retrySeed.attachments[0].id, "branch-image");
+assert.equal(retrySeed.conversation.branch.mode, "retry");
+continueSeed.conversation.messages[0].content = "branch-only mutation";
+editSeed.attachments[0].name = "branch-only.png";
+assert.equal(branchSource.messages[0].content, "hello", "branch history must not retain source message references");
+assert.equal(branchSource.messages[2].attachments[0].name, "branch.png", "staged attachments must be cloned");
+assert.equal(JSON.stringify(branchSource), sourceBeforeBranch, "branch creation must not mutate the source conversation");
+assert.equal(archive.createConversationBranchSeed(branchSource, "m4", "edit", {
+  branchId: "invalid-mode",
+  editedContent: "no"
+}), null);
+assert.equal(archive.createConversationBranchSeed(branchSource, "missing", "continue", {
+  branchId: "invalid-message"
+}), null);
+assert.equal(archive.createConversationBranchSeed(branchSource, "m2", "continue", {
+  branchId: "x".repeat(121)
+}), null, "oversized branch IDs must be rejected instead of truncated");
+
+const sanitizedBranch = workspaceArchive.sanitizeWorkspaceConversation({
+  ...continueSeed.conversation,
+  branch: {
+    parentConversationId: conversation.id,
+    sourceMessageId: "m2",
+    mode: "continue"
+  }
+});
+assert.equal(sanitizedBranch.branch.mode, "continue");
+assert.equal(workspaceArchive.sanitizeWorkspaceConversation({
+  ...continueSeed.conversation,
+  branch: {
+    parentConversationId: continueSeed.conversation.id,
+    sourceMessageId: "m2",
+    mode: "continue"
+  }
+}).branch, undefined, "self-referential branch metadata must be removed");
+assert.equal(workspaceArchive.sanitizeWorkspaceConversation({
+  ...continueSeed.conversation,
+  branch: {
+    parentConversationId: "p".repeat(121),
+    sourceMessageId: "m2",
+    mode: "continue"
+  }
+}).branch, undefined, "oversized branch metadata must be removed instead of truncated");
+assert.equal(archive.sanitizeConversation({
+  ...continueSeed.conversation,
+  assistantId: ""
+}).assistantId, "", "neutral conversations remain exportable");
 
 const markdown = archive.conversationToMarkdown(conversation);
 assert(markdown.includes("# NextChat local thread"));

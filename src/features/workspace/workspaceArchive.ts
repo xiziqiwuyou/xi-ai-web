@@ -219,6 +219,30 @@ export function sanitizeWorkspaceMessage(value: unknown): Conversation["messages
   };
 }
 
+export function sanitizeWorkspaceConversationBranch(
+  value: unknown,
+  conversationId: string
+): Conversation["branch"] {
+  const source = recordFrom(value);
+  const rawParentConversationId = typeof source?.parentConversationId === "string"
+    ? source.parentConversationId.trim()
+    : "";
+  const rawSourceMessageId = typeof source?.sourceMessageId === "string"
+    ? source.sourceMessageId.trim()
+    : "";
+  if (rawParentConversationId.length > 120 || rawSourceMessageId.length > 120) return undefined;
+  const parentConversationId = cleanText(rawParentConversationId, 120);
+  const sourceMessageId = cleanText(rawSourceMessageId, 120);
+  const mode = source?.mode;
+  if (
+    !parentConversationId ||
+    !sourceMessageId ||
+    parentConversationId === conversationId ||
+    (mode !== "continue" && mode !== "edit" && mode !== "retry")
+  ) return undefined;
+  return { parentConversationId, sourceMessageId, mode };
+}
+
 export function sanitizeWorkspaceConversation(value: unknown): Conversation | null {
   const source = recordFrom(value);
   const id = cleanText(source?.id, 120);
@@ -239,6 +263,7 @@ export function sanitizeWorkspaceConversation(value: unknown): Conversation | nu
     preview: lastMessage?.content.replace(/\s+/g, " ").slice(0, 120) || "",
     messages,
     titleSummaryAt: cleanText(source?.titleSummaryAt, 80) ? cleanIsoDate(source?.titleSummaryAt, updatedAt) : undefined,
+    branch: sanitizeWorkspaceConversationBranch(source?.branch, id),
     createdAt,
     updatedAt
   };

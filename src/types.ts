@@ -199,9 +199,18 @@ export type ConversationSummary = {
   updatedAt: string;
 };
 
+export type ConversationBranchMode = "continue" | "edit" | "retry";
+
+export type ConversationBranch = {
+  parentConversationId: string;
+  sourceMessageId: string;
+  mode: ConversationBranchMode;
+};
+
 export type Conversation = ConversationSummary & {
   messages: Message[];
   titleSummaryAt?: string;
+  branch?: ConversationBranch;
 };
 
 export type PublicBootstrapPayload = {
