@@ -5,6 +5,7 @@ import {
   loadWorkspaceConversations,
   saveWorkspaceConversations
 } from "../workspace/workspaceRepository";
+import { activeConversations } from "./conversationRetrieval";
 
 function cleanText(value: unknown, maxLength: number) {
   const text = typeof value === "string" ? value.trim() : "";
@@ -66,5 +67,5 @@ export function createLocalConversation(assistant?: Assistant, title = "新对�
 }
 
 export function localSummaries(conversations: Conversation[]) {
-  return sortConversations(conversations).map(conversationSummary);
+  return sortConversations(activeConversations(conversations)).map(conversationSummary);
 }

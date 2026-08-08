@@ -82,6 +82,13 @@ function cleanIsoDate(value: unknown, fallback = new Date().toISOString()) {
   return text && Number.isFinite(Date.parse(text)) ? text : fallback;
 }
 
+export function sanitizeWorkspaceConversationArchivedAt(value: unknown) {
+  if (typeof value !== "string" || value.length > 80 || value !== value.trim()) return undefined;
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return undefined;
+  return new Date(timestamp).toISOString() === value ? value : undefined;
+}
+
 function cleanOptionalObject(value: unknown) {
   const source = recordFrom(value);
   return source ? structuredClone(source) : undefined;
@@ -253,17 +260,19 @@ export function sanitizeWorkspaceConversation(value: unknown): Conversation | nu
     : [];
   const createdAt = cleanIsoDate(source?.createdAt);
   const updatedAt = cleanIsoDate(source?.updatedAt, createdAt);
+  const archivedAt = sanitizeWorkspaceConversationArchivedAt(source?.archivedAt);
   const lastMessage = [...messages].reverse().find((message) => message.content);
   return {
     id,
     title: cleanText(source?.title, 120) || "新对话",
     assistantId,
-    pinned: Boolean(source?.pinned),
+    pinned: archivedAt ? false : Boolean(source?.pinned),
     messageCount: messages.length,
     preview: lastMessage?.content.replace(/\s+/g, " ").slice(0, 120) || "",
     messages,
     titleSummaryAt: cleanText(source?.titleSummaryAt, 80) ? cleanIsoDate(source?.titleSummaryAt, updatedAt) : undefined,
     branch: sanitizeWorkspaceConversationBranch(source?.branch, id),
+    ...(archivedAt ? { archivedAt } : {}),
     createdAt,
     updatedAt
   };

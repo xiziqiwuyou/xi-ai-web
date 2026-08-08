@@ -7,6 +7,7 @@ import {
   type ChangeEvent
 } from "react";
 import {
+  History,
   Plus,
   Settings2
 } from "lucide-react";
@@ -29,7 +30,13 @@ import {
   settleStreamingMessage
 } from "./chatAttachmentContext";
 import ChatSessionSettingsDialog from "./ChatSessionSettingsDialog";
+import ChatConversationManager from "./ChatConversationManager";
 import { createConversationBranchSeed } from "./conversationArchive";
+import {
+  activeConversations,
+  archiveConversation,
+  restoreConversation
+} from "./conversationRetrieval";
 import {
   attachmentsWithinImageLimit,
   defaultSessionUi,
@@ -159,6 +166,7 @@ function ChatModule({
   const [conversationsHydrated, setConversationsHydrated] = useState(false);
   const [persistenceError, setPersistenceError] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [conversationManagerOpen, setConversationManagerOpen] = useState(false);
   const [chatSettings, setChatSettings] = useState<ChatSessionSettings>(loadChatSessionSettings);
   const [settingsDraft, setSettingsDraft] = useState<ChatSessionSettings>(chatSettings);
   const [chatSkills, setChatSkills] = useState<AgentSkillDefinition[]>([]);
@@ -167,8 +175,7 @@ function ChatModule({
   const [pendingModelChange, setPendingModelChange] = useState<PendingModelChange | null>(null);
   const knowledgeCatalog = useKnowledgeCatalog();
   const conversationsRef = useRef(conversationList);
-  const initializedRef = useRef(false);
-  const pendingAssistantHandledRef = useRef(false);
+  const conversationManagerTriggerRef = useRef<HTMLButtonElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const streamingMessageIdRef = useRef("");
   const requestInFlightConversationIdRef = useRef("");
@@ -195,9 +202,13 @@ function ChatModule({
   const chatModels = useMemo(() => modelsForCapability(modelCatalog, "chat"), [modelCatalog]);
   chatModelsRef.current = chatModels;
   lastModelIdRef.current = userProvider.lastModelId || "";
+  const activeConversationList = useMemo(
+    () => activeConversations(conversationList),
+    [conversationList]
+  );
   const displayedConversations = useMemo(
-    () => displayedSessionStack(conversationList, sessionUi),
-    [conversationList, sessionUi]
+    () => displayedSessionStack(activeConversationList, sessionUi),
+    [activeConversationList, sessionUi]
   );
   const connectionReady = isUserProviderReady(userProvider);
   const searchConfigured = connectionReady;
@@ -299,6 +310,74 @@ function ChatModule({
     return conversation;
   }, [commitConversations]);
 
+  const conversationMutationAllowed = useCallback(() => {
+    if (
+      streamingConversationId ||
+      requestInFlightConversationIdRef.current ||
+      branchActionInFlightRef.current
+    ) {
+      setPersistenceError("请等待当前回复结束后再调整会话。");
+      return false;
+    }
+    return true;
+  }, [streamingConversationId]);
+
+  const openManagedConversation = useCallback((conversationId: string) => {
+    if (!conversationMutationAllowed()) return;
+    const conversation = conversationsRef.current.find((item) =>
+      item.id === conversationId && !item.archivedAt
+    );
+    if (!conversation) return;
+    setSessionUi((current) => ({
+      ...Object.fromEntries(Object.entries(current).map(([id, value]) => [
+        id,
+        { ...value, collapsed: true }
+      ])),
+      [conversationId]: {
+        ...(current[conversationId] || defaultSessionUi(false)),
+        collapsed: false,
+        openedAt: Date.now()
+      }
+    }));
+    setConversationManagerOpen(false);
+  }, [conversationMutationAllowed]);
+
+  const archiveManagedConversation = useCallback((conversationId: string) => {
+    if (!conversationMutationAllowed()) return;
+    const conversation = conversationsRef.current.find((item) =>
+      item.id === conversationId && !item.archivedAt
+    );
+    if (!conversation) return;
+    const archived = archiveConversation(conversation);
+    commitConversations((current) => current.map((item) =>
+      item.id === conversationId ? archived : item
+    ));
+    setSessionUi((current) => Object.fromEntries(
+      Object.entries(current).filter(([id]) => id !== conversationId)
+    ));
+  }, [commitConversations, conversationMutationAllowed]);
+
+  const restoreManagedConversation = useCallback((conversationId: string) => {
+    if (!conversationMutationAllowed()) return;
+    const conversation = conversationsRef.current.find((item) =>
+      item.id === conversationId && Boolean(item.archivedAt)
+    );
+    if (!conversation) return;
+    const restored = restoreConversation(conversation);
+    commitConversations((current) => current.map((item) =>
+      item.id === conversationId ? restored : item
+    ));
+    const storedKnowledgeSelections = loadChatKnowledgeSelections();
+    setSessionUi((current) => ({
+      ...Object.fromEntries(Object.entries(current).map(([id, value]) => [
+        id,
+        { ...value, collapsed: true }
+      ])),
+      [conversationId]: defaultSessionUi(false, storedKnowledgeSelections[conversationId])
+    }));
+    setConversationManagerOpen(false);
+  }, [commitConversations, conversationMutationAllowed]);
+
   useEffect(() => {
     conversationsRef.current = conversationList;
   }, [conversationList]);
@@ -314,10 +393,11 @@ function ChatModule({
           if (!currentById.has(conversation.id)) currentById.set(conversation.id, conversation);
         });
         const next = sortSessionStack([...currentById.values()]);
+        const active = activeConversations(next);
         conversationsRef.current = next;
         setConversationList(next);
         setSessionUi((current) => ({
-          ...Object.fromEntries(next.map((conversation, index) => [
+          ...Object.fromEntries(active.map((conversation, index) => [
             conversation.id,
             current[conversation.id] || defaultSessionUi(index > 0, storedKnowledgeSelections[conversation.id])
           ]))
@@ -373,7 +453,6 @@ function ChatModule({
       setPersistenceError("所选助手已停用或不存在，请返回助手库重新选择。");
       return false;
     }
-    pendingAssistantHandledRef.current = true;
     const conversation = createLocalConversation(assistant);
     commitConversations((current) => [conversation, ...current]);
     setSessionUi((current) => ({
@@ -400,20 +479,21 @@ function ChatModule({
 
   useEffect(() => {
     if (
-      initializedRef.current ||
       !conversationsHydrated ||
-      pendingAssistantHandledRef.current ||
-      conversationList.length
+      activeConversationList.length ||
+      activeConversations(conversationsRef.current).length
     ) return;
-    initializedRef.current = true;
     createConversation();
-  }, [conversationList.length, conversationsHydrated, createConversation]);
+  }, [activeConversationList.length, conversationsHydrated, createConversation]);
 
   useEffect(() => {
     setSessionUi((current) => {
-      let changed = false;
-      const next = { ...current };
-      conversationList.forEach((conversation, index) => {
+      const activeIds = new Set(activeConversationList.map((conversation) => conversation.id));
+      const next = Object.fromEntries(
+        Object.entries(current).filter(([conversationId]) => activeIds.has(conversationId))
+      );
+      let changed = Object.keys(next).length !== Object.keys(current).length;
+      activeConversationList.forEach((conversation, index) => {
         if (!next[conversation.id]) {
           next[conversation.id] = defaultSessionUi(index > 0);
           changed = true;
@@ -421,7 +501,7 @@ function ChatModule({
       });
       return changed ? next : current;
     });
-  }, [conversationList]);
+  }, [activeConversationList]);
 
   useEffect(() => {
     if (connectionReady && independentSearchEnabled) return;
@@ -1072,6 +1152,11 @@ function ChatModule({
 
   const topModel = displayedConversations[0] ? modelForSession(displayedConversations[0].id) : undefined;
 
+  const openConversationManager = (trigger: HTMLButtonElement) => {
+    conversationManagerTriggerRef.current = trigger;
+    setConversationManagerOpen(true);
+  };
+
   return (
     <section className="figma-chat-view" data-testid="chat-module">
       <header className="figma-workspace-heading">
@@ -1088,11 +1173,31 @@ function ChatModule({
             <Plus size={15} />
             <span className="figma-heading-action-label">新对话</span>
           </button>
+          <button
+            type="button"
+            onClick={(event) => openConversationManager(event.currentTarget)}
+            disabled={!conversationsHydrated}
+            aria-label="管理会话"
+            title="管理会话"
+          >
+            <History size={15} />
+            <span className="figma-heading-action-label">管理会话</span>
+          </button>
           <button type="button" onClick={() => openSettings()} aria-label="会话设置" title="会话设置">
             <Settings2 size={15} />
             <span className="figma-heading-action-label">会话设置</span>
           </button>
         </div>
+        <button
+          type="button"
+          className="figma-mobile-conversation-manager-trigger"
+          onClick={(event) => openConversationManager(event.currentTarget)}
+          disabled={!conversationsHydrated}
+          aria-label="管理会话"
+          title="管理会话"
+        >
+          <History size={18} />
+        </button>
       </header>
 
       {persistenceError ? (
@@ -1191,6 +1296,21 @@ function ChatModule({
           );
         })}
       </div>
+
+      <ChatConversationManager
+        open={conversationManagerOpen}
+        conversations={conversationList}
+        mutationsDisabled={Boolean(
+          streamingConversationId ||
+          requestInFlightConversationIdRef.current ||
+          branchActionInFlightRef.current
+        )}
+        returnFocusRef={conversationManagerTriggerRef}
+        onClose={() => setConversationManagerOpen(false)}
+        onOpenConversation={openManagedConversation}
+        onArchiveConversation={archiveManagedConversation}
+        onRestoreConversation={restoreManagedConversation}
+      />
 
       <ChatSessionSettingsDialog
         open={settingsOpen}

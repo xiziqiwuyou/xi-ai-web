@@ -32,6 +32,10 @@ const workspaceArchive = await import(workspaceArchiveUrl);
 const archive = await importTsSource(archiveSource, {
   "../workspace/workspaceArchive": workspaceArchiveUrl
 });
+const retrieval = await importTsSource(
+  fs.readFileSync(path.join(rootDir, "src/features/chat/conversationRetrieval.ts"), "utf8"),
+  { "../workspace/workspaceArchive": workspaceArchiveUrl }
+);
 const attachmentContext = await importTsSource(
   fs.readFileSync(path.join(rootDir, "src/features/chat/chatAttachmentContext.ts"), "utf8")
 );
@@ -101,12 +105,140 @@ const conversation = {
   ]
 };
 
+assert.equal(
+  retrieval.normalizeConversationQuery(`  ${"A".repeat(260)}  `),
+  "a".repeat(240),
+  "conversation queries must trim, normalize Latin case, and stay bounded"
+);
+const retrievalFixtures = [
+  {
+    ...structuredClone(conversation),
+    id: "title-match",
+    title: "Release PLAN",
+    preview: "unrelated preview",
+    updatedAt: "2026-01-01T00:00:00.000Z"
+  },
+  {
+    ...structuredClone(conversation),
+    id: "preview-match",
+    title: "Preview record",
+    preview: "release plan overview",
+    updatedAt: "2026-02-01T00:00:00.000Z"
+  },
+  {
+    ...structuredClone(conversation),
+    id: "body-match-newer",
+    title: "Body record newer",
+    preview: "unrelated",
+    messages: [{ id: "body-new", role: "user", content: "release plan body", createdAt: now }],
+    updatedAt: "2026-04-01T00:00:00.000Z"
+  },
+  {
+    ...structuredClone(conversation),
+    id: "body-match-older",
+    title: "Body record older",
+    preview: "unrelated",
+    messages: [{ id: "body-old", role: "assistant", content: "release plan notes", createdAt: now }],
+    updatedAt: "2026-03-01T00:00:00.000Z"
+  },
+  {
+    ...structuredClone(conversation),
+    id: "cjk-match",
+    title: "中文检索",
+    preview: "无关预览",
+    messages: [{ id: "cjk", role: "user", content: "请整理发布计划和回滚步骤", createdAt: now }]
+  },
+  {
+    ...structuredClone(conversation),
+    id: "attachment-only",
+    title: "Attachment privacy",
+    preview: "safe preview",
+    messages: [{
+      id: "attachment-only-message",
+      role: "user",
+      content: "ordinary persisted content",
+      attachments: [{
+        id: "private-attachment",
+        kind: "text",
+        name: "private-needle.txt",
+        mimeType: "text/plain",
+        size: 14,
+        text: "private needle"
+      }],
+      createdAt: now
+    }]
+  }
+];
+assert.deepEqual(
+  retrieval.searchConversations(retrievalFixtures, "RELEASE PLAN").map((result) => result.id),
+  ["title-match", "preview-match", "body-match-newer", "body-match-older"],
+  "title, preview, and body matches must rank in that order with recency breaking ties"
+);
+assert.deepEqual(
+  retrieval.searchConversations(retrievalFixtures, "发布计划").map((result) => result.id),
+  ["cjk-match"],
+  "contiguous Chinese text must remain searchable"
+);
+assert.equal(
+  retrieval.searchConversations(retrievalFixtures, "private needle").length,
+  0,
+  "attachment names and text must not enter local conversation search"
+);
+const projectedResult = retrieval.searchConversations(retrievalFixtures, "release plan")[0];
+assert(!("messages" in projectedResult), "search results must not expose message bodies");
+assert(!JSON.stringify(projectedResult).includes("private needle"), "search result projections must exclude attachment data");
+const cappedResults = retrieval.searchConversations(
+  Array.from({ length: 60 }, (_, index) => ({
+    ...structuredClone(conversation),
+    id: `bounded-${index}`,
+    title: `bounded match ${index}`,
+    updatedAt: new Date(Date.parse(now) + index * 1000).toISOString()
+  })),
+  "bounded match"
+);
+assert.equal(cappedResults.length, 50, "conversation search must cap displayed results at 50");
+assert.equal(retrieval.searchConversations(retrievalFixtures, "release plan", 2).length, 2);
+
+const archivedAt = "2026-06-14T08:00:00.000Z";
+const restoredAt = "2026-06-15T09:30:00.000Z";
+const archiveSourceConversation = {
+  ...structuredClone(conversation),
+  pinned: true,
+  branch: {
+    parentConversationId: "parent-thread",
+    sourceMessageId: "parent-message",
+    mode: "continue"
+  }
+};
+const archiveSourceBefore = structuredClone(archiveSourceConversation);
+const archivedConversation = retrieval.archiveConversation(archiveSourceConversation, archivedAt);
+assert.deepEqual(archiveSourceConversation, archiveSourceBefore, "archiving must not mutate the source conversation");
+assert.equal(archivedConversation.archivedAt, archivedAt);
+assert.equal(archivedConversation.pinned, false);
+assert.deepEqual(archivedConversation.branch, archiveSourceConversation.branch, "archive must preserve branch provenance");
+assert.deepEqual(archivedConversation.messages, archiveSourceConversation.messages, "archive must preserve persisted messages");
+const independentBranch = { ...structuredClone(archiveSourceConversation), id: "independent-branch" };
+assert.equal(retrieval.archiveConversation(archiveSourceConversation, archivedAt).id, archiveSourceConversation.id);
+assert.equal(independentBranch.archivedAt, undefined, "archiving a parent must not cascade to a child branch");
+assert.deepEqual(retrieval.activeConversations([archiveSourceConversation, archivedConversation]), [archiveSourceConversation]);
+assert.deepEqual(retrieval.archivedConversations([archiveSourceConversation, archivedConversation]), [archivedConversation]);
+const restoredConversation = retrieval.restoreConversation(archivedConversation, restoredAt);
+assert.equal(restoredConversation.archivedAt, undefined);
+assert.equal(restoredConversation.pinned, false);
+assert.equal(restoredConversation.updatedAt, restoredAt);
+assert.equal(archivedConversation.archivedAt, archivedAt, "restoring must not mutate the archived source");
+
 const envelope = archive.createConversationExport([conversation], [
   archive.createConversationSummaryArtifact(conversation)
 ]);
 assert.equal(envelope.schema, archive.conversationExportSchema);
 assert.equal(envelope.version, archive.conversationExportVersion);
 assert.equal(envelope.conversations.length, 1);
+
+const archivedEnvelope = archive.createConversationExport([archivedConversation]);
+assert.equal(archivedEnvelope.conversations[0].archivedAt, archivedAt);
+assert.equal(archivedEnvelope.conversations[0].pinned, false);
+assert.equal(archive.previewConversationImport(archivedEnvelope).valid[0].archivedAt, archivedAt);
 
 const persistedMessage = workspaceArchive.sanitizeWorkspaceMessage({
   id: "persisted-message",
@@ -333,10 +465,43 @@ assert.equal(workspaceArchive.sanitizeWorkspaceConversation({
     mode: "continue"
   }
 }).branch, undefined, "oversized branch metadata must be removed instead of truncated");
+const sanitizedArchivedConversation = workspaceArchive.sanitizeWorkspaceConversation({
+  ...continueSeed.conversation,
+  pinned: true,
+  archivedAt
+});
+assert.equal(sanitizedArchivedConversation.archivedAt, archivedAt);
+assert.equal(sanitizedArchivedConversation.pinned, false, "archived conversations must remain unpinned at the storage boundary");
+for (const invalidArchivedAt of [
+  "2026-06-14T16:00:00+08:00",
+  " 2026-06-14T08:00:00.000Z ",
+  "2026-02-30T08:00:00.000Z",
+  "x".repeat(81)
+]) {
+  const sanitized = workspaceArchive.sanitizeWorkspaceConversation({
+    ...continueSeed.conversation,
+    archivedAt: invalidArchivedAt
+  });
+  assert(sanitized, "invalid optional archive metadata must not drop the containing conversation");
+  assert.equal(sanitized.archivedAt, undefined, "archive metadata must be strict canonical ISO");
+}
+assert.equal(archive.sanitizeConversation({
+  ...archivedConversation,
+  archivedAt: "2026-06-14T16:00:00+08:00"
+}).archivedAt, undefined, "conversation imports must drop malformed archive metadata only");
 assert.equal(archive.sanitizeConversation({
   ...continueSeed.conversation,
   assistantId: ""
 }).assistantId, "", "neutral conversations remain exportable");
+
+const localConversationStoreSource = fs.readFileSync(
+  path.join(rootDir, "src/features/chat/localConversationStore.ts"),
+  "utf8"
+);
+assert(
+  localConversationStoreSource.includes("activeConversations(conversations)"),
+  "public conversation summaries must omit archived local records"
+);
 
 const markdown = archive.conversationToMarkdown(conversation);
 assert(markdown.includes("# NextChat local thread"));

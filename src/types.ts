@@ -211,6 +211,7 @@ export type Conversation = ConversationSummary & {
   messages: Message[];
   titleSummaryAt?: string;
   branch?: ConversationBranch;
+  archivedAt?: string;
 };
 
 export type PublicBootstrapPayload = {

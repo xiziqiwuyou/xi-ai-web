@@ -151,6 +151,10 @@ Assistant launch uses `xi-ai-web-assistant-launch` with `{ version, assistantId,
 
 Ordinary Chat conversations use `assistantId: ""` as the explicit neutral binding. Fresh and manually created conversations show no Assistant badge and omit `assistantId` from their Provider request. Only Assistant-library launch creates a non-empty binding; existing non-empty bindings must continue to resolve exactly or fail visibly.
 
+Chat conversation archival is browser-local metadata on the complete `Conversation` record. `archivedAt` is optional and accepted only as a canonical ISO instant; malformed values are dropped without rejecting the conversation. Archiving clears pinning but preserves messages and branch provenance, while restoring clears `archivedAt`, keeps the record unpinned, refreshes `updatedAt`, and opens that session above collapsed active sessions. `conversationList` and IndexedDB retain active and archived records together; public summaries and the rendered session stack project active records only. If no active record remains, Chat creates one neutral conversation even after an Assistant launch. Manager query, tab, focus, and scroll state stay in component memory and never enter IndexedDB or exports.
+
+Local conversation retrieval is a pure in-memory projection over persisted title, preview, and message `content` only. It must not inspect attachments, citation payloads, drafts, credentials, Skills/apps, or transient session state, and it must never issue Chat, search, knowledge, or provider requests. Query normalization is bounded to 240 characters, results are capped at 50, and title matches outrank preview then message-body matches. Archive, restore, and manager-open mutations use the same synchronous streaming/request guard; read-only filtering remains available while a request is active.
+
 ## Scenario: Saved Chat Session Settings
 
 ### 1. Scope / Trigger

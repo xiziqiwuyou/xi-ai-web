@@ -1,0 +1,6 @@
+{"file":".trellis/spec/frontend/index.md","reason":"Frontend package quality gate entrypoint."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Verify dialog, Chat, responsive, scrollbar, and accessibility compliance."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Verify durable versus transient ownership and archive privacy."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Targeted and cross-layer verification requirements."}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"Verify sanitizer and optional metadata behavior."}
+{"file":".trellis/spec/frontend/chat-branching.md","reason":"Verify archive actions do not regress branch invariants."}

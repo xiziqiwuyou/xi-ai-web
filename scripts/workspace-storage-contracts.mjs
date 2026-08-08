@@ -45,6 +45,7 @@ const snapshot = {
       sourceMessageId: "message-parent",
       mode: "continue"
     },
+    archivedAt: now,
     createdAt: now,
     updatedAt: now
   }],
@@ -107,6 +108,8 @@ assert.deepEqual(envelope.workspace.conversations[0].branch, {
   sourceMessageId: "message-parent",
   mode: "continue"
 });
+assert.equal(envelope.workspace.conversations[0].archivedAt, now);
+assert.equal(envelope.workspace.conversations[0].pinned, false);
 assert.equal(envelope.counts.userAgents, 1);
 assert.equal(envelope.counts.agentSkills, 1);
 assert.equal(envelope.counts.workflows, 1);
@@ -152,8 +155,31 @@ assert(!repositorySource.includes("userProviderConfig"), "workspace repository m
 assert(!archiveSource.includes("searchServiceConfig"), "workspace archive must not import search credentials");
 assert(!repositorySource.includes("searchServiceConfig"), "workspace repository must not import search credentials");
 assert(archiveSource.includes("sanitizeWorkspaceConversationBranch"), "workspace conversations must use the branch metadata allowlist");
+assert(archiveSource.includes("sanitizeWorkspaceConversationArchivedAt"), "workspace conversations must use the strict archive timestamp allowlist");
 assert(searchServiceSource.includes("window.sessionStorage"), "search credentials must use sessionStorage");
 assert(!searchServiceSource.includes("window.localStorage"), "search credentials must not use localStorage");
+
+const legacyConversation = archive.sanitizeWorkspaceConversation({
+  ...snapshot.conversations[0],
+  id: "legacy-conversation",
+  archivedAt: undefined
+});
+assert(legacyConversation);
+assert.equal(legacyConversation.archivedAt, undefined, "legacy conversations without archive metadata must stay active");
+for (const invalidArchivedAt of [
+  "2026-07-20T20:00:00+08:00",
+  " 2026-07-20T12:00:00.000Z ",
+  "2026-02-30T12:00:00.000Z",
+  "x".repeat(81)
+]) {
+  const sanitized = archive.sanitizeWorkspaceConversation({
+    ...snapshot.conversations[0],
+    id: `invalid-archive-${invalidArchivedAt.length}`,
+    archivedAt: invalidArchivedAt
+  });
+  assert(sanitized, "invalid optional archive metadata must not reject a conversation");
+  assert.equal(sanitized.archivedAt, undefined, "malformed archive metadata must be removed without coercion");
+}
 
 const tampered = structuredClone(envelope);
 tampered.workspace.conversations[0].title = "被篡改";

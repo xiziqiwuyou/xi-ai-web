@@ -1,0 +1,6 @@
+{"file":".trellis/spec/frontend/index.md","reason":"Frontend package entrypoint and quality requirements."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Dialog, Chat, responsive, scrollbar, touch-target, and accessibility contracts."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"IndexedDB, transient state, workspace archive, and conversation provenance ownership."}
+{"file":".trellis/spec/frontend/chat-branching.md","reason":"Preserve branch ordering, provenance, recovery, and immutable parent behavior."}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"Runtime allowlists and optional metadata validation."}
+{"file":".trellis/tasks/08-08-conversation-retrieval-archive/research/codebase-findings.md","reason":"Current implementation map and known active-set edge case."}

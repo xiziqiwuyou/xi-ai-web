@@ -1,5 +1,6 @@
 import type { ChatAttachment, Conversation, ConversationBranchMode, Message } from "../../types";
 import {
+  sanitizeWorkspaceConversationArchivedAt,
   sanitizeWorkspaceConversationBranch,
   sanitizeWorkspaceMessage
 } from "../workspace/workspaceArchive";
@@ -71,11 +72,12 @@ export function sanitizeConversation(value: unknown): Conversation | null {
         .slice(-maxMessagesPerConversation)
     : [];
   const createdAt = cleanText(source.createdAt, 80) || new Date().toISOString();
+  const archivedAt = sanitizeWorkspaceConversationArchivedAt(source.archivedAt);
   return {
     id,
     title: cleanText(source.title, 120) || "新对话",
     assistantId: cleanText(source.assistantId, 120),
-    pinned: Boolean(source.pinned),
+    pinned: archivedAt ? false : Boolean(source.pinned),
     messageCount: messages.length,
     preview: messages
       .slice()
@@ -86,6 +88,7 @@ export function sanitizeConversation(value: unknown): Conversation | null {
     messages,
     titleSummaryAt: cleanText(source.titleSummaryAt, 80) || undefined,
     branch: sanitizeWorkspaceConversationBranch(source.branch, id),
+    ...(archivedAt ? { archivedAt } : {}),
     createdAt,
     updatedAt: cleanText(source.updatedAt, 80) || createdAt
   };
