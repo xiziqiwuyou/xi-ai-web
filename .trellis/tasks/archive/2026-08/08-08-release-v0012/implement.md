@@ -22,7 +22,7 @@
 
 ## P3 - Publish
 
-- [ ] Commit the release changes with the repository's existing commit style.
+- [x] Commit the release changes with the repository's existing commit style.
 - [ ] Archive this task and record the session journal.
 - [ ] Create and push `v0.0.12`; push `master` to `origin`.
 - [ ] Verify remote refs and report the GHCR workflow trigger.
