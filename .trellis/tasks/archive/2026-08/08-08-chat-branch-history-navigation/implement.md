@@ -46,7 +46,7 @@
       `npm run build`, `git diff --check`, and Trellis task validation.
 - [x] Review code against frontend state/component/quality specs and update the
       branch-history code-spec with any new executable contract.
-- [ ] Commit only this child task, archive it, and record the session; do not
+- [x] Commit only this child task, archive it, and record the session; do not
       publish or push a release.
 
 ## Risky Files
