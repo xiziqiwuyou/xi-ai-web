@@ -3,6 +3,7 @@ import http from "node:http";
 import test from "node:test";
 import { MCP_ERROR_CODES, MCP_LIMITS } from "../../server/mcp/contract.mjs";
 import { discoverMcpTools, requestMcpJson } from "../../server/mcp/client.mjs";
+import { APP_VERSION } from "../../server/app-version.mjs";
 
 async function withHttpServer(handler, work) {
   const server = http.createServer(handler);
@@ -65,6 +66,7 @@ test("MCP discovery performs initialize, notification, and tools/list without ex
   assert.equal(calls.length, 3);
   assert.equal(lookupCalls, 1);
   assert.deepEqual(calls.map((call) => call.body.method), ["initialize", "notifications/initialized", "tools/list"]);
+  assert.equal(calls[0].body.params.clientInfo.version, APP_VERSION);
   assert.equal(calls[1].options.sessionId, "session-only");
   assert.equal(calls[2].options.sessionId, "session-only");
   assert.equal(calls[0].target.address, "203.0.113.10");

@@ -12,6 +12,7 @@ import {
   parseMcpJsonRpcResult
 } from "./contract.mjs";
 import { assertSafeMcpEndpoint, pinnedLookup } from "./security.mjs";
+import { APP_VERSION } from "../app-version.mjs";
 
 function responseHeader(headers, name) {
   if (!headers) return "";
@@ -223,7 +224,7 @@ function initializeRequest() {
     params: {
       protocolVersion: MCP_PROTOCOL_VERSION,
       capabilities: {},
-      clientInfo: { name: "xi-ai-web", version: "0.0.11" }
+      clientInfo: { name: "xi-ai-web", version: APP_VERSION }
     }
   };
 }

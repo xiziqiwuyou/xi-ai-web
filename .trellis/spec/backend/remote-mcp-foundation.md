@@ -75,7 +75,9 @@ Relevant bounded environment controls are:
   address for the complete handshake, rejects redirects, sends no cookies, and
   accepts only bounded JSON responses.
 - The handshake is `initialize`, `notifications/initialized`, then
-  `tools/list`, using protocol version `2025-06-18`. SSE and multipart
+  `tools/list`, using protocol version `2025-06-18`. The `clientInfo.version`
+  field must read the shared runtime `APP_VERSION`; it must not be hard-coded
+  to a release number. SSE and multipart
   transports are unsupported in this foundation.
 - The server returns only a bounded projection with `untrusted: true` and
   `requiresApproval: true`. It is request-scoped and must not enter provider

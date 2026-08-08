@@ -1,3 +1,70 @@
+# xi-ai-web v0.0.12
+
+## Release status
+
+This release packages the verified local Chat productivity and secure MCP
+foundation work completed after `v0.0.11`. It keeps the account-free BYOK
+model, administrator-managed upstream boundary, and browser-local workspace
+storage contracts unchanged.
+
+## Included
+
+- Chat now supports local message branching, branch actions, branch-family
+  history navigation, and bounded conversation retrieval/search with archive
+  and restore behavior.
+- A browser-local artifact workspace can save bounded Chat code/text/Markdown/
+  HTML artifacts, maintain explicit versions, preview them safely, and include
+  them in the existing workspace export/import and temporary sync flows.
+- Admin now has a secure remote MCP discovery foundation. Administrators can
+  register bounded public HTTPS profiles and inspect untrusted tool metadata;
+  remote tool execution, automatic model tool selection, OAuth, and arbitrary
+  headers remain disabled by design.
+- MCP discovery uses the existing SSRF boundary, redirect rejection, bounded
+  transport limits, cancellation, rate/concurrency guards, redacted errors,
+  and explicit future-execution gates.
+- MCP client identity now reads the application version from the shared
+  `APP_VERSION` source, preventing protocol metadata from lagging behind a
+  release.
+- Root Compose templates, deployment documentation, and the runtime version
+  are pinned to `v0.0.12`.
+
+## Operating classification
+
+- Ready for local/self-hosted evaluation: Chat branching/retrieval/archive,
+  browser-local artifacts, and Admin MCP discovery with deterministic tests.
+- Operator-only or integration-dependent: real remote MCP endpoints, cloud
+  Knowledge services, Langflow, cross-device sync, provider-hosted tools, and
+  external search providers until configured and smoke-tested in the target
+  deployment.
+- No real provider Key, production reverse-proxy, GHCR image, PostgreSQL/COS,
+  or physical-device test is claimed by this workstation release preparation.
+
+## Verification
+
+- The release gate runs type-check, production build, privacy and feature
+  contracts, security/server tests, release-check, and diff hygiene before the
+  tag is created.
+- GitHub Actions workflow `Publish container image` builds multi-architecture
+  `linux/amd64` and `linux/arm64` images and publishes the immutable tag and
+  `latest` on the default branch.
+
+## Upgrade
+
+Pull the immutable image tag and restart the service:
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+## Rollback
+
+Keep `v0.0.11` available. For Compose, replace the image tag with
+`ghcr.io/xiziqiwuyou/xi-ai-web:v0.0.11`, then run
+`docker compose pull && docker compose up -d`.
+
+---
+
 # xi-ai-web v0.0.11
 
 ## Release status
