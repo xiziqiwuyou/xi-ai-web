@@ -39,6 +39,7 @@ const countItems: ReadonlyArray<{
 }> = [
   { key: "conversations", label: "对话" },
   { key: "galleryItems", label: "画廊" },
+  { key: "artifacts", label: "作品" },
   { key: "knowledgeDocuments", label: "知识文档" },
   { key: "mediaJobs", label: "媒体任务" },
   { key: "userAgents", label: "智能体" },

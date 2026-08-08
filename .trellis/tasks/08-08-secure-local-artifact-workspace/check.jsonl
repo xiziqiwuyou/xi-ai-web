@@ -1,0 +1,6 @@
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Check one Dialog scroll owner, inert preview, focus, touch targets, and responsive containment."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Check hydration gates, local-only artifact state, snapshot compatibility, and no credential persistence."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Check targeted contracts, E2E, build, privacy, and server regression gates."}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"Check bounded kind/version/content sanitization and malformed-record behavior."}
+{"file":".trellis/tasks/08-08-secure-local-artifact-workspace/design.md","reason":"Check IndexedDB v4, workspace round trips, preview isolation, and rollback boundaries."}
+{"file":".trellis/tasks/08-08-secure-local-artifact-workspace/prd.md","reason":"Check every artifact, safety, compatibility, and out-of-scope acceptance criterion."}

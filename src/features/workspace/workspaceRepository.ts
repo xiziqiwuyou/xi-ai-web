@@ -1,5 +1,6 @@
 import type {
   Conversation,
+  ArtifactRecord,
   GalleryItem,
   ImageGenerationTimingRecord,
   KnowledgeDocument,
@@ -19,6 +20,7 @@ import {
   sanitizeWorkspaceSnapshot,
   workspaceDataCounts
 } from "./workspaceArchive";
+import { artifactMaxCount, sanitizeArtifact } from "../chat/artifactWorkspace";
 import {
   getAllWorkspaceRecords,
   putWorkspaceRecord,
@@ -66,6 +68,19 @@ export async function loadWorkspaceConversations(): Promise<Conversation[]> {
 export async function saveWorkspaceConversations(conversations: Conversation[]) {
   await initializeWorkspace();
   await replaceAllWorkspaceRecords("conversations", sanitizeList(conversations, sanitizeWorkspaceConversation));
+}
+
+export async function loadWorkspaceArtifacts(): Promise<ArtifactRecord[]> {
+  await initializeWorkspace();
+  return sanitizeList(await getAllWorkspaceRecords("artifacts"), sanitizeArtifact).slice(0, artifactMaxCount);
+}
+
+export async function saveWorkspaceArtifacts(artifacts: ArtifactRecord[]) {
+  await initializeWorkspace();
+  await replaceAllWorkspaceRecords(
+    "artifacts",
+    sanitizeList(artifacts, sanitizeArtifact).slice(0, artifactMaxCount)
+  );
 }
 
 export async function loadWorkspaceGalleryItems(): Promise<GalleryItem[]> {
@@ -175,6 +190,7 @@ export async function getWorkspaceStorageSummary(): Promise<WorkspaceStorageSumm
         conversations: readLegacyConversations(),
         galleryItems: readLegacyGalleryItems(),
         imageGenerationHistory: [],
+        artifacts: [],
         knowledgeDocuments: await loadLegacyKnowledgeFallback(),
         mediaJobs: readLegacyMediaJobs(),
         userAgents: [],

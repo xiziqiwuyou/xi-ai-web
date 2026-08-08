@@ -7,6 +7,7 @@ import {
   type ChangeEvent
 } from "react";
 import {
+  FolderKanban,
   History,
   Plus,
   Settings2
@@ -31,12 +32,19 @@ import {
 } from "./chatAttachmentContext";
 import ChatSessionSettingsDialog from "./ChatSessionSettingsDialog";
 import ChatConversationManager from "./ChatConversationManager";
+import ArtifactWorkspaceDialog from "./ArtifactWorkspaceDialog";
 import { createConversationBranchSeed } from "./conversationArchive";
 import {
   activeConversations,
   archiveConversation,
   restoreConversation
 } from "./conversationRetrieval";
+import {
+  appendArtifactVersion,
+  artifactMaxCount,
+  createArtifact,
+  type ArtifactDraft
+} from "./artifactWorkspace";
 import {
   attachmentsWithinImageLimit,
   defaultSessionUi,
@@ -84,10 +92,15 @@ import {
   saveChatKnowledgeSelection
 } from "../knowledge-cloud/integrationState";
 import { useKnowledgeCatalog } from "../knowledge-cloud/useKnowledgeCatalog";
+import {
+  loadWorkspaceArtifacts,
+  saveWorkspaceArtifacts
+} from "../workspace/workspaceRepository";
 import type {
   Assistant,
   AgentSkillDefinition,
   AppPreset,
+  ArtifactRecord,
   ChatAttachment,
   ChatStreamEvent,
   Conversation,
@@ -167,6 +180,10 @@ function ChatModule({
   const [persistenceError, setPersistenceError] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [conversationManagerOpen, setConversationManagerOpen] = useState(false);
+  const [artifactWorkspaceOpen, setArtifactWorkspaceOpen] = useState(false);
+  const [artifactDraft, setArtifactDraft] = useState<ArtifactDraft | null>(null);
+  const [artifactList, setArtifactList] = useState<ArtifactRecord[]>([]);
+  const [artifactsHydrated, setArtifactsHydrated] = useState(false);
   const [chatSettings, setChatSettings] = useState<ChatSessionSettings>(loadChatSessionSettings);
   const [settingsDraft, setSettingsDraft] = useState<ChatSessionSettings>(chatSettings);
   const [chatSkills, setChatSkills] = useState<AgentSkillDefinition[]>([]);
@@ -176,6 +193,8 @@ function ChatModule({
   const knowledgeCatalog = useKnowledgeCatalog();
   const conversationsRef = useRef(conversationList);
   const conversationManagerTriggerRef = useRef<HTMLButtonElement>(null);
+  const artifactListRef = useRef(artifactList);
+  const artifactWorkspaceTriggerRef = useRef<HTMLButtonElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const streamingMessageIdRef = useRef("");
   const requestInFlightConversationIdRef = useRef("");
@@ -378,9 +397,59 @@ function ChatModule({
     setConversationManagerOpen(false);
   }, [commitConversations, conversationMutationAllowed]);
 
+  const openArtifactWorkspace = (trigger?: HTMLButtonElement, draft: ArtifactDraft | null = null) => {
+    const activeTrigger = trigger || (
+      document.activeElement instanceof HTMLButtonElement ? document.activeElement : null
+    );
+    artifactWorkspaceTriggerRef.current = activeTrigger;
+    setArtifactDraft(draft);
+    setArtifactWorkspaceOpen(true);
+  };
+
+  const saveArtifact = async (input: { artifactId?: string; draft: ArtifactDraft }) => {
+    const current = artifactListRef.current;
+    const existing = input.artifactId
+      ? current.find((artifact) => artifact.id === input.artifactId)
+      : undefined;
+    if (input.artifactId && !existing) throw new Error("所选作品不存在，请重新打开作品空间。");
+    const saved = existing
+      ? appendArtifactVersion(existing, input.draft)
+      : createArtifact(input.draft);
+    const next = [saved, ...current.filter((artifact) => artifact.id !== saved.id)]
+      .slice(0, artifactMaxCount);
+    await saveWorkspaceArtifacts(next);
+    artifactListRef.current = next;
+    setArtifactList(next);
+    setArtifactDraft(null);
+    return saved;
+  };
+
   useEffect(() => {
     conversationsRef.current = conversationList;
   }, [conversationList]);
+
+  useEffect(() => {
+    artifactListRef.current = artifactList;
+  }, [artifactList]);
+
+  useEffect(() => {
+    let alive = true;
+    loadWorkspaceArtifacts()
+      .then((artifacts) => {
+        if (!alive) return;
+        artifactListRef.current = artifacts;
+        setArtifactList(artifacts);
+        setArtifactsHydrated(true);
+      })
+      .catch((error: unknown) => {
+        if (!alive) return;
+        setArtifactsHydrated(false);
+        setPersistenceError(error instanceof Error ? error.message : "无法读取本地作品。");
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -1183,21 +1252,43 @@ function ChatModule({
             <History size={15} />
             <span className="figma-heading-action-label">管理会话</span>
           </button>
+          <button
+            type="button"
+            onClick={(event) => openArtifactWorkspace(event.currentTarget)}
+            disabled={!artifactsHydrated}
+            aria-label="作品空间"
+            title="作品空间"
+          >
+            <FolderKanban size={15} />
+            <span className="figma-heading-action-label">作品</span>
+          </button>
           <button type="button" onClick={() => openSettings()} aria-label="会话设置" title="会话设置">
             <Settings2 size={15} />
             <span className="figma-heading-action-label">会话设置</span>
           </button>
         </div>
-        <button
-          type="button"
-          className="figma-mobile-conversation-manager-trigger"
-          onClick={(event) => openConversationManager(event.currentTarget)}
-          disabled={!conversationsHydrated}
-          aria-label="管理会话"
-          title="管理会话"
-        >
-          <History size={18} />
-        </button>
+        <div className="figma-mobile-heading-actions">
+          <button
+            type="button"
+            className="figma-mobile-artifact-trigger"
+            onClick={(event) => openArtifactWorkspace(event.currentTarget)}
+            disabled={!artifactsHydrated}
+            aria-label="作品空间"
+            title="作品空间"
+          >
+            <FolderKanban size={18} />
+          </button>
+          <button
+            type="button"
+            className="figma-mobile-conversation-manager-trigger"
+            onClick={(event) => openConversationManager(event.currentTarget)}
+            disabled={!conversationsHydrated}
+            aria-label="管理会话"
+            title="管理会话"
+          >
+            <History size={18} />
+          </button>
+        </div>
       </header>
 
       {persistenceError ? (
@@ -1289,6 +1380,7 @@ function ChatModule({
               onContinueFromMessage={(messageId) => void createMessageBranch(conversation, messageId, "continue")}
               onEditMessageBranch={(messageId, content) => void createMessageBranch(conversation, messageId, "edit", content)}
               onRetryMessageBranch={(messageId) => void createMessageBranch(conversation, messageId, "retry")}
+              onSaveArtifact={(draft) => openArtifactWorkspace(undefined, draft)}
               onClear={() => setClearConversationId(conversation.id)}
               onSend={() => void sendMessage(conversation)}
               onStop={stopStreaming}
@@ -1310,6 +1402,18 @@ function ChatModule({
         onOpenConversation={openManagedConversation}
         onArchiveConversation={archiveManagedConversation}
         onRestoreConversation={restoreManagedConversation}
+      />
+
+      <ArtifactWorkspaceDialog
+        open={artifactWorkspaceOpen}
+        artifacts={artifactList}
+        initialDraft={artifactDraft}
+        returnFocusRef={artifactWorkspaceTriggerRef}
+        onClose={() => {
+          setArtifactWorkspaceOpen(false);
+          setArtifactDraft(null);
+        }}
+        onSave={saveArtifact}
       />
 
       <ChatSessionSettingsDialog

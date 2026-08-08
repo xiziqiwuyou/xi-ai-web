@@ -25,8 +25,18 @@ function moduleUrlFromSource(source, replacements = {}) {
 function importTsSource(source, replacements = {}) {
   return import(moduleUrlFromSource(source, replacements));
 }
+const clientIdUrl = moduleUrlFromSource(
+  fs.readFileSync(path.join(rootDir, "src/utils/clientId.ts"), "utf8")
+);
+const artifactWorkspaceUrl = moduleUrlFromSource(
+  fs.readFileSync(path.join(rootDir, "src/features/chat/artifactWorkspace.ts"), "utf8"),
+  { "../../utils/clientId": clientIdUrl }
+);
 const workspaceArchiveUrl = moduleUrlFromSource(
-  fs.readFileSync(path.join(rootDir, "src/features/workspace/workspaceArchive.ts"), "utf8")
+  fs.readFileSync(path.join(rootDir, "src/features/workspace/workspaceArchive.ts"), "utf8"),
+  {
+    "../chat/artifactWorkspace": artifactWorkspaceUrl
+  }
 );
 const workspaceArchive = await import(workspaceArchiveUrl);
 const archive = await importTsSource(archiveSource, {
@@ -36,6 +46,7 @@ const retrieval = await importTsSource(
   fs.readFileSync(path.join(rootDir, "src/features/chat/conversationRetrieval.ts"), "utf8"),
   { "../workspace/workspaceArchive": workspaceArchiveUrl }
 );
+const artifacts = await import(artifactWorkspaceUrl);
 const attachmentContext = await importTsSource(
   fs.readFileSync(path.join(rootDir, "src/features/chat/chatAttachmentContext.ts"), "utf8")
 );
@@ -227,6 +238,65 @@ assert.equal(restoredConversation.archivedAt, undefined);
 assert.equal(restoredConversation.pinned, false);
 assert.equal(restoredConversation.updatedAt, restoredAt);
 assert.equal(archivedConversation.archivedAt, archivedAt, "restoring must not mutate the archived source");
+
+const artifactHtml = artifacts.createArtifact({
+  title: "安全页面",
+  kind: "html",
+  language: "html",
+  content: '<script>fetch("https://example.com")</script><div onclick="alert(1)">hello</div>',
+  sourceConversationId: "conversation-1",
+  sourceMessageId: "message-1"
+}, { id: "artifact-1", versionId: "artifact-version-1", now });
+assert.equal(artifactHtml.currentVersion, 1);
+assert.equal(artifacts.currentArtifactVersion(artifactHtml).kind, "html");
+assert.equal(artifacts.currentArtifactVersion(artifactHtml).sourceConversationId, "conversation-1");
+assert(!artifacts.sanitizeArtifactHtml(artifacts.currentArtifactVersion(artifactHtml).content).includes("<script"), "artifact HTML must remove scripts");
+assert(!artifacts.sanitizeArtifactHtml(artifacts.currentArtifactVersion(artifactHtml).content).includes("onclick"), "artifact HTML must remove inline handlers");
+assert(!artifacts.artifactPreviewDocument(artifacts.currentArtifactVersion(artifactHtml).content).includes("https://example.com"), "artifact preview must remove external resource URLs");
+assert(!artifacts.sanitizeArtifactHtml("<script>alert('blocked')").includes("<script"), "artifact HTML must remove unclosed scripts");
+const artifactBeforeVersion = structuredClone(artifactHtml);
+const artifactWithVersion = artifacts.appendArtifactVersion(artifactHtml, {
+  title: "安全页面",
+  kind: "markdown",
+  language: "markdown",
+  content: "# 新版本"
+}, { versionId: "artifact-version-2", now: restoredAt });
+assert.deepEqual(artifactHtml, artifactBeforeVersion, "adding an artifact version must not mutate the source");
+assert.equal(artifactWithVersion.currentVersion, 2);
+assert.equal(artifacts.currentArtifactVersion(artifactWithVersion).kind, "markdown");
+assert.equal(artifacts.sanitizeArtifact({
+  ...artifactWithVersion,
+  versions: [
+    ...artifactWithVersion.versions,
+    { ...artifactWithVersion.versions[0], id: "duplicate-version", version: 1 }
+  ]
+}).versions.length, 2, "duplicate artifact versions must be normalized");
+assert.equal(artifacts.sanitizeArtifact({
+  ...artifactWithVersion,
+  versions: [
+    ...artifactWithVersion.versions,
+    { ...artifactWithVersion.versions[1], version: 3 }
+  ]
+}).versions.length, 2, "duplicate artifact version IDs must be normalized");
+assert.throws(
+  () => artifacts.createArtifact({ kind: "text", content: "" }, { id: "empty-artifact" }),
+  /作品内容不能为空/u,
+  "empty artifacts must not be persisted"
+);
+let boundedArtifact = artifactHtml;
+for (let index = 0; index < 24; index += 1) {
+  boundedArtifact = artifacts.appendArtifactVersion(boundedArtifact, {
+    title: "有界作品",
+    kind: "code",
+    language: "javascript",
+    content: `version ${index}`
+  }, { versionId: `artifact-version-${index + 3}`, now: restoredAt });
+}
+assert.equal(boundedArtifact.versions.length, artifacts.artifactMaxVersions, "artifact versions must be bounded");
+assert.equal(artifacts.currentArtifactVersion(boundedArtifact).content, "version 23");
+const artifactDownload = artifacts.artifactDownloadDetails(artifactWithVersion);
+assert.equal(artifactDownload.filename, "安全页面-v2.md");
+assert.equal(artifactDownload.mime, "text/markdown;charset=utf-8");
 
 const envelope = archive.createConversationExport([conversation], [
   archive.createConversationSummaryArtifact(conversation)

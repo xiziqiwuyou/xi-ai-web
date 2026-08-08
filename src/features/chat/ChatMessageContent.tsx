@@ -7,13 +7,18 @@ import {
   useState,
   type ComponentPropsWithoutRef
 } from "react";
-import { Check, ChevronDown, ChevronRight, Copy, Eye, EyeOff } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Copy, Eye, EyeOff, FolderPlus } from "lucide-react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import "katex/dist/katex.min.css";
 import type { ChatCodeTheme } from "./chatSessionSettings";
+import {
+  artifactFromCodeLanguage,
+  artifactPreviewDocument,
+  type ArtifactDraft
+} from "./artifactWorkspace";
 
 type MarkdownCodeProps = ComponentPropsWithoutRef<"code"> & { node?: unknown };
 type MarkdownPreProps = ComponentPropsWithoutRef<"pre"> & { node?: unknown };
@@ -26,6 +31,9 @@ type CodeRenderSettings = {
   collapseCodeBlocks: boolean;
   wrapCode: boolean;
   enableCodePreview: boolean;
+  onSaveArtifact?: (draft: ArtifactDraft) => void;
+  sourceConversationId?: string;
+  sourceMessageId?: string;
 };
 
 export type ChatMessageContentProps = CodeRenderSettings & {
@@ -82,13 +90,6 @@ function codeLanguage(className?: string) {
   return /(?:^|\s)language-([\w-]+)/u.exec(className || "")?.[1] || "text";
 }
 
-function htmlPreviewDocument(code: string) {
-  const csp = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:">`;
-  if (/<head[\s>]/i.test(code)) return code.replace(/<head([^>]*)>/i, `<head$1>${csp}`);
-  if (/<html[\s>]/i.test(code)) return code.replace(/<html([^>]*)>/i, `<html$1><head>${csp}</head>`);
-  return `<!doctype html><html><head>${csp}</head><body>${code}</body></html>`;
-}
-
 function ChatCodeBlock({ className, children, node: _node, ...props }: MarkdownCodeProps) {
   const code = String(children).replace(/\n$/u, "");
   const settings = useContext(codeRenderSettingsContext);
@@ -140,6 +141,23 @@ function ChatCodeBlock({ className, children, node: _node, ...props }: MarkdownC
               <span>{previewOpen ? "关闭预览" : "预览"}</span>
             </button>
           ) : null}
+          {settings.onSaveArtifact ? (
+            <button
+              type="button"
+              onClick={() => settings.onSaveArtifact?.({
+                kind: artifactFromCodeLanguage(language),
+                language,
+                content: code,
+                sourceConversationId: settings.sourceConversationId,
+                sourceMessageId: settings.sourceMessageId
+              })}
+              aria-label="保存为作品"
+              title="保存为作品"
+            >
+              <FolderPlus size={13} />
+              <span>保存为作品</span>
+            </button>
+          ) : null}
           <button type="button" onClick={() => void copyCode()} aria-label="复制代码" title="复制代码">
             {copyState === "copied" ? <Check size={13} /> : <Copy size={13} />}
             <span aria-live="polite">{copyState === "copied" ? "已复制" : copyState === "failed" ? "复制失败" : "复制"}</span>
@@ -165,7 +183,7 @@ function ChatCodeBlock({ className, children, node: _node, ...props }: MarkdownC
           title="HTML 代码预览"
           sandbox=""
           referrerPolicy="no-referrer"
-          srcDoc={htmlPreviewDocument(code)}
+          srcDoc={artifactPreviewDocument(code)}
         />
       ) : null}
     </section>
@@ -208,7 +226,10 @@ export default function ChatMessageContent({
   showCodeLineNumbers = true,
   collapseCodeBlocks = false,
   wrapCode = false,
-  enableCodePreview = true
+  enableCodePreview = true,
+  onSaveArtifact,
+  sourceConversationId,
+  sourceMessageId
 }: Partial<ChatMessageContentProps> & Pick<ChatMessageContentProps, "content">) {
   const separated = useMemo(() => splitThinking(content), [content]);
   const codeSettings = useMemo<CodeRenderSettings>(() => ({
@@ -217,8 +238,21 @@ export default function ChatMessageContent({
     showCodeLineNumbers,
     collapseCodeBlocks,
     wrapCode,
-    enableCodePreview
-  }), [codeTheme, styledCodeBlocks, showCodeLineNumbers, collapseCodeBlocks, wrapCode, enableCodePreview]);
+    enableCodePreview,
+    onSaveArtifact,
+    sourceConversationId,
+    sourceMessageId
+  }), [
+    codeTheme,
+    styledCodeBlocks,
+    showCodeLineNumbers,
+    collapseCodeBlocks,
+    wrapCode,
+    enableCodePreview,
+    onSaveArtifact,
+    sourceConversationId,
+    sourceMessageId
+  ]);
   const remarkPlugins = useMemo(() => renderMath
     ? [remarkGfm, [remarkMath, { singleDollarTextMath: enableSingleDollarMath }]]
     : [remarkGfm], [enableSingleDollarMath, renderMath]);

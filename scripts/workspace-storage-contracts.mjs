@@ -10,28 +10,53 @@ function readProjectFile(relativePath) {
   return fs.readFileSync(path.join(rootDir, relativePath), "utf8");
 }
 
-async function importTsSource(source) {
-  const transpiled = ts.transpileModule(source, {
+function moduleUrlFromSource(source, replacements = {}) {
+  let nextSource = source;
+  for (const [specifier, replacement] of Object.entries(replacements)) {
+    nextSource = nextSource.replaceAll(`from "${specifier}"`, `from "${replacement}"`);
+  }
+  const transpiled = ts.transpileModule(nextSource, {
     compilerOptions: {
       module: ts.ModuleKind.ES2022,
       target: ts.ScriptTarget.ES2022
     }
   }).outputText;
-  return import(`data:text/javascript;base64,${Buffer.from(transpiled).toString("base64")}`);
+  return `data:text/javascript;base64,${Buffer.from(transpiled).toString("base64")}`;
 }
 
 const archiveSource = readProjectFile("src/features/workspace/workspaceArchive.ts");
+const clientIdUrl = moduleUrlFromSource(readProjectFile("src/utils/clientId.ts"));
+const artifactWorkspaceUrl = moduleUrlFromSource(readProjectFile("src/features/chat/artifactWorkspace.ts"), {
+  "../../utils/clientId": clientIdUrl
+});
 const databaseSource = readProjectFile("src/features/workspace/workspaceDb.ts");
 const migrationSource = readProjectFile("src/features/workspace/workspaceMigration.ts");
 const repositorySource = readProjectFile("src/features/workspace/workspaceRepository.ts");
 const dialogSource = readProjectFile("src/features/workspace/WorkspaceDataDialog.tsx");
 const topBarSource = readProjectFile("src/app/TopBar.tsx");
 const searchServiceSource = readProjectFile("src/features/settings/searchServiceConfig.ts");
-const archive = await importTsSource(archiveSource);
+const archive = await import(moduleUrlFromSource(archiveSource, {
+  "../chat/artifactWorkspace": artifactWorkspaceUrl
+}));
 
 const now = "2026-07-20T12:00:00.000Z";
 const snapshot = {
   ...archive.emptyWorkspaceSnapshot(),
+  artifacts: [{
+    id: "artifact-1",
+    title: "本地作品",
+    currentVersion: 1,
+    versions: [{
+      id: "artifact-version-1",
+      version: 1,
+      kind: "html",
+      language: "html",
+      content: "<h1>hello</h1>",
+      createdAt: now
+    }],
+    createdAt: now,
+    updatedAt: now
+  }],
   conversations: [{
     id: "conversation-1",
     title: "工作区测试",
@@ -110,6 +135,8 @@ assert.deepEqual(envelope.workspace.conversations[0].branch, {
 });
 assert.equal(envelope.workspace.conversations[0].archivedAt, now);
 assert.equal(envelope.workspace.conversations[0].pinned, false);
+assert.equal(envelope.counts.artifacts, 1);
+assert.equal(envelope.workspace.artifacts[0].versions[0].kind, "html");
 assert.equal(envelope.counts.userAgents, 1);
 assert.equal(envelope.counts.agentSkills, 1);
 assert.equal(envelope.counts.workflows, 1);
@@ -166,6 +193,25 @@ const legacyConversation = archive.sanitizeWorkspaceConversation({
 });
 assert(legacyConversation);
 assert.equal(legacyConversation.archivedAt, undefined, "legacy conversations without archive metadata must stay active");
+const legacySnapshot = structuredClone(snapshot);
+delete legacySnapshot.artifacts;
+assert.deepEqual(
+  archive.sanitizeWorkspaceSnapshot(legacySnapshot).artifacts,
+  [],
+  "legacy workspace snapshots without artifacts must remain readable"
+);
+const legacyEnvelope = {
+  ...envelope,
+  counts: Object.fromEntries(Object.entries(envelope.counts).filter(([key]) => key !== "artifacts")),
+  workspace: legacySnapshot,
+  integrity: {
+    algorithm: "SHA-256",
+    digest: await archive.workspaceDigest(legacySnapshot)
+  }
+};
+const importedLegacyEnvelope = await archive.previewWorkspaceImportPayload(legacyEnvelope);
+assert.deepEqual(importedLegacyEnvelope.workspace.artifacts, []);
+assert.equal(importedLegacyEnvelope.counts.artifacts, 0);
 for (const invalidArchivedAt of [
   "2026-07-20T20:00:00+08:00",
   " 2026-07-20T12:00:00.000Z ",
@@ -215,11 +261,30 @@ olderLocal.conversations[0].title = "本地旧标题";
 olderLocal.conversations[0].updatedAt = "2026-07-19T12:00:00.000Z";
 const merged = archive.mergeWorkspaceSnapshots(olderLocal, snapshot);
 assert.equal(merged.conversations[0].title, "工作区测试");
+const localArtifactSet = Array.from({ length: 100 }, (_, index) => ({
+  ...snapshot.artifacts[0],
+  id: `local-artifact-${index}`,
+  updatedAt: "2026-07-19T12:00:00.000Z",
+  versions: [{ ...snapshot.artifacts[0].versions[0], id: `local-artifact-version-${index}` }]
+}));
+const incomingArtifactSet = Array.from({ length: 100 }, (_, index) => ({
+  ...snapshot.artifacts[0],
+  id: `incoming-artifact-${index}`,
+  updatedAt: "2026-07-21T12:00:00.000Z",
+  versions: [{ ...snapshot.artifacts[0].versions[0], id: `incoming-artifact-version-${index}` }]
+}));
+const boundedArtifactMerge = archive.mergeWorkspaceSnapshots(
+  { ...archive.emptyWorkspaceSnapshot(), artifacts: localArtifactSet },
+  { ...archive.emptyWorkspaceSnapshot(), artifacts: incomingArtifactSet }
+);
+assert.equal(boundedArtifactMerge.artifacts.length, 100, "artifact merge must preserve the total record bound");
+assert(boundedArtifactMerge.artifacts.every((artifact) => artifact.id.startsWith("incoming-artifact-")), "artifact merge must keep the newest bounded records");
 
 for (const storeName of [
   "conversations",
   "galleryItems",
   "imageGenerationHistory",
+  "artifacts",
   "knowledgeDocuments",
   "mediaJobs",
   "userAgents",
@@ -232,7 +297,12 @@ for (const storeName of [
   assert(databaseSource.includes(`"${storeName}"`), `workspace database missing ${storeName}`);
 }
 assert(databaseSource.includes('workspaceDbName = "xi-ai-web-workspace"'));
-assert(databaseSource.includes("workspaceDbVersion = 3"));
+assert(databaseSource.includes("workspaceDbVersion = 4"));
+const artifactLoaderSource = repositorySource.slice(
+  repositorySource.indexOf("export async function loadWorkspaceArtifacts"),
+  repositorySource.indexOf("export async function saveWorkspaceArtifacts")
+);
+assert(!artifactLoaderSource.includes("catch"), "artifact hydration errors must remain visible and keep writes locked");
 assert(databaseSource.includes("replaceWorkspaceSnapshot"));
 assert(databaseSource.includes("commitLegacyWorkspaceMigration"));
 assert(databaseSource.includes("suspendWorkspaceWrites"));

@@ -20,7 +20,8 @@
   "subtasks": [],
   "children": [
     "08-08-chat-branching-message-actions",
-    "08-08-conversation-retrieval-archive"
+    "08-08-conversation-retrieval-archive",
+    "08-08-secure-local-artifact-workspace"
   ],
   "parent": null,
   "relatedFiles": [],

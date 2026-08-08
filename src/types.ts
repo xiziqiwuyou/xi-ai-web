@@ -1267,10 +1267,33 @@ export type WorkspaceBackupPolicy = {
   lastRun?: WorkspaceBackupRun;
 };
 
+export type ArtifactKind = "html" | "markdown" | "text" | "code";
+
+export type ArtifactVersion = {
+  id: string;
+  version: number;
+  kind: ArtifactKind;
+  language: string;
+  content: string;
+  createdAt: string;
+  sourceConversationId?: string;
+  sourceMessageId?: string;
+};
+
+export type ArtifactRecord = {
+  id: string;
+  title: string;
+  versions: ArtifactVersion[];
+  currentVersion: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type WorkspaceSnapshot = {
   conversations: Conversation[];
   galleryItems: GalleryItem[];
   imageGenerationHistory: ImageGenerationTimingRecord[];
+  artifacts: ArtifactRecord[];
   knowledgeDocuments: KnowledgeDocument[];
   mediaJobs: MediaJob[];
   userAgents: UserAgentDefinition[];

@@ -84,8 +84,416 @@
   color: var(--xhs-red);
 }
 
+.figma-mobile-heading-actions,
+.figma-mobile-artifact-trigger,
 .figma-mobile-conversation-manager-trigger {
   display: none;
+}
+
+.ui-dialog.figma-artifact-dialog {
+  display: grid;
+  width: min(1000px, calc(100vw - 32px));
+  height: min(760px, calc(100dvh - 32px));
+  max-height: calc(100dvh - 32px);
+  grid-template-rows: auto minmax(0, 1fr);
+  padding: 0;
+  overflow-y: auto;
+}
+
+.figma-artifact-header {
+  position: sticky;
+  z-index: 2;
+  top: 0;
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) 36px;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--xhs-line);
+  background: var(--xhs-surface);
+}
+
+.figma-artifact-header > span {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  border: 1px solid color-mix(in srgb, var(--xhs-primary-fill) 28%, var(--xhs-line));
+  border-radius: 8px;
+  place-items: center;
+  background: color-mix(in srgb, var(--xhs-primary-fill) 8%, var(--xhs-surface));
+  color: var(--xhs-primary-fill);
+}
+
+.figma-artifact-header > div {
+  min-width: 0;
+}
+
+.figma-artifact-header small,
+.figma-artifact-header h2,
+.figma-artifact-header p {
+  margin: 0;
+}
+
+.figma-artifact-header small {
+  color: var(--xhs-muted);
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.figma-artifact-header h2 {
+  color: var(--xhs-ink);
+  font-size: 18px;
+  line-height: 24px;
+}
+
+.figma-artifact-header p {
+  overflow: hidden;
+  color: var(--xhs-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.figma-artifact-header > button,
+.figma-artifact-library button,
+.figma-artifact-versions button,
+.figma-artifact-actions button {
+  min-height: 36px;
+  border: 1px solid var(--xhs-line);
+  border-radius: 8px;
+  background: var(--xhs-surface);
+  color: var(--xhs-muted);
+}
+
+.figma-artifact-header > button {
+  display: grid;
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  padding: 0;
+  place-items: center;
+}
+
+.figma-artifact-header > button:hover,
+.figma-artifact-header > button:focus-visible,
+.figma-artifact-library button:hover,
+.figma-artifact-library button:focus-visible,
+.figma-artifact-versions button:hover,
+.figma-artifact-versions button:focus-visible,
+.figma-artifact-actions button:hover:not(:disabled),
+.figma-artifact-actions button:focus-visible {
+  border-color: color-mix(in srgb, var(--xhs-primary-fill) 42%, var(--xhs-line));
+  background: var(--xhs-soft-3);
+  color: var(--xhs-ink);
+}
+
+.figma-artifact-layout {
+  display: grid;
+  min-height: 620px;
+  grid-template-columns: 250px minmax(0, 1fr);
+}
+
+.figma-artifact-library {
+  min-width: 0;
+  padding: 16px;
+  border-right: 1px solid var(--xhs-line);
+  background: color-mix(in srgb, var(--xhs-bg) 72%, var(--xhs-surface));
+}
+
+.figma-artifact-library > div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  color: var(--xhs-ink);
+  font-size: 12px;
+}
+
+.figma-artifact-library > div:first-child span {
+  min-width: 24px;
+  color: var(--xhs-muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.figma-artifact-new {
+  display: inline-flex;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 10px;
+  color: var(--xhs-primary-fill) !important;
+}
+
+.figma-artifact-library ul {
+  display: grid;
+  gap: 5px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.figma-artifact-library li > button {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  text-align: left;
+}
+
+.figma-artifact-library li > button.active {
+  border-color: color-mix(in srgb, var(--xhs-primary-fill) 34%, var(--xhs-line));
+  background: color-mix(in srgb, var(--xhs-primary-fill) 9%, var(--xhs-surface));
+  color: var(--xhs-ink);
+}
+
+.figma-artifact-library li > button > span {
+  display: grid;
+  min-width: 0;
+}
+
+.figma-artifact-library li strong,
+.figma-artifact-library li small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.figma-artifact-library li strong {
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.figma-artifact-library li small {
+  color: var(--xhs-muted);
+  font-size: 10px;
+  line-height: 15px;
+}
+
+.figma-artifact-empty {
+  display: grid;
+  min-height: 150px;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  color: var(--xhs-muted);
+  font-size: 11px;
+  text-align: center;
+}
+
+.figma-artifact-editor {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: 14px;
+  padding: 18px;
+}
+
+.figma-artifact-fields {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) 140px 160px;
+  gap: 10px;
+}
+
+.figma-artifact-fields label,
+.figma-artifact-content-field {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  color: var(--xhs-ink);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.figma-artifact-fields input,
+.figma-artifact-fields select,
+.figma-artifact-content-field textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--xhs-line);
+  border-radius: 8px;
+  outline: 0;
+  background: var(--xhs-bg);
+  color: var(--xhs-ink);
+  font: 12px/1.5 var(--font-ui);
+}
+
+.figma-artifact-fields input,
+.figma-artifact-fields select {
+  height: 38px;
+  padding: 0 10px;
+}
+
+.figma-artifact-fields input:focus,
+.figma-artifact-fields select:focus,
+.figma-artifact-content-field textarea:focus {
+  border-color: color-mix(in srgb, var(--xhs-primary-fill) 56%, var(--xhs-line));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--xhs-primary-fill) 10%, transparent);
+}
+
+.figma-artifact-versions {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.figma-artifact-versions > span {
+  margin-right: 3px;
+  color: var(--xhs-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.figma-artifact-versions button {
+  min-width: 38px;
+  padding: 0 9px;
+  font-size: 11px;
+}
+
+.figma-artifact-versions button.active {
+  border-color: var(--xhs-primary-fill);
+  background: var(--xhs-primary-fill);
+  color: var(--xhs-on-primary);
+}
+
+.figma-artifact-content-field textarea {
+  min-height: 170px;
+  resize: vertical;
+  padding: 11px 12px;
+  font-family: var(--font-mono);
+  line-height: 1.55;
+  tab-size: 2;
+}
+
+.figma-artifact-content-field small {
+  color: var(--xhs-muted);
+  font-size: 10px;
+  font-weight: 500;
+  text-align: right;
+}
+
+.figma-artifact-preview {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--xhs-line);
+  border-radius: 8px;
+  background: var(--xhs-bg);
+}
+
+.figma-artifact-preview > header {
+  display: flex;
+  min-height: 36px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 11px;
+  border-bottom: 1px solid var(--xhs-line);
+  color: var(--xhs-ink);
+  font-size: 11px;
+}
+
+.figma-artifact-preview > header span {
+  color: var(--xhs-muted);
+  font-size: 10px;
+}
+
+.figma-artifact-html-preview {
+  display: block;
+  width: 100%;
+  height: 300px;
+  border: 0;
+  background: #fff;
+}
+
+.figma-artifact-markdown-preview,
+.figma-artifact-text-preview,
+.figma-artifact-preview-empty {
+  min-height: 220px;
+  margin: 0;
+  padding: 14px;
+  color: var(--xhs-ink);
+}
+
+.figma-artifact-markdown-preview {
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.figma-artifact-markdown-preview > :first-child {
+  margin-top: 0;
+}
+
+.figma-artifact-markdown-preview > :last-child {
+  margin-bottom: 0;
+}
+
+.figma-artifact-markdown-reference {
+  color: var(--xhs-muted);
+  overflow-wrap: anywhere;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+
+.figma-artifact-text-preview {
+  overflow-x: auto;
+  font: 12px/1.6 var(--font-mono);
+  white-space: pre;
+}
+
+.figma-artifact-preview-empty {
+  display: grid;
+  place-items: center;
+  color: var(--xhs-muted);
+  font-size: 11px;
+}
+
+.figma-artifact-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.figma-artifact-actions > span {
+  overflow: hidden;
+  margin-right: auto;
+  color: var(--xhs-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.figma-artifact-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 12px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.figma-artifact-actions button.primary {
+  border-color: var(--xhs-primary-fill);
+  background: var(--xhs-primary-fill);
+  color: var(--xhs-on-primary);
+}
+
+.figma-artifact-library button:disabled,
+.figma-artifact-versions button:disabled,
+.figma-artifact-actions button:disabled,
+.figma-artifact-fields input:disabled,
+.figma-artifact-fields select:disabled,
+.figma-artifact-content-field textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .figma-session-stack {
@@ -531,9 +939,99 @@ button.figma-conversation-manager-main:hover:not(:disabled) {
     min-height: 54px;
     padding: 5px;
   }
+
+  .ui-dialog.figma-artifact-dialog {
+    width: calc(100vw - 16px);
+    height: auto;
+    max-height: calc(100dvh - 16px);
+  }
+
+  .figma-artifact-header {
+    grid-template-columns: 38px minmax(0, 1fr) 44px;
+    padding: 14px;
+  }
+
+  .figma-artifact-header > button {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+  }
+
+  .figma-artifact-layout {
+    min-height: 0;
+    grid-template-columns: 1fr;
+  }
+
+  .figma-artifact-library {
+    padding: 12px 14px;
+    border-right: 0;
+    border-bottom: 1px solid var(--xhs-line);
+  }
+
+  .figma-artifact-library ul {
+    display: flex;
+    overflow-x: auto;
+    padding-bottom: 3px;
+  }
+
+  .figma-artifact-library li {
+    flex: 0 0 190px;
+  }
+
+  .figma-artifact-library button,
+  .figma-artifact-versions button,
+  .figma-artifact-actions button {
+    min-height: 44px;
+  }
+
+  .figma-artifact-empty {
+    min-height: 84px;
+  }
+
+  .figma-artifact-editor {
+    padding: 14px;
+  }
+
+  .figma-artifact-fields {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .figma-artifact-fields label:first-child {
+    grid-column: 1 / -1;
+  }
+
+  .figma-artifact-fields input,
+  .figma-artifact-fields select {
+    height: 44px;
+  }
+
+  .figma-artifact-content-field textarea {
+    min-height: 190px;
+  }
+
+  .figma-artifact-html-preview {
+    height: 260px;
+  }
+
+  .figma-artifact-actions {
+    flex-wrap: wrap;
+  }
+
+  .figma-artifact-actions > span {
+    width: 100%;
+    flex-basis: 100%;
+    order: -1;
+  }
 }
 
 @media (max-width: 639px) {
+  .figma-mobile-heading-actions {
+    display: flex;
+    flex: 0 0 auto;
+    gap: 6px;
+  }
+
+  .figma-mobile-artifact-trigger,
   .figma-mobile-conversation-manager-trigger {
     display: inline-grid;
     width: 44px;
@@ -549,15 +1047,30 @@ button.figma-conversation-manager-main:hover:not(:disabled) {
     transition: border-color 160ms ease, color 160ms ease;
   }
 
+  .figma-mobile-artifact-trigger:hover,
+  .figma-mobile-artifact-trigger:focus-visible,
   .figma-mobile-conversation-manager-trigger:hover,
   .figma-mobile-conversation-manager-trigger:focus-visible {
     border-color: color-mix(in srgb, var(--xhs-red) 48%, var(--xhs-line));
     color: var(--xhs-red);
   }
 
+  .figma-mobile-artifact-trigger:focus-visible,
   .figma-mobile-conversation-manager-trigger:focus-visible {
     outline: 2px solid color-mix(in srgb, var(--xhs-primary-fill) 48%, transparent);
     outline-offset: 2px;
+  }
+
+  .figma-artifact-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .figma-artifact-fields label:first-child {
+    grid-column: auto;
+  }
+
+  .figma-artifact-actions button {
+    flex: 1 1 140px;
   }
 }
 
@@ -3247,6 +3760,10 @@ button.figma-conversation-manager-main:hover:not(:disabled) {
     min-width: 44px;
     min-height: 44px;
     justify-content: center;
+  }
+
+  .figma-code-block > header button > span {
+    display: none;
   }
 
   .figma-chat-skill-dialog-body,

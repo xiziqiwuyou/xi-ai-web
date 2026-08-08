@@ -226,8 +226,8 @@ replaceWorkspaceSnapshot(snapshot: WorkspaceSnapshot): Promise<void>;
 restoreWorkspaceArchive(envelope, mode: "merge" | "replace"): Promise<void>;
 ```
 
-- IndexedDB database: `xi-ai-web-workspace`, version `2`.
-- Data stores: `conversations`, `galleryItems`, `knowledgeDocuments`, `mediaJobs`, `userAgents`, `agentSkills`, `workflows`, `agentMemories`, `preferences`, `backupRuns`.
+- IndexedDB database: `xi-ai-web-workspace`, version `4`.
+- Data stores: `conversations`, `galleryItems`, `imageGenerationHistory`, `artifacts`, `knowledgeDocuments`, `mediaJobs`, `userAgents`, `agentSkills`, `workflows`, `agentMemories`, `preferences`, `backupRuns`.
 
 ### 3. Contracts
 
@@ -236,6 +236,10 @@ restoreWorkspaceArchive(envelope, mode: "merge" | "replace"): Promise<void>;
 - Legacy sources are cleared only after the unified migration transaction commits.
 - API URL/Key and admin data are never workspace datasets and never enter an export.
 - Image generation ETA is server-global operational metadata. `ImageStudio` must not read or write `imageGenerationHistory`; legacy archive records remain schema-compatible only and do not influence estimates.
+- Browser-local artifacts are explicit user-created records. Chat hydrates `artifacts` before enabling its workspace action, and only `保存作品` / `保存新版本` writes the collection; opening, editing, previewing, closing, or switching records must not persist a draft.
+- Artifact workspace snapshots, counts, merge/replace restore, file export/import, and temporary encrypted progress sync use the same `artifacts` collection. Legacy snapshots that omit it normalize to `[]` before structural/count validation, while integrity is verified against the original imported snapshot.
+- `loadWorkspaceArtifacts()` must propagate IndexedDB initialization/read failures. Chat sets `artifactsHydrated` only after a successful read; a failed read keeps artifact actions locked and surfaces the bounded storage error instead of replacing unknown existing data with `[]`.
+- `mergeWorkspaceSnapshots()` must cap the merged artifact collection at `artifactMaxCount`; when local and incoming records exceed the bound, retain the newest `updatedAt` records deterministically and never write an over-limit collection.
 - Restore suspends new writes, waits for queued writes, commits all stores atomically, then reloads the page.
 - Import rejects duplicate IDs/keys before IndexedDB writes can collapse records.
 
@@ -258,8 +262,9 @@ restoreWorkspaceArchive(envelope, mode: "merge" | "replace"): Promise<void>;
 
 ### 6. Tests Required
 
-- `npm run workspace-storage-contracts`: schema, store list, SHA-256, duplicate rejection, future-version rejection, merge and BYOK dependency boundaries.
-- `tests/e2e/workspace-data.spec.ts`: real IndexedDB migration, download privacy, merge/replace UI, atomic restore, tamper rejection, theme restore and single visible dialog owner.
+- `npm run workspace-storage-contracts`: schema, store list, SHA-256, duplicate rejection, future-version rejection, merge, legacy missing-artifact compatibility, and BYOK dependency boundaries.
+- `tests/e2e/workspace-data.spec.ts`: real IndexedDB migration, download privacy, merge/replace UI, atomic restore, tamper rejection, artifact counts, theme restore and single visible dialog owner.
+- `tests/e2e/chat-artifacts.spec.ts`: explicit fenced-code save, reload persistence, immutable version append, safe preview, export, no silent draft save, zero provider/API requests, focus return, dark mode, mobile targets and document containment.
 - Full E2E must retain BYOK session-only, eight-item navigation, local automation persistence, and graph-workflow assertions.
 
 ### 7. Wrong vs Correct
@@ -273,6 +278,38 @@ useEffect(() => {
   if (hydrated) void saveGalleryItems(items);
 }, [hydrated, items]);
 ```
+
+## Scenario: Secure Local Artifact Workspace
+
+### 1. Scope / Trigger
+
+- Trigger: changes to Chat fenced-code actions, artifact persistence/versioning, preview, export, workspace archive, or temporary progress sync.
+
+### 2. Contracts
+
+- Artifact kinds are allowlisted to `html`, `markdown`, `text`, and `code`; a record has at most 20 immutable versions, each content value is at most 200,000 characters, and the browser stores at most 100 records.
+- `ChatModule` owns hydrated artifact state and repository callbacks. `ChatMessageContent` emits only an inert draft plus optional local conversation/message IDs after an explicit `保存为作品` action; it never imports the repository or sends a request.
+- HTML is sanitized before persistence and again before preview. Preview uses an empty-sandbox `srcDoc` iframe with a CSP that denies scripts, connections, objects, frames, forms, navigation, and non-data resources. Markdown uses `ReactMarkdown` without raw HTML; text/code use escaped React text.
+- API Keys, provider/search settings, message attachments, complete conversations, transient drafts, and generated preview documents are not artifact fields. Artifact data reaches a server only when the user explicitly starts the existing encrypted temporary workspace sync.
+- Adding a version returns a new record, preserves prior versions and provenance, assigns the next monotonic version number, and trims only the oldest versions after the 20-version bound.
+- Closing or switching an artifact discards unsaved edits. While an IndexedDB save is pending, close, switch, edit, version selection, and export controls remain locked so the resolved save cannot overwrite a newer in-memory draft.
+
+### 3. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| Empty or whitespace-only content | Reject before persistence |
+| Unsupported kind/language or malformed metadata | Normalize through the shared artifact sanitizer |
+| Duplicate version number | Keep one deterministic sanitized version; do not overwrite unrelated records |
+| More than 20 versions or 100 records | Retain the newest bounded records without renumbering versions |
+| Legacy workspace omits `artifacts` | Load an empty collection and preserve every other store |
+| IndexedDB save fails or quota is exceeded | Keep the prior collection, unlock the dialog, and show a bounded local error |
+| HTML includes script, event handlers, forms, frames, or external URLs | Remove them and keep the empty sandbox/CSP as the independent execution boundary |
+
+### 4. Forbidden Patterns
+
+- Do not add an artifact server route, provider request, new public destination, plugin runtime, `eval`/`Function`, `dangerouslySetInnerHTML`, raw Markdown HTML, iframe permissions, remote resource loading, or automatic draft persistence.
+- Do not accept arbitrary artifact kinds, URLs, executable packages, server credentials, or workspace-level API settings inside an artifact record.
 
 ## Scenario: Browser Automation Workspace
 

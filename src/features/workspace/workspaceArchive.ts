@@ -24,6 +24,7 @@ import type {
   WorkspacePreferenceRecord,
   WorkspaceSnapshot
 } from "../../types";
+import { artifactMaxCount, sanitizeArtifact } from "../chat/artifactWorkspace";
 
 export const workspaceExportSchema = "xi-ai-web.workspace-export" as const;
 export const workspaceExportVersion = 1 as const;
@@ -714,6 +715,7 @@ const snapshotSanitizers: SnapshotSanitizerMap = {
   conversations: sanitizeWorkspaceConversation,
   galleryItems: sanitizeWorkspaceGalleryItem,
   imageGenerationHistory: sanitizeImageGenerationTimingRecord,
+  artifacts: sanitizeArtifact,
   knowledgeDocuments: sanitizeWorkspaceKnowledgeDocument,
   mediaJobs: sanitizeWorkspaceMediaJob,
   userAgents: sanitizeWorkspaceUserAgent,
@@ -729,6 +731,7 @@ export function emptyWorkspaceSnapshot(): WorkspaceSnapshot {
     conversations: [],
     galleryItems: [],
     imageGenerationHistory: [],
+    artifacts: [],
     knowledgeDocuments: [],
     mediaJobs: [],
     userAgents: [],
@@ -745,7 +748,7 @@ function sanitizeCollection<Key extends keyof WorkspaceSnapshot>(
   value: unknown,
   strict: boolean
 ): WorkspaceSnapshot[Key] {
-  if (value === undefined && (key === "workflows" || key === "imageGenerationHistory")) {
+  if (value === undefined && (key === "workflows" || key === "imageGenerationHistory" || key === "artifacts")) {
     return [] as WorkspaceSnapshot[Key];
   }
   if (!Array.isArray(value)) throw new Error(`工作区数据 ${String(key)} 必须是数组。`);
@@ -753,6 +756,10 @@ function sanitizeCollection<Key extends keyof WorkspaceSnapshot>(
   const sanitized = value.map((item) => sanitizer(item)).filter(Boolean) as WorkspaceSnapshot[Key];
   if (strict && sanitized.length !== value.length) {
     throw new Error(`工作区数据 ${String(key)} 包含无效记录。`);
+  }
+  if (key === "artifacts" && sanitized.length > artifactMaxCount) {
+    if (strict) throw new Error(`工作区数据 ${String(key)} 超出记录上限。`);
+    return sanitized.slice(0, artifactMaxCount) as WorkspaceSnapshot[Key];
   }
   if (strict) {
     const identities = sanitized.map((item) => "key" in item ? item.key : item.id);
@@ -770,6 +777,7 @@ export function sanitizeWorkspaceSnapshot(value: unknown, strict = false): Works
     conversations: sanitizeCollection("conversations", source.conversations, strict),
     galleryItems: sanitizeCollection("galleryItems", source.galleryItems, strict),
     imageGenerationHistory: sanitizeCollection("imageGenerationHistory", source.imageGenerationHistory, strict),
+    artifacts: sanitizeCollection("artifacts", source.artifacts, strict),
     knowledgeDocuments: sanitizeCollection("knowledgeDocuments", source.knowledgeDocuments, strict),
     mediaJobs: sanitizeCollection("mediaJobs", source.mediaJobs, strict),
     userAgents: sanitizeCollection("userAgents", source.userAgents, strict),
@@ -786,6 +794,7 @@ export function workspaceDataCounts(snapshot: WorkspaceSnapshot): WorkspaceDataC
     conversations: snapshot.conversations.length,
     galleryItems: snapshot.galleryItems.length,
     imageGenerationHistory: snapshot.imageGenerationHistory.length,
+    artifacts: snapshot.artifacts.length,
     knowledgeDocuments: snapshot.knowledgeDocuments.length,
     mediaJobs: snapshot.mediaJobs.length,
     userAgents: snapshot.userAgents.length,
@@ -801,10 +810,14 @@ function bytesToHex(bytes: Uint8Array) {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-export async function workspaceDigest(snapshot: WorkspaceSnapshot) {
+async function workspaceValueDigest(value: unknown) {
   if (!globalThis.crypto?.subtle) throw new Error("当前环境不支持 Web Crypto 完整性校验。");
-  const bytes = new TextEncoder().encode(JSON.stringify(snapshot));
+  const bytes = new TextEncoder().encode(JSON.stringify(value));
   return bytesToHex(new Uint8Array(await globalThis.crypto.subtle.digest("SHA-256", bytes)));
+}
+
+export async function workspaceDigest(snapshot: WorkspaceSnapshot) {
+  return workspaceValueDigest(snapshot);
 }
 
 export async function createWorkspaceExport(
@@ -860,11 +873,14 @@ export async function previewWorkspaceImportPayload(value: unknown): Promise<Wor
   const workspace = sanitizeWorkspaceSnapshot(source.workspace, true);
   const actualCounts = workspaceDataCounts(workspace);
   const claimedCounts = Object.fromEntries(
-    Object.keys(actualCounts).map((key) => [key, counts[key] === undefined && key === "workflows" ? 0 : Number(counts[key])])
+    Object.keys(actualCounts).map((key) => [
+      key,
+      counts[key] === undefined && ["workflows", "artifacts"].includes(key) ? 0 : Number(counts[key])
+    ])
   ) as WorkspaceDataCounts;
   if (!countsEqual(claimedCounts, actualCounts)) throw new Error("工作区文件的数据计数校验失败。");
   const digest = cleanText(integrity.digest, 128);
-  if (!digest || digest !== await workspaceDigest(workspace)) throw new Error("工作区文件完整性校验失败。");
+  if (!digest || digest !== await workspaceValueDigest(source.workspace)) throw new Error("工作区文件完整性校验失败。");
   return {
     schema: workspaceExportSchema,
     version: workspaceExportVersion,
@@ -903,6 +919,20 @@ function mergeRecords<T extends { id: string; updatedAt?: string }>(local: T[], 
   return [...merged.values()];
 }
 
+function mergeArtifacts(
+  local: WorkspaceSnapshot["artifacts"],
+  incoming: WorkspaceSnapshot["artifacts"]
+) {
+  const merged = mergeRecords(local, incoming);
+  if (merged.length <= artifactMaxCount) return merged;
+  return [...merged]
+    .sort((left, right) => {
+      const updatedDelta = Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
+      return updatedDelta || left.id.localeCompare(right.id);
+    })
+    .slice(0, artifactMaxCount);
+}
+
 export function mergeWorkspaceSnapshots(local: WorkspaceSnapshot, incoming: WorkspaceSnapshot): WorkspaceSnapshot {
   const localPreferences = new Map(local.preferences.map((item) => [item.key, item]));
   incoming.preferences.forEach((item) => localPreferences.set(item.key, item));
@@ -910,6 +940,7 @@ export function mergeWorkspaceSnapshots(local: WorkspaceSnapshot, incoming: Work
     conversations: mergeRecords(local.conversations, incoming.conversations),
     galleryItems: mergeRecords(local.galleryItems, incoming.galleryItems),
     imageGenerationHistory: mergeRecords(local.imageGenerationHistory, incoming.imageGenerationHistory),
+    artifacts: mergeArtifacts(local.artifacts, incoming.artifacts),
     knowledgeDocuments: mergeRecords(local.knowledgeDocuments, incoming.knowledgeDocuments),
     mediaJobs: mergeRecords(local.mediaJobs, incoming.mediaJobs),
     userAgents: mergeRecords(local.userAgents, incoming.userAgents),

@@ -1,0 +1,6 @@
+{"file":".trellis/spec/frontend/index.md","reason":"Frontend package entrypoint and quality requirements."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Shared Dialog, Chat code rendering, safe preview, responsive and accessibility contracts."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"IndexedDB ownership, workspace snapshots, export/import, and transient draft boundaries."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Required static, browser, privacy, and cross-layer verification."}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"Runtime allowlists and sanitizer rules for untrusted artifact data."}
+{"file":".trellis/tasks/08-08-secure-local-artifact-workspace/research/codebase-findings.md","reason":"Existing code preview, workspace store, and integration map."}

@@ -31,6 +31,7 @@ function workspaceEnvelope(title = "恢复后的对话") {
     }],
     galleryItems: [],
     imageGenerationHistory: [],
+    artifacts: [],
     knowledgeDocuments: [],
     mediaJobs: [],
     userAgents: [],

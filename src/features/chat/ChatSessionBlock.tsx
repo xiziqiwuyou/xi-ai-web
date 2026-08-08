@@ -40,6 +40,7 @@ import { FigmaMenu, getFloatingHorizontalOffset, getFloatingVerticalPlacement } 
 import { compactModelLabel } from "../../components/workbench";
 import { createClientId } from "../../utils/clientId";
 import ChatMessageContent, { copyTextToClipboard } from "./ChatMessageContent";
+import type { ArtifactDraft } from "./artifactWorkspace";
 import { countIncompatibleChatImages, supportsChatImageInput } from "./chatCapabilities";
 import {
   chatContextMessageCountValues,
@@ -232,6 +233,7 @@ export type ChatSessionBlockProps = {
   onContinueFromMessage: (messageId: string) => void;
   onEditMessageBranch: (messageId: string, content: string) => void;
   onRetryMessageBranch: (messageId: string) => void;
+  onSaveArtifact: (draft: ArtifactDraft) => void;
   onClear: () => void;
   onSend: () => void;
   onStop: () => void;
@@ -276,6 +278,7 @@ export function ChatSessionBlock({
   onContinueFromMessage,
   onEditMessageBranch,
   onRetryMessageBranch,
+  onSaveArtifact,
   onClear,
   onSend,
   onStop
@@ -968,6 +971,9 @@ export function ChatSessionBlock({
                               collapseCodeBlocks={settings.collapseCodeBlocks}
                               wrapCode={settings.wrapCode}
                               enableCodePreview={settings.enableCodePreview}
+                              onSaveArtifact={onSaveArtifact}
+                              sourceConversationId={conversation.id}
+                              sourceMessageId={message.id}
                             />
                           ) : message.status === "streaming" ? (
                             ui.requestPhase === "buffering"

@@ -102,6 +102,7 @@ const progressCountLabels: Record<string, string> = {
   conversations: "对话",
   galleryItems: "画廊",
   imageGenerationHistory: "生图记录",
+  artifacts: "作品",
   knowledgeDocuments: "知识文档",
   mediaJobs: "媒体任务",
   userAgents: "智能体",
