@@ -1,0 +1,28 @@
+{
+  "id": "lobechat-integration-roadmap",
+  "name": "lobechat-integration-roadmap",
+  "title": "LobeChat capability integration roadmap",
+  "description": "",
+  "status": "planning",
+  "dev_type": null,
+  "scope": "Clean-room capability roadmap only; implementation happens in child tasks.",
+  "package": null,
+  "priority": "P2",
+  "creator": "xiziqiwuyou",
+  "assignee": "xiziqiwuyou",
+  "createdAt": "2026-08-08",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "08-08-chat-branching-message-actions"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}
