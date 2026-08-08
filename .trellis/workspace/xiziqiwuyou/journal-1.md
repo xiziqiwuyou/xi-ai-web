@@ -474,3 +474,36 @@ Implemented and verified clean-room chat message actions and immutable branches;
 ### Next Steps
 
 - None - task complete
+
+
+## Session 15: Complete local conversation retrieval and archive
+
+**Date**: 2026-08-08
+**Task**: Complete local conversation retrieval and archive
+**Branch**: `master`
+
+### Summary
+
+Implemented P2A browser-local conversation search and reversible archive/restore. Added strict archivedAt persistence, active/archived projections, shared Chat conversation manager with desktop/mobile entry points, zero-request local actions, streaming mutation guards, focused 16-case Playwright coverage, storage/privacy/UI contracts, frontend state/component guidance, and production verification.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `74c6a70` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
