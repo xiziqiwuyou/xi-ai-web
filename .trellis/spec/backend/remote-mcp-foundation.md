@@ -1,34 +1,45 @@
 # Remote MCP Secure Foundation
 
-This contract governs the administrator-only remote MCP discovery boundary.
-It is intentionally narrower than a general MCP runtime: this release stores
-public endpoint profiles and reads tool metadata, but never executes a remote
-tool.
+This contract governs administrator-managed remote MCP discovery and the
+disabled-by-default Chat execution path. It is not a general MCP proxy: the
+server owns every endpoint and allowlist, and every remote tool invocation
+requires a short-lived user approval.
 
-## 1. Scope / Trigger
+## Scope / Trigger
 
-- Trigger: changes to `server/mcp/**`, `mcpServers` metadata, the Admin MCP
-  routes, or any future code that wants to call a remote MCP endpoint.
-- Scope: administrator-managed HTTPS profiles, SSRF-safe read-only discovery,
-  bounded untrusted projections, and an explicit execution gate.
-- This is cross-layer infrastructure work. The browser may select a persisted
-  profile ID, but it may not select an endpoint, header, cookie, credential, or
-  remote tool name.
+- Trigger: changes to `server/mcp/**`, `mcpServers`, `mcpExecution`, Admin MCP
+  routes, the Chat MCP selector, or approval handling.
+- In scope: public HTTPS JSON-RPC discovery, bounded `tools/call`, Admin
+  allowlists, process-local approval records, and Chat function-tool follow-up.
+- Out of scope: Agents, Workflows, OAuth, custom headers, cookies, credentials,
+  stdio, WebSocket, SSE MCP transport, resources, prompts, sampling, blanket
+  approval, and multi-instance approval coordination.
 
-## 2. Signatures
+## Server-Owned Signatures
 
 ```text
 GET    /api/admin/mcp-servers
 POST   /api/admin/mcp-servers
-       { label, endpoint, enabled? }
 PATCH  /api/admin/mcp-servers/:id
-       { label?, endpoint?, enabled? }
 DELETE /api/admin/mcp-servers/:id
 POST   /api/admin/mcp-servers/:id/discover
-       {}  // the body must be empty
-POST   /api/admin/mcp-servers/:id/tools/call
-       -> 501 MCP_EXECUTION_NOT_AVAILABLE
+PUT    /api/admin/mcp-servers/:id/execution
+PATCH  /api/admin/mcp-execution
+
+GET    /api/chat/mcp/session
+POST   /api/chat/mcp/approvals/:id/approve
+POST   /api/chat/mcp/approvals/:id/reject
+POST   /api/chat/mcp/approvals/:id/cancel
+POST   /api/chat/mcp/connections { endpoint }
+DELETE /api/chat/mcp/connections/:id {}
+POST   /api/chat/stream { mcpToolIds?: string[] }
 ```
+
+The legacy Admin `/:id/tools/call` route remains a hard
+`501 MCP_EXECUTION_NOT_AVAILABLE` gate. Browsers cannot call a remote MCP tool
+directly; execution exists only inside the approved Chat stream.
+
+## Persisted Contract
 
 ```ts
 type McpServerProfile = {
@@ -36,139 +47,139 @@ type McpServerProfile = {
   label: string;
   endpoint: string;
   enabled: boolean;
+  executionEnabled: boolean;
+  allowedToolNames: string[];
   createdAt: string;
   updatedAt: string;
 };
 
-type McpToolDescriptor = {
-  name: string;
-  label: string;
-  description: string;
-  inputSchema?: Record<string, unknown>;
-  requiresApproval: true;
-  untrusted: true;
-};
+type McpExecutionSettings = { enabled: boolean };
 ```
 
-Relevant bounded environment controls are:
+- `mcpExecution.enabled`, every profile's `executionEnabled`, and every tool
+  allowlist default to closed.
+- Approval records, CSRF values, session tokens, raw arguments, raw results,
+  discovery responses, and remote MCP session IDs are never persisted.
+- Metadata import cannot set the global execution switch. Backup restore keeps
+  the live switch. Imported profiles are credential-scanned and revalidated.
+- Process-local approval state supports only a single application instance or
+  sticky routing. Multi-instance deployment requires a separately reviewed
+  shared approval store.
 
-- `MCP_ALLOW_LOCAL_ENDPOINTS=true` only enables local targets outside
-  production; it never enables local targets in production.
-- `MCP_ALLOW_INSECURE_HTTP=true` only has an effect with the local endpoint
-  override outside production.
-- `MCP_DISCOVERY_IP_RATE_LIMIT_MAX`, `MCP_DISCOVERY_MAX_CONCURRENT`,
-  `MCP_DISCOVERY_RATE_LIMIT_WINDOW_MS`, and `MCP_DISCOVERY_RATE_LIMIT_MAX`
-  control the existing request and per-profile discovery guards.
+## Endpoint And Transport Invariants
 
-## 3. Contracts
+- Production accepts only public HTTPS endpoints on port `443` or `8443`, with
+  no URL credentials, query, fragment, or credential-like path state such as
+  `/token`, `/api-key`, `sk-...`, or JWT-shaped segments. Local HTTP overrides
+  work only outside production through the explicit test flags.
+- Every discovery and call revalidates syntax and DNS, pins one validated
+  address for the handshake, rejects redirects, and forwards no Provider API
+  Key, Cookie, authorization header, or custom header.
+- Each operation creates a fresh MCP session: `initialize`,
+  `notifications/initialized`, then `tools/list` or `tools/call` as required.
+- Arguments and JSON-RPC responses are depth-, item-, byte-, and time-bounded.
+  Results are HTML-escaped, non-navigable, marked `untrusted`, and projected as
+  external tool output rather than instructions.
 
-- Persist only the six profile fields above. Never persist an API key, OAuth
-  state, cookie, custom header, session ID, raw discovery response, or tool
-  result.
-- Profile labels and IDs are bounded and unique by case-insensitive label and
-  endpoint. Legacy malformed rows are skipped during normalization; strict
-  import rejects malformed or duplicate records.
-- Endpoints have no URL credentials, query, or fragment. Production requires
-  HTTPS on port `443` or `8443`. Restricted IPs are rejected both before DNS
-  lookup and for every resolved DNS answer.
-- Discovery revalidates the stored endpoint, pins the first validated DNS
-  address for the complete handshake, rejects redirects, sends no cookies, and
-  accepts only bounded JSON responses.
-- The handshake is `initialize`, `notifications/initialized`, then
-  `tools/list`, using protocol version `2025-06-18`. The `clientInfo.version`
-  field must read the shared runtime `APP_VERSION`; it must not be hard-coded
-  to a release number. SSE and multipart
-  transports are unsupported in this foundation.
-- The server returns only a bounded projection with `untrusted: true` and
-  `requiresApproval: true`. It is request-scoped and must not enter provider
-  payloads, `allowedTools`, Chat, Agent, or Workflow execution.
-- Public bootstrap contains neither MCP endpoint URLs nor discovery results.
-  Metadata export/import may carry profiles but applies the credential scanner
-  and revalidates every endpoint before persistence.
-- Discovery is Admin-authenticated, rate-limited, cancellable, and audited only
-  with profile ID, result code, bounded duration, and tool count. Error bodies
-  never include the endpoint or remote response text.
+## Approval Invariants
 
-## 4. Validation & Error Matrix
+- The browser first receives an anonymous HttpOnly `SameSite=Strict` Chat
+  session cookie and a CSRF proof kept only in browser/server memory.
+- An approval is opaque, single-use, expires after 60 seconds, and binds the
+  session, Chat turn, profile, tool, provider alias, and stable argument digest.
+- Approval capacity is bounded to 256 records. Remote MCP calls are serialized
+  within one Chat turn and capped at eight calls.
+- Reject, cancel, expiry, disconnect, profile/tool disable, and global disable
+  invalidate the pending call before remote execution.
+- A successful approval is rechecked against live profile and allowlist state
+  immediately before the call. Replay and wrong-session/context submissions
+  return stable errors and execute zero calls.
+- Turning execution off or clearing a profile allowlist must succeed without a
+  remote discovery request, so an unavailable MCP service cannot block
+  rollback. Enabling execution always performs fresh discovery and allowlist
+  validation first.
+
+## Public Projection
+
+- Public bootstrap exposes only `{ enabled, tools }`, where each tool contains
+  an opaque selector, profile label, tool name/label, `requiresApproval: true`,
+  and `untrusted: true`.
+- Public bootstrap never exposes endpoints, input schemas, headers, discovery
+  bodies, approval state, arguments, or results.
+- MCP arguments/results do not enter existing local-tool traces, workspace
+  exports, IndexedDB, cross-device sync, analytics, or audit logs.
+
+## Anonymous User Connections
+
+- `mcpExecution.userConnectionsEnabled` is a separate, default-off Admin
+  policy. Public bootstrap exposes only the boolean policy state.
+- The browser owns the user's label. Connection requests contain only an
+  endpoint, and the server/provider projection uses a generic user-service
+  label so browser metadata never crosses the boundary.
+- Remembered profiles use the dedicated `xi-ai-web-user-mcp` IndexedDB and
+  session profiles use a dedicated `sessionStorage` key. Only `id`, `label`,
+  `endpoint`, `createdAt`, and `updatedAt` may be stored.
+- Endpoint validation applies the same credential-like path rule in the
+  browser and server. Normal public route paths such as `/mcp` remain valid;
+  capability URLs that embed authentication material are rejected before
+  persistence or network access.
+- The process-local connection store retains only a session digest, normalized
+  endpoint, bounded descriptors, opaque IDs, and expiry. It is TTL/capacity
+  bounded and never enters metadata, backup, import, logs, or audit.
+- User tool selectors use the `umcp_tool_` namespace, resolve only in the bound
+  anonymous session, and reuse the existing per-call approval path. Expiry,
+  disconnect, policy disable, or session mismatch invalidates pending calls.
+- Loading browser profiles performs no network access. Only an explicit
+  Connect action performs SSRF-safe discovery. Each later `tools/call`
+  revalidates endpoint and DNS safety again.
+
+## Error Matrix
 
 | Condition | Required result |
 | --- | --- |
-| Missing, malformed, credential-bearing, query-bearing, or fragment-bearing endpoint | `400 MCP_ENDPOINT_INVALID` |
-| Restricted literal IP or private/link-local/metadata DNS answer | `400 MCP_ENDPOINT_UNSAFE` or `400 MCP_DNS_UNSAFE` |
-| Production HTTP or port other than 443/8443 | `400 MCP_ENDPOINT_INVALID` |
-| Unknown profile ID | `404 MCP_PROFILE_NOT_FOUND` |
-| Disabled profile | `409 MCP_PROFILE_DISABLED` |
-| Non-empty discovery request body | `400 MCP_PROFILE_INVALID` and no upstream request |
-| Redirect, SSE, or multipart response | `501 MCP_TRANSPORT_UNSUPPORTED` |
-| Malformed JSON-RPC, duplicate tool, oversized schema, or invalid bounds | `502 MCP_PROTOCOL_ERROR` |
-| Upstream 401/403/404/405/415/5xx | `502 MCP_UPSTREAM_STATUS` |
-| Upstream 429 | `502 MCP_RATE_LIMITED` |
-| Timeout | `504 MCP_TIMEOUT` |
-| Client abort | `499 MCP_DISCOVERY_CANCELLED` |
-| Local discovery guard or in-flight profile collision | `429 MCP_RATE_LIMITED` or `409 MCP_DISCOVERY_IN_PROGRESS` |
-| Any tools-call attempt | `501 MCP_EXECUTION_NOT_AVAILABLE`, with no remote request |
+| Unsafe endpoint or DNS answer | `MCP_ENDPOINT_INVALID`, `MCP_ENDPOINT_UNSAFE`, or `MCP_DNS_UNSAFE` before I/O |
+| Global/profile/tool execution disabled | `MCP_EXECUTION_DISABLED` or `MCP_TOOL_NOT_ALLOWED` before provider/MCP execution |
+| Prompt invocation mode or model without function tools | bounded `400` capability error |
+| Missing/expired Chat session or wrong CSRF | `403` approval-session/CSRF error |
+| Wrong session/context, replay, reject, cancel, or expiry | stable approval error and zero remote calls |
+| Redirect, unsupported response type, malformed JSON-RPC | bounded transport/protocol error |
+| Upstream rate limit or timeout | `MCP_RATE_LIMITED` or `MCP_TIMEOUT` |
+| Oversized/deep arguments or result | bounded contract error before provider follow-up |
+| Direct Admin tools-call attempt | `501 MCP_EXECUTION_NOT_AVAILABLE` |
 
-## 5. Good / Base / Bad Cases
+## Verification
 
-- Good: an Admin saves a public HTTPS profile, discovery resolves a public
-  address, performs the three JSON-RPC requests, and displays bounded tool
-  names and schemas marked untrusted.
-- Base: an old metadata file has no `mcpServers`; it loads as an empty array,
-  while unrelated metadata remains usable.
-- Bad: accepting a browser URL in the discovery body, fetching a DNS name
-  after a separate unpinned validation, forwarding an authorization header,
-  storing `Mcp-Session-Id`, treating a remote description as a system prompt,
-  or falling back to a generic empty tool list after an error.
+- Contract tests cover closed schemas, selector forgery, argument/result bounds,
+  preview redaction, public projection, and invocation-mode isolation.
+- Server tests cover SSRF/DNS checks, fresh-session calls, no credential
+  forwarding, wrong session/CSRF/context, replay, reject, cancel, expiry,
+  invalidation, capacity, global disable, and exactly-once execution.
+- Admin and Chat Playwright tests run at `1440x900`, `1280x800`, `390x844`, and
+  `375x812`, including inline approval focus/visibility and zero/one-call
+  assertions.
+- Before release, run typecheck, build, privacy, security, provider/tool/local
+  contracts, server tests, focused E2E, release-check, and `git diff --check`.
+- Keep production execution disabled/operator-only until an operator completes
+  a real public HTTPS MCP smoke test and verifies the global-switch rollback.
 
-## 6. Tests Required
-
-- Contract tests assert profile bounds, strict import allowlists, duplicate
-  rejection, schema depth/size limits, JSON-RPC envelopes, and the execution
-  gate.
-- Server tests assert no network access for unsafe/unknown/disabled targets,
-  DNS rebinding protection, redirect and transport rejection, response limits,
-  timeout/cancellation, rate limits, deletion during discovery, redacted
-  errors, and metadata round trips.
-- Admin E2E covers CRUD, disabled state, discovery-only rendering, no execute
-  button, request containment at `1440x900`, `1280x800`, `390x844`, and
-  `375x812`, plus the existing Admin destinations.
-- Run `npm run check`, `npm run test:server`, `npm run build`,
-  `npm run ui-contract`, `npm run privacy`, `npm run feature-audit`, and
-  `git diff --check` before committing.
-
-## 7. Wrong vs Correct
+## Wrong Vs Correct
 
 ```js
-// Wrong: the browser chooses an arbitrary destination and credentials.
-fetch("/api/admin/mcp-servers/discover", {
-  method: "POST",
-  body: JSON.stringify({ endpoint, headers: { Authorization: token } })
-});
+// Wrong: browser-selected authority and credentials.
+callMcpTool({ endpoint: req.body.endpoint, headers: req.body.headers });
 
-// Correct: the server resolves a stored profile and revalidates its endpoint.
-fetch(`/api/admin/mcp-servers/${encodeURIComponent(profileId)}/discover`, {
-  method: "POST",
-  body: "{}"
-});
+// Correct: opaque selector resolves to live server-owned metadata.
+const selector = selectMcpToolIds({ profiles: db.mcpServers, requestedIds });
+const liveProfile = db.mcpServers.find((profile) => profile.id === selector.profileId);
 ```
 
 ```js
-// Wrong: discovered metadata becomes executable model tooling.
-providerRequest.tools = discovery.tools;
+// Wrong: execute as soon as the provider emits a function call.
+return callMcpTool(toolCall);
 
-// Correct: keep the projection display-only until a separately reviewed
-// execution contract supplies consent, argument validation, isolation, and audit.
-renderUntrustedToolList(discovery.tools);
+// Correct: issue one bound approval, wait for explicit user action, reload the
+// live allowlist, then execute exactly once.
+await pendingApproval.wait;
+assertStillAllowed(liveProfile, toolCall);
+return callMcpTool(toolCall);
 ```
-
-## Design Decisions
-
-- Public HTTPS profiles plus server-side DNS pinning were chosen over a
-  general-purpose browser proxy to keep SSRF and credential boundaries
-  enforceable at one server-owned point.
-- JSON-only discovery was chosen for this foundation. Supporting streamable
-  HTTP, OAuth, stdio, or WebSocket would require independent lifecycle,
-  authentication, and cancellation contracts.
-- Tool execution is a hard 501 gate rather than a partial implementation so
-  discovering prompt-injection-bearing metadata cannot silently become an
-  arbitrary remote command path.

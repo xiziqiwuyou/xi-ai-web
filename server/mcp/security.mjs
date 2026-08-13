@@ -4,6 +4,8 @@ import { MCP_ERROR_CODES, McpError } from "./contract.mjs";
 import { isBlockedAddress } from "../upstream-security.mjs";
 
 const allowedProductionPorts = new Set([443, 8443]);
+const credentialLikePathSegment = /^(?:token|api[-_]?key|secret|auth(?:orization)?|bearer|access[-_]?token|session(?:[-_]?token)?)(?:[-_.:=/]|$)/iu;
+const credentialValuePathSegment = /^(?:sk|gh[opusr]?|eyJ)[-_A-Za-z0-9.]{16,}$/u;
 
 function envEnabled(value) {
   return String(value || "").trim().toLowerCase() === "true";
@@ -11,6 +13,19 @@ function envEnabled(value) {
 
 function endpointError(code, message, status = 400, cause) {
   throw new McpError(code, message, { status, cause });
+}
+
+function hasCredentialLikePathState(pathname) {
+  return pathname.split("/").some((segment) => {
+    if (!segment) return false;
+    let decoded;
+    try {
+      decoded = decodeURIComponent(segment);
+    } catch {
+      return true;
+    }
+    return credentialLikePathSegment.test(decoded) || credentialValuePathSegment.test(decoded);
+  });
 }
 
 export function normalizeMcpEndpoint(value, {
@@ -33,6 +48,9 @@ export function normalizeMcpEndpoint(value, {
 
   if (!parsed.hostname || parsed.username || parsed.password || parsed.search || parsed.hash) {
     endpointError(MCP_ERROR_CODES.ENDPOINT_INVALID, "MCP endpoint cannot contain credentials or URL state");
+  }
+  if (hasCredentialLikePathState(parsed.pathname)) {
+    endpointError(MCP_ERROR_CODES.ENDPOINT_INVALID, "MCP endpoint path cannot contain credential-like URL state");
   }
   if (parsed.protocol !== "https:") {
     if (!(localAllowed && parsed.protocol === "http:" && allowInsecureHttp)) {

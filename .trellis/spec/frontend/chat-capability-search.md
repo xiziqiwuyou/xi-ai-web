@@ -117,3 +117,53 @@ const canAttach = supportsChatImageInput(model);
 
 - Local contracts assert model-limit-aware history selection, request `streamOutput`, and buffered meta handling without per-token conversation commits.
 - Desktop and mobile browser tests assert that stream settings persist in session storage, are projected into the next request, and that the Admin output-limit editor survives reload without shell overflow.
+
+## Remote MCP Tool Approval
+
+### Scope
+
+- Trigger: changes to `mcpExecution` public bootstrap, `mcpToolIds`,
+  `mcp_approval_required`, the Chat composer tool menu, or approval actions.
+
+### Contracts
+
+- Remote MCP appears only when the global switch, profile switch, tool
+  allowlist, function invocation mode, and selected model's `toolCalling`
+  capability are all active.
+- Selecting a remote tool is in-memory Chat UI state. It does not execute a
+  request, persist into conversation/workspace storage, or change local/search
+  tools.
+- The browser sends only opaque public tool IDs. It never sends an endpoint,
+  schema, credential, header, or MCP session ID.
+- `streamChat` ensures an anonymous HttpOnly Chat session before a request that
+  selects MCP. The CSRF proof remains module memory only.
+- `mcp_approval_required` pauses the open SSE flow and renders one inline card
+  above the composer with server/tool labels, a redacted bounded argument
+  preview, a short digest, Reject, and Confirm actions.
+- The approval card moves focus to Confirm without activating it and remains
+  visible in desktop/mobile layouts. Multiple provider tool calls are
+  serialized so approval cards never overlap.
+- Reject, cancel, expiry, disable, disconnect, and errors clear the pending
+  card and never silently fall back to ordinary Chat. Confirm resumes the same
+  provider round after exactly one remote call.
+- MCP arguments and results are not added to local tool traces, message
+  persistence, workspace export, IndexedDB, cross-device sync, or notices.
+- When the separate user-connection policy is enabled, Chat may show a personal
+  MCP manager. The manager stores profile metadata in its dedicated browser
+  store, sends only `endpoint` on explicit Connect, and keeps server connection
+  IDs only in React memory.
+- Personal labels are merged into the browser display only. Chat sends opaque
+  tool selectors and never sends the label, endpoint, descriptor, approval
+  state, or connection ID in `/api/chat/stream`.
+- The personal manager supports Escape, restores focus to its trigger, uses an
+  upward desktop popover and a safe-area mobile sheet, and never opens or
+  reconnects automatically while loading profiles.
+
+### Verification
+
+- Frontend types cover the public catalog, request selector, approval event,
+  and explicit request phase.
+- Server route tests assert wrong CSRF, wrong session/context, replay, rejection,
+  global disable, and exactly-once remote execution.
+- Playwright covers the inline approval card, focus/visibility, provider
+  follow-up, and stable layout at all four standard viewports.

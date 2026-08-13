@@ -12,7 +12,14 @@ import {
   Plus,
   Settings2
 } from "lucide-react";
-import { ApiError, generateChatTitle, streamChat } from "../../api";
+import {
+  ApiError,
+  connectUserMcpService,
+  disconnectUserMcpService,
+  generateChatTitle,
+  respondMcpApproval,
+  streamChat
+} from "../../api";
 import {
   ConfirmationDialog,
 } from "../../components/ui";
@@ -33,6 +40,17 @@ import {
 import ChatSessionSettingsDialog from "./ChatSessionSettingsDialog";
 import ChatConversationManager from "./ChatConversationManager";
 import ArtifactWorkspaceDialog from "./ArtifactWorkspaceDialog";
+import type { ActiveUserMcpConnection } from "./UserMcpConnectionsMenu";
+import {
+  createUserMcpProfile,
+  deleteRememberedUserMcpProfile,
+  deleteSessionUserMcpProfile,
+  loadUserMcpProfiles,
+  saveRememberedUserMcpProfile,
+  saveSessionUserMcpProfile,
+  type ScopedUserMcpProfile,
+  type UserMcpProfileScope
+} from "./userMcpProfiles";
 import { createConversationBranchSeed } from "./conversationArchive";
 import {
   activeConversations,
@@ -108,8 +126,10 @@ import type {
   ConversationSummary,
   Message,
   ModelCatalogEntry,
+  McpApprovalRequest,
   PromptPreset,
   PublicBootstrapPayload,
+  PublicMcpExecution,
   ToolSetting,
   UserProviderConfig
 } from "../../types";
@@ -122,6 +142,7 @@ type ChatModuleProps = {
   conversations: ConversationSummary[];
   modelCatalog: ModelCatalogEntry[];
   toolSettings: ToolSetting[];
+  mcpExecution: PublicMcpExecution;
   userProvider: UserProviderConfig;
   onUserProviderChange: (patch: Partial<UserProviderConfig>) => void;
   onRequestApiConfig: () => void;
@@ -168,6 +189,7 @@ function ChatModule({
   appPresets,
   modelCatalog,
   toolSettings,
+  mcpExecution,
   userProvider,
   onUserProviderChange,
   onRequestApiConfig,
@@ -190,6 +212,8 @@ function ChatModule({
   const [streamingConversationId, setStreamingConversationId] = useState("");
   const [clearConversationId, setClearConversationId] = useState("");
   const [pendingModelChange, setPendingModelChange] = useState<PendingModelChange | null>(null);
+  const [userMcpProfiles, setUserMcpProfiles] = useState<ScopedUserMcpProfile[]>([]);
+  const [userMcpConnections, setUserMcpConnections] = useState<ActiveUserMcpConnection[]>([]);
   const knowledgeCatalog = useKnowledgeCatalog();
   const conversationsRef = useRef(conversationList);
   const conversationManagerTriggerRef = useRef<HTMLButtonElement>(null);
@@ -232,6 +256,16 @@ function ChatModule({
   const connectionReady = isUserProviderReady(userProvider);
   const searchConfigured = connectionReady;
   const independentSearchEnabled = Boolean(toolSettings.find((tool) => tool.name === "web_search")?.enabled);
+  const activeUserMcpTools = useMemo(
+    () => mcpExecution.enabled && mcpExecution.userConnectionsEnabled
+      ? userMcpConnections.flatMap((item) => item.connection.tools)
+      : [],
+    [mcpExecution.enabled, mcpExecution.userConnectionsEnabled, userMcpConnections]
+  );
+  const publicMcpToolIds = useMemo(
+    () => new Set([...(mcpExecution.tools || []), ...activeUserMcpTools].map((tool) => tool.id)),
+    [activeUserMcpTools, mcpExecution.tools]
+  );
   const assistantAvatarUrl = assistantAvatarPresets.find((preset) => preset.id === chatSettings.assistantAvatarId)?.image || assistantAvatarPresets[0].image;
   const userAvatarUrl = chatSettings.userAvatar ||
     personalAvatarPresets.find((preset) => preset.id === chatSettings.userAvatarPresetId)?.image ||
@@ -301,6 +335,76 @@ function ChatModule({
     }));
   }, []);
 
+  useEffect(() => {
+    let active = true;
+    void loadUserMcpProfiles().then((profiles) => {
+      if (active) setUserMcpProfiles(profiles);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const connectUserMcpProfile = useCallback(async (profile: ScopedUserMcpProfile) => {
+    const grant = await connectUserMcpService(profile.endpoint);
+    const connection = {
+      ...grant,
+      tools: grant.tools.map((tool) => ({ ...tool, profileLabel: profile.label }))
+    };
+    setUserMcpConnections((current) => [
+      ...current.filter((item) => item.localProfileId !== profile.id),
+      { localProfileId: profile.id, connection }
+    ]);
+  }, []);
+
+  const addUserMcpProfile = useCallback(async (input: {
+    label: string;
+    endpoint: string;
+    scope: UserMcpProfileScope;
+  }) => {
+    const profile = createUserMcpProfile(input.label, input.endpoint);
+    if (input.scope === "remembered") await saveRememberedUserMcpProfile(profile);
+    else saveSessionUserMcpProfile(profile);
+    const scoped = { ...profile, scope: input.scope } as ScopedUserMcpProfile;
+    setUserMcpProfiles((current) => [scoped, ...current.filter((item) => item.id !== scoped.id)]);
+    await connectUserMcpProfile(scoped);
+  }, [connectUserMcpProfile]);
+
+  const forgetUserMcpConnection = useCallback((profileId: string, active: ActiveUserMcpConnection) => {
+    const removedToolIds = new Set(active.connection.tools.map((tool) => tool.id));
+    setUserMcpConnections((current) => current.filter((item) => item.localProfileId !== profileId));
+    setSessionUi((current) => Object.fromEntries(Object.entries(current).map(([id, ui]) => {
+      const affected = ui.mcpToolIds.some((toolId) => removedToolIds.has(toolId));
+      return [id, {
+        ...ui,
+        mcpToolIds: ui.mcpToolIds.filter((toolId) => !removedToolIds.has(toolId)),
+        pendingMcpApproval: affected ? undefined : ui.pendingMcpApproval
+      }];
+    })));
+  }, []);
+
+  const disconnectUserMcpProfile = useCallback(async (profileId: string) => {
+    const active = userMcpConnections.find((item) => item.localProfileId === profileId);
+    if (!active) return;
+    await disconnectUserMcpService(active.connection.id);
+    forgetUserMcpConnection(profileId, active);
+  }, [forgetUserMcpConnection, userMcpConnections]);
+
+  const deleteUserMcpProfile = useCallback(async (profile: ScopedUserMcpProfile) => {
+    const active = userMcpConnections.find((item) => item.localProfileId === profile.id);
+    if (active) {
+      try {
+        await disconnectUserMcpService(active.connection.id);
+      } catch {}
+      // Local deletion must remain available when a transient server grant
+      // has already expired or cannot be reached.
+      forgetUserMcpConnection(profile.id, active);
+    }
+    if (profile.scope === "remembered") await deleteRememberedUserMcpProfile(profile.id);
+    else deleteSessionUserMcpProfile(profile.id);
+    setUserMcpProfiles((current) => current.filter((item) => item.id !== profile.id));
+  }, [forgetUserMcpConnection, userMcpConnections]);
+
   const setRequestPhase = useCallback((id: string, requestPhase: SessionUiState["requestPhase"]) => {
     setSessionUi((current) => {
       const ui = current[id] || defaultSessionUi(false);
@@ -312,8 +416,14 @@ function ChatModule({
   const setTokenRequestPhase = useCallback((id: string) => {
     setSessionUi((current) => {
       const ui = current[id] || defaultSessionUi(false);
-      if (ui.requestPhase === "buffering" || ui.requestPhase === "generating") return current;
-      return { ...current, [id]: { ...ui, requestPhase: "generating" } };
+      if (
+        (ui.requestPhase === "buffering" || ui.requestPhase === "generating") &&
+        !ui.pendingMcpApproval
+      ) return current;
+      return {
+        ...current,
+        [id]: { ...ui, requestPhase: "generating", pendingMcpApproval: undefined }
+      };
     });
   }, []);
 
@@ -556,6 +666,12 @@ function ChatModule({
   }, [activeConversationList.length, conversationsHydrated, createConversation]);
 
   useEffect(() => {
+    if (!mcpExecution.enabled || !mcpExecution.userConnectionsEnabled) {
+      setUserMcpConnections([]);
+    }
+  }, [mcpExecution.enabled, mcpExecution.userConnectionsEnabled]);
+
+  useEffect(() => {
     setSessionUi((current) => {
       const activeIds = new Set(activeConversationList.map((conversation) => conversation.id));
       const next = Object.fromEntries(
@@ -591,6 +707,28 @@ function ChatModule({
       return changed ? next : current;
     });
   }, [connectionReady, independentSearchEnabled]);
+
+  useEffect(() => {
+    setSessionUi((current) => {
+      let changed = false;
+      const next = Object.fromEntries(Object.entries(current).map(([id, ui]) => {
+        const validToolIds = mcpExecution.enabled
+          ? ui.mcpToolIds.filter((toolId) => publicMcpToolIds.has(toolId))
+          : [];
+        const selectionChanged = validToolIds.length !== ui.mcpToolIds.length;
+        const approvalInvalid = Boolean(ui.pendingMcpApproval && (!mcpExecution.enabled || selectionChanged));
+        if (!selectionChanged && !approvalInvalid) return [id, ui];
+        changed = true;
+        return [id, {
+          ...ui,
+          mcpToolIds: validToolIds,
+          pendingMcpApproval: approvalInvalid ? undefined : ui.pendingMcpApproval,
+          notice: "远程 MCP 工具已由后台关闭或移除。"
+        }];
+      }));
+      return changed ? next : current;
+    });
+  }, [mcpExecution.enabled, publicMcpToolIds]);
 
   const modelForSession = useCallback(
     (conversationId: string) => {
@@ -659,13 +797,23 @@ function ChatModule({
         return;
       }
 
+      if (event.type === "mcp_approval_required") {
+        setRequestPhase(conversationId, "awaiting-approval");
+        patchSessionUi(conversationId, {
+          pendingMcpApproval: event.approval,
+          notice: ""
+        });
+        return;
+      }
+
       if (event.type === "error") {
         setRequestPhase(conversationId, "failed");
-        patchSessionUi(conversationId, { notice: event.error });
+        patchSessionUi(conversationId, { notice: event.error, pendingMcpApproval: undefined });
         return;
       }
 
       setRequestPhase(conversationId, "idle");
+      patchSessionUi(conversationId, { pendingMcpApproval: undefined });
       const finalMessageId = streamingMessageIdRef.current;
       clearStreamingSchedules();
       streamingRenderRef.current = null;
@@ -781,6 +929,22 @@ function ChatModule({
       patchSessionUi(conversation.id, { notice: toolsCompatibility.reason });
       return;
     }
+    const selectedMcpToolIds = (ui.mcpToolIds || []).filter((toolId) => publicMcpToolIds.has(toolId));
+    if (selectedMcpToolIds.length !== (ui.mcpToolIds || []).length) {
+      patchSessionUi(conversation.id, {
+        mcpToolIds: selectedMcpToolIds,
+        notice: "所选远程 MCP 工具已不可用，请重新选择。"
+      });
+      return;
+    }
+    if (selectedMcpToolIds.length && chatSettings.toolInvocationMode !== "function") {
+      patchSessionUi(conversation.id, { notice: "远程 MCP 工具仅支持函数调用方式。" });
+      return;
+    }
+    if (selectedMcpToolIds.length && !selectedModel.capabilities.includes("toolCalling")) {
+      patchSessionUi(conversation.id, { notice: "当前模型未启用工具调用能力，无法使用远程 MCP 工具。" });
+      return;
+    }
     const requestedSearchService = allowedTools.includes("web_search") && ui.searchProvider
       ? searchServiceForUserProvider(ui.searchProvider, userProvider)
       : undefined;
@@ -861,6 +1025,7 @@ function ChatModule({
           attachments: requestAttachments,
           skillInstructions: selectedSkills.map((skill) => `${skill.name}: ${skill.instructions}`),
           allowedTools,
+          mcpToolIds: selectedMcpToolIds,
           searchService: requestedSearchService,
           ...(knowledgeBaseIds.length ? { knowledgeBaseIds, embeddingConnections } : {}),
           connection: userConnectionPayload(userProvider)
@@ -877,6 +1042,7 @@ function ChatModule({
       streamingRenderRef.current = null;
       const aborted = controller.signal.aborted;
       setRequestPhase(conversation.id, aborted ? "cancelled" : "failed");
+      patchSessionUi(conversation.id, { pendingMcpApproval: undefined });
       const messageId = abortRef.current === controller ? streamingMessageIdRef.current : "";
       if (messageId) {
         commitConversations((current) => settleStreamingMessage(
@@ -963,6 +1129,28 @@ function ChatModule({
   const stopStreaming = () => {
     abortRef.current?.abort();
   };
+
+  const decideMcpApproval = useCallback((
+    conversationId: string,
+    approval: McpApprovalRequest,
+    decision: "approve" | "reject"
+  ) => {
+    void (async () => {
+      try {
+        await respondMcpApproval(approval, decision);
+        if (decision === "approve") {
+          patchSessionUi(conversationId, { pendingMcpApproval: undefined, notice: "" });
+          setRequestPhase(conversationId, "buffering");
+        } else {
+          patchSessionUi(conversationId, { pendingMcpApproval: undefined, notice: "已拒绝本次远程工具调用。" });
+        }
+      } catch (error) {
+        patchSessionUi(conversationId, {
+          notice: error instanceof Error ? error.message : "无法提交 MCP 审批结果。"
+        });
+      }
+    })();
+  }, [patchSessionUi, setRequestPhase]);
 
   const clearMessages = (conversationId: string) => {
     commitConversations((current) =>
@@ -1315,6 +1503,21 @@ function ChatModule({
               models={chatModels}
               skills={chatSkills}
               tools={toolSettings}
+              mcpTools={
+                mcpExecution.enabled &&
+                chatSettings.toolInvocationMode === "function" &&
+                selectedModel.capabilities.includes("toolCalling")
+                  ? [...mcpExecution.tools, ...activeUserMcpTools]
+                  : []
+              }
+              userMcpConnectionsEnabled={
+                mcpExecution.enabled &&
+                mcpExecution.userConnectionsEnabled &&
+                chatSettings.toolInvocationMode === "function" &&
+                selectedModel.capabilities.includes("toolCalling")
+              }
+              userMcpProfiles={userMcpProfiles}
+              userMcpConnections={userMcpConnections}
               searchConfigured={searchConfigured}
               knowledgeAuthenticated={knowledgeCatalog.status === "authenticated"}
               knowledgeBases={knowledgeCatalog.bases}
@@ -1367,6 +1570,12 @@ function ChatModule({
                 notice: ""
               })}
               onContextMessageCountChange={updateContextMessageCount}
+              onMcpToolChange={(mcpToolIds) => patchSessionUi(conversation.id, { mcpToolIds, notice: "" })}
+              onAddUserMcpProfile={addUserMcpProfile}
+              onConnectUserMcpProfile={connectUserMcpProfile}
+              onDisconnectUserMcpProfile={disconnectUserMcpProfile}
+              onDeleteUserMcpProfile={deleteUserMcpProfile}
+              onMcpApprovalDecision={(approval, decision) => decideMcpApproval(conversation.id, approval, decision)}
               onImageInput={(event) => void attachImage(conversation.id, event)}
               onImageInputBlocked={() => patchSessionUi(conversation.id, {
                 notice: "当前模型不支持图片输入。"

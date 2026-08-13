@@ -1172,6 +1172,86 @@ button.figma-conversation-manager-main:hover:not(:disabled) {
   }
 }
 
+.figma-mcp-tool-menu .figma-menu-trigger {
+  border-color: color-mix(in srgb, var(--xhs-line) 78%, #2368e8 22%);
+}
+
+.figma-mcp-tool-menu.active .figma-menu-trigger {
+  color: var(--xhs-text);
+  background: color-mix(in srgb, var(--xhs-blue-soft) 68%, var(--xhs-surface) 32%);
+}
+
+.figma-mcp-approval {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 8px 0 10px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, #d97706 54%, var(--xhs-line) 46%);
+  border-radius: 12px;
+  background: color-mix(in srgb, #fff7ed 82%, var(--xhs-surface) 18%);
+}
+
+.figma-mcp-approval-copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.figma-mcp-approval-copy strong {
+  font-size: 13px;
+  color: var(--xhs-text);
+}
+
+.figma-mcp-approval-copy span,
+.figma-mcp-approval-copy small {
+  color: var(--xhs-muted);
+  font-size: 12px;
+}
+
+.figma-mcp-approval-copy code {
+  display: block;
+  max-width: min(720px, 100%);
+  overflow: hidden;
+  color: var(--xhs-text);
+  font: 12px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.figma-mcp-approval-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.figma-mcp-approval-actions button {
+  min-height: 36px;
+  padding: 0 12px;
+  border-radius: 9px;
+  white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+  .figma-mcp-approval {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .figma-mcp-approval-actions {
+    justify-content: flex-end;
+  }
+
+  .figma-mcp-approval-actions button {
+    min-height: 42px;
+  }
+}
+
+:root.dark .figma-mcp-approval {
+  background: color-mix(in srgb, #422006 60%, var(--xhs-surface) 40%);
+}
+
 @media (max-width: 639px) {
   .figma-mobile-heading-actions {
     display: flex;
@@ -2279,6 +2359,212 @@ button.figma-conversation-manager-main:hover:not(:disabled) {
 
 .figma-session-tools > button.clear {
   margin-left: auto;
+}
+
+.figma-user-mcp-menu {
+  position: relative;
+  min-width: 0;
+}
+
+.figma-user-mcp-trigger {
+  display: inline-flex;
+  min-height: 27px;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--xhs-muted);
+  font: inherit;
+  font-size: 10px;
+}
+
+.figma-user-mcp-trigger:hover:not(:disabled),
+.figma-user-mcp-trigger[aria-expanded="true"],
+.figma-user-mcp-trigger.active {
+  background: var(--xhs-soft-3);
+  color: var(--xhs-red);
+}
+
+.figma-user-mcp-popover {
+  position: absolute;
+  z-index: 40;
+  left: 0;
+  bottom: calc(100% + 10px);
+  width: min(380px, calc(100vw - 40px));
+  max-height: min(520px, calc(100vh - 150px));
+  overflow: auto;
+  padding: 14px;
+  border: 1px solid var(--xhs-line);
+  border-radius: 8px;
+  background: var(--xhs-surface);
+  box-shadow: 0 14px 36px color-mix(in srgb, #000 16%, transparent);
+  color: var(--xhs-text);
+  animation: figma-user-mcp-enter 140ms ease-out;
+}
+
+@keyframes figma-user-mcp-enter {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.figma-user-mcp-popover > header,
+.figma-user-mcp-popover > header > div,
+.figma-user-mcp-profile-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.figma-user-mcp-popover > header {
+  flex-direction: row;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding-bottom: 11px;
+  border-bottom: 1px solid var(--xhs-line);
+}
+
+.figma-user-mcp-popover > header strong {
+  font-size: 13px;
+}
+
+.figma-user-mcp-popover > header span,
+.figma-user-mcp-profile-copy span,
+.figma-user-mcp-safety {
+  color: var(--xhs-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.figma-user-mcp-popover > header button,
+.figma-user-mcp-row-actions button {
+  display: inline-grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--xhs-muted);
+}
+
+.figma-user-mcp-popover > header button:hover,
+.figma-user-mcp-row-actions button:hover:not(:disabled) {
+  background: var(--xhs-soft-3);
+  color: var(--xhs-text);
+}
+
+.figma-user-mcp-list {
+  display: grid;
+  gap: 7px;
+  margin: 10px 0;
+}
+
+.figma-user-mcp-list article {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 10px;
+  border: 1px solid var(--xhs-line);
+  border-radius: 8px;
+  background: var(--xhs-soft-2);
+}
+
+.figma-user-mcp-profile-copy strong,
+.figma-user-mcp-profile-copy code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.figma-user-mcp-profile-copy strong { font-size: 12px; }
+.figma-user-mcp-profile-copy code { color: var(--xhs-muted); font-size: 10px; }
+.figma-user-mcp-row-actions { display: flex; gap: 2px; }
+.figma-user-mcp-empty { margin: 6px 0; color: var(--xhs-muted); font-size: 12px; }
+
+.figma-user-mcp-form {
+  display: grid;
+  gap: 9px;
+  padding: 10px;
+  border: 1px solid var(--xhs-line);
+  border-radius: 8px;
+  background: var(--xhs-soft-2);
+}
+
+.figma-user-mcp-form > label:not(.figma-user-mcp-remember) {
+  display: grid;
+  gap: 5px;
+  color: var(--xhs-muted);
+  font-size: 11px;
+}
+
+.figma-user-mcp-form input[type="text"],
+.figma-user-mcp-form input[type="url"],
+.figma-user-mcp-form input:not([type]) {
+  width: 100%;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--xhs-line);
+  border-radius: 7px;
+  background: var(--xhs-surface);
+  color: var(--xhs-text);
+  font-size: 12px;
+}
+
+.figma-user-mcp-remember {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--xhs-muted);
+  font-size: 11px;
+}
+
+.figma-user-mcp-form > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.figma-user-mcp-form button,
+.figma-user-mcp-add {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 11px;
+  border: 1px solid var(--xhs-line);
+  border-radius: 7px;
+  background: var(--xhs-surface);
+  color: var(--xhs-text);
+  font-size: 11px;
+}
+
+.figma-user-mcp-form button.primary {
+  border-color: var(--xhs-red);
+  background: var(--xhs-red);
+  color: #fff;
+}
+
+.figma-user-mcp-add { width: 100%; }
+.figma-user-mcp-error { margin: 9px 0 0; color: var(--xhs-red); font-size: 11px; line-height: 1.5; }
+.figma-user-mcp-safety { margin: 10px 0 0; }
+
+@media (max-width: 760px) {
+  .figma-user-mcp-trigger { min-height: 44px; }
+  .figma-user-mcp-popover {
+    position: fixed;
+    right: 12px;
+    bottom: calc(12px + env(safe-area-inset-bottom));
+    left: 12px;
+    width: auto;
+    max-height: min(68vh, 560px);
+  }
 }
 
 .figma-search-provider-menu,

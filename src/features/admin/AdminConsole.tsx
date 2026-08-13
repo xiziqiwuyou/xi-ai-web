@@ -515,6 +515,52 @@ export function AdminConsole({
     }
   };
 
+  const updateMcpExecutionPolicy = async (patch: { enabled?: boolean; userConnectionsEnabled?: boolean }) => {
+    onError("");
+    onNotice("");
+    try {
+      const mcpExecution = await api.updateMcpExecution(patch);
+      onBootstrapChange({ ...bootstrap, mcpExecution });
+      await onPublicRefresh();
+      if (patch.userConnectionsEnabled !== undefined) {
+        onNotice(patch.userConnectionsEnabled
+          ? "用户自定义 MCP 连接已开启。"
+          : "用户自定义 MCP 连接已关闭，临时连接和待确认调用已失效。");
+      } else {
+        onNotice(mcpExecution.enabled
+          ? "远程 MCP 执行已开启。"
+          : "远程 MCP 执行已关闭，所有临时连接和待确认调用已失效。");
+      }
+    } catch (err: unknown) {
+      onError(err instanceof Error ? err.message : "无法更新远程 MCP 执行策略");
+      throw err;
+    }
+  };
+
+  const saveMcpServerExecution = async (
+    profileId: string,
+    executionEnabled: boolean,
+    allowedToolNames: string[]
+  ) => {
+    onError("");
+    onNotice("");
+    try {
+      const profile = await api.updateMcpServerExecution(profileId, {
+        executionEnabled,
+        allowedToolNames
+      });
+      const mcpServers = bootstrap.mcpServers.map((item) => item.id === profile.id ? profile : item);
+      onBootstrapChange({ ...bootstrap, mcpServers });
+      setMcpForm(mcpServerDraft(profile));
+      await onPublicRefresh();
+      onNotice("MCP 工具执行权限已保存。");
+      return profile;
+    } catch (err: unknown) {
+      onError(err instanceof Error ? err.message : "无法保存 MCP 工具执行权限");
+      throw err;
+    }
+  };
+
   const deleteMcpServer = async (profileId: string) => {
     onError("");
     onNotice("");
@@ -1016,6 +1062,8 @@ export function AdminConsole({
       {activeSection === "mcp" ? (
         <AdminMcpSection
           profiles={bootstrap.mcpServers}
+          globalExecutionEnabled={bootstrap.mcpExecution.enabled}
+          userConnectionsEnabled={bootstrap.mcpExecution.userConnectionsEnabled}
           selectedProfileId={selectedMcpProfileId}
           form={mcpForm}
           onSelect={(profileId) => {
@@ -1030,6 +1078,8 @@ export function AdminConsole({
           onSubmit={saveMcpServer}
           onDelete={requestMcpDelete}
           onDiscover={discoverMcpServer}
+          onExecutionPolicyChange={updateMcpExecutionPolicy}
+          onSaveExecution={saveMcpServerExecution}
         />
       ) : null}
 

@@ -7,9 +7,11 @@ import {
   MCP_LIMITS,
   MCP_PROTOCOL_VERSION,
   McpError,
-  normalizeMcpToolDescriptors,
   mcpExecutionUnavailableError,
-  parseMcpJsonRpcResult
+  normalizeMcpToolArguments,
+  normalizeMcpToolDescriptors,
+  parseMcpJsonRpcResult,
+  projectMcpToolResult
 } from "./contract.mjs";
 import { assertSafeMcpEndpoint, pinnedLookup } from "./security.mjs";
 import { APP_VERSION } from "../app-version.mjs";
@@ -24,7 +26,7 @@ function responseHeader(headers, name) {
 }
 
 function abortedError() {
-  return new McpError(MCP_ERROR_CODES.CANCELLED, "MCP discovery was cancelled", { status: 499 });
+  return new McpError(MCP_ERROR_CODES.CANCELLED, "MCP request was cancelled", { status: 499 });
 }
 
 function protocolError(message = "MCP response is invalid") {
@@ -33,13 +35,13 @@ function protocolError(message = "MCP response is invalid") {
 
 function statusError(status) {
   if (status === 401 || status === 403) {
-    return new McpError(MCP_ERROR_CODES.UPSTREAM_STATUS, "MCP server rejected discovery", { status: 502 });
+    return new McpError(MCP_ERROR_CODES.UPSTREAM_STATUS, "MCP server rejected the request", { status: 502 });
   }
   if (status === 404 || status === 405 || status === 415) {
-    return new McpError(MCP_ERROR_CODES.UPSTREAM_STATUS, "MCP discovery endpoint is not supported", { status: 502 });
+    return new McpError(MCP_ERROR_CODES.UPSTREAM_STATUS, "MCP endpoint is not supported", { status: 502 });
   }
   if (status === 429) {
-    return new McpError(MCP_ERROR_CODES.RATE_LIMITED, "MCP server rate limited discovery", { status: 502 });
+    return new McpError(MCP_ERROR_CODES.RATE_LIMITED, "MCP server rate limited the request", { status: 502 });
   }
   return new McpError(MCP_ERROR_CODES.UPSTREAM_STATUS, "MCP server returned an unsuccessful response", { status: 502 });
 }
@@ -67,12 +69,12 @@ function validateContentType(contentType) {
   if (normalized.includes("text/event-stream") || normalized.includes("multipart/mixed")) {
     throw new McpError(
       MCP_ERROR_CODES.TRANSPORT_UNSUPPORTED,
-      "This MCP transport is not supported for discovery",
+      "This MCP transport is not supported",
       { status: 501 }
     );
   }
   if (normalized && !normalized.includes("application/json") && !normalized.includes("+json")) {
-    throw protocolError("MCP discovery returned an unsupported response format");
+    throw protocolError("MCP request returned an unsupported response format");
   }
 }
 
@@ -96,7 +98,7 @@ export function requestMcpJson(target, body, {
   if (Buffer.byteLength(serialized, "utf8") > MCP_LIMITS.maxRequestBytes) {
     return Promise.reject(new McpError(
       MCP_ERROR_CODES.PROTOCOL_ERROR,
-      "MCP discovery request is too large",
+      "MCP request is too large",
       { status: 400 }
     ));
   }
@@ -153,7 +155,7 @@ export function requestMcpJson(target, body, {
           request.destroy();
           finish(new McpError(
             MCP_ERROR_CODES.RESPONSE_TOO_LARGE,
-            "MCP discovery response is too large",
+            "MCP response is too large",
             { status: 502 }
           ));
           return;
@@ -174,7 +176,7 @@ export function requestMcpJson(target, body, {
       });
       response.once("error", (error) => finish(new McpError(
         MCP_ERROR_CODES.NETWORK_ERROR,
-        "MCP discovery response could not be read",
+        "MCP response could not be read",
         { status: 502, cause: error }
       )));
     });
@@ -184,7 +186,7 @@ export function requestMcpJson(target, body, {
     const timer = setTimeout(() => {
       timedOut = true;
       request.destroy();
-      finish(new McpError(MCP_ERROR_CODES.TIMEOUT, "MCP discovery timed out", { status: 504 }));
+      finish(new McpError(MCP_ERROR_CODES.TIMEOUT, "MCP request timed out", { status: 504 }));
     }, timeout);
     timer.unref?.();
     request.once("error", (error) => {
@@ -197,7 +199,7 @@ export function requestMcpJson(target, body, {
       }
       finish(new McpError(
         MCP_ERROR_CODES.NETWORK_ERROR,
-        "MCP discovery network request failed",
+        "MCP network request failed",
         { status: 502, cause: error }
       ));
     });
@@ -229,6 +231,44 @@ function initializeRequest() {
   };
 }
 
+function hasToolsCapability(value) {
+  return Boolean(
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    value.capabilities &&
+    typeof value.capabilities === "object" &&
+    !Array.isArray(value.capabilities) &&
+    value.capabilities.tools &&
+    typeof value.capabilities.tools === "object" &&
+    !Array.isArray(value.capabilities.tools)
+  );
+}
+
+async function initializeMcpSession(target, { signal, requestImpl }) {
+  const initialize = initializeRequest();
+  const initializeResponse = await requestImpl(target, initialize, { signal });
+  validateResponseEnvelope(initializeResponse);
+  const initializeResult = parseMcpJsonRpcResult(jsonFromBody(initializeResponse?.body), initialize.id);
+  const protocolVersion = String(initializeResult.protocolVersion || "").trim();
+  if (protocolVersion !== MCP_PROTOCOL_VERSION) {
+    throw protocolError("MCP protocol version is not supported");
+  }
+  if (!hasToolsCapability(initializeResult)) {
+    throw protocolError("MCP server did not advertise tool support");
+  }
+  const sessionId = sessionIdFromResponse(initializeResponse);
+
+  const initializedNotification = {
+    jsonrpc: "2.0",
+    method: "notifications/initialized",
+    params: {}
+  };
+  const notificationResponse = await requestImpl(target, initializedNotification, { signal, sessionId });
+  validateResponseEnvelope(notificationResponse, { allowEmpty: true });
+  return { protocolVersion, sessionId };
+}
+
 export async function discoverMcpTools({
   profileId,
   endpoint,
@@ -254,23 +294,7 @@ export async function discoverMcpTools({
     throw new McpError(MCP_ERROR_CODES.DNS_UNSAFE, "MCP endpoint validation failed", { status: 400, cause: error });
   }
 
-  const initialize = initializeRequest();
-  const initializeResponse = await requestImpl(target, initialize, { signal });
-  validateResponseEnvelope(initializeResponse);
-  const initializeResult = parseMcpJsonRpcResult(jsonFromBody(initializeResponse?.body), initialize.id);
-  const protocolVersion = String(initializeResult.protocolVersion || "").trim();
-  if (!protocolVersion || protocolVersion.length > 64 || /[\u0000-\u001f\u007f]/u.test(protocolVersion)) {
-    throw protocolError("MCP protocol version is invalid");
-  }
-  const sessionId = sessionIdFromResponse(initializeResponse);
-
-  const initializedNotification = {
-    jsonrpc: "2.0",
-    method: "notifications/initialized",
-    params: {}
-  };
-  const notificationResponse = await requestImpl(target, initializedNotification, { signal, sessionId });
-  validateResponseEnvelope(notificationResponse, { allowEmpty: true });
+  const { protocolVersion, sessionId } = await initializeMcpSession(target, { signal, requestImpl });
 
   const listTools = {
     jsonrpc: "2.0",
@@ -290,6 +314,52 @@ export async function discoverMcpTools({
     truncated: Boolean(listResult.nextCursor),
     discoveredAt: now()
   };
+}
+
+export async function callMcpTool({
+  endpoint,
+  toolName,
+  arguments: argumentsValue,
+  signal,
+  production = process.env.NODE_ENV === "production",
+  allowLocal = false,
+  allowInsecureHttp = false,
+  lookup,
+  requestImpl = requestMcpJson
+} = {}) {
+  if (signal?.aborted) throw abortedError();
+  const argumentsObject = normalizeMcpToolArguments(argumentsValue);
+  const normalizedToolName = String(toolName || "").trim();
+  if (!/^[\p{L}\p{N}][\p{L}\p{N}._:-]{0,127}$/u.test(normalizedToolName)) {
+    throw new McpError(MCP_ERROR_CODES.TOOL_NOT_ALLOWED, "MCP tool is not allowed", { status: 400 });
+  }
+  let target;
+  try {
+    target = await assertSafeMcpEndpoint(endpoint, {
+      production,
+      allowLocal,
+      allowInsecureHttp,
+      ...(lookup ? { lookup } : {})
+    });
+  } catch (error) {
+    if (error instanceof McpError) throw error;
+    throw new McpError(MCP_ERROR_CODES.DNS_UNSAFE, "MCP endpoint validation failed", { status: 400, cause: error });
+  }
+
+  const { sessionId } = await initializeMcpSession(target, { signal, requestImpl });
+  const call = {
+    jsonrpc: "2.0",
+    id: crypto.randomUUID(),
+    method: "tools/call",
+    params: {
+      name: normalizedToolName,
+      arguments: argumentsObject
+    }
+  };
+  const response = await requestImpl(target, call, { signal, sessionId });
+  validateResponseEnvelope(response);
+  const result = parseMcpJsonRpcResult(jsonFromBody(response?.body), call.id);
+  return projectMcpToolResult(result);
 }
 
 export function assertMcpExecutionUnavailable() {

@@ -85,6 +85,8 @@ export type McpServerDraft = {
   label: string;
   endpoint: string;
   enabled: boolean;
+  executionEnabled: boolean;
+  allowedToolNames: string[];
 };
 
 export type AdminSectionId =
@@ -183,7 +185,7 @@ export const adminSectionDetails: Record<AdminSectionId, { title: string; descri
   },
   mcp: {
     title: "MCP 服务",
-    description: "管理公开 MCP 服务并查看其工具能力；当前版本仅支持发现，不执行远程工具。"
+    description: "管理公开 MCP 服务、工具白名单和逐次确认的远程执行权限；默认关闭。"
   },
   site: {
     title: "站点设置",
@@ -370,7 +372,9 @@ export const emptyLangflowWorkflowDraft: LangflowWorkflowDraft = {
 export const emptyMcpServerDraft: McpServerDraft = {
   label: "新 MCP 服务",
   endpoint: "",
-  enabled: true
+  enabled: true,
+  executionEnabled: false,
+  allowedToolNames: []
 };
 
 export const promptModuleOptions: Array<{ value: ModuleId; label: string }> = [
@@ -482,7 +486,9 @@ export function mcpServerDraft(entry?: McpServerProfile): McpServerDraft {
   return {
     label: entry.label,
     endpoint: entry.endpoint,
-    enabled: entry.enabled
+    enabled: entry.enabled,
+    executionEnabled: entry.executionEnabled,
+    allowedToolNames: entry.allowedToolNames
   };
 }
 

@@ -635,6 +635,7 @@ function App() {
             langflow={payload.langflow}
             langflowWorkflows={payload.langflowWorkflows}
             toolSettings={payload.toolSettings}
+            mcpExecution={payload.mcpExecution}
             userProvider={userProvider}
             searchService={searchService}
             onUserProviderChange={updateUserProvider}

@@ -5,6 +5,8 @@ import type { McpServerDraft } from "./adminConsoleConfig";
 
 type AdminMcpSectionProps = {
   profiles: McpServerProfile[];
+  globalExecutionEnabled: boolean;
+  userConnectionsEnabled: boolean;
   selectedProfileId: string | "new";
   form: McpServerDraft;
   onSelect: (profileId: string) => void;
@@ -13,10 +15,18 @@ type AdminMcpSectionProps = {
   onSubmit: FormEventHandler<HTMLFormElement>;
   onDelete: () => void;
   onDiscover: () => Promise<McpDiscoveryResult>;
+  onExecutionPolicyChange: (patch: { enabled?: boolean; userConnectionsEnabled?: boolean }) => Promise<void>;
+  onSaveExecution: (
+    profileId: string,
+    executionEnabled: boolean,
+    allowedToolNames: string[]
+  ) => Promise<McpServerProfile>;
 };
 
 export function AdminMcpSection({
   profiles,
+  globalExecutionEnabled,
+  userConnectionsEnabled,
   selectedProfileId,
   form,
   onSelect,
@@ -24,10 +34,13 @@ export function AdminMcpSection({
   onChange,
   onSubmit,
   onDelete,
-  onDiscover
+  onDiscover,
+  onExecutionPolicyChange,
+  onSaveExecution
 }: AdminMcpSectionProps) {
   const [discovery, setDiscovery] = useState<McpDiscoveryResult | null>(null);
   const [discoverBusy, setDiscoverBusy] = useState(false);
+  const [executionBusy, setExecutionBusy] = useState(false);
 
   useEffect(() => {
     setDiscovery(null);
@@ -45,6 +58,35 @@ export function AdminMcpSection({
     }
   };
 
+  const saveExecution = async () => {
+    if (selectedProfileId === "new" || executionBusy) return;
+    setExecutionBusy(true);
+    try {
+      await onSaveExecution(selectedProfileId, form.executionEnabled, form.allowedToolNames);
+    } finally {
+      setExecutionBusy(false);
+    }
+  };
+
+  const setGlobalExecution = async (enabled: boolean) => {
+    if (executionBusy) return;
+    setExecutionBusy(true);
+    try {
+      await onExecutionPolicyChange({ enabled });
+    } catch {
+      // The parent owns the visible error state.
+    } finally {
+      setExecutionBusy(false);
+    }
+  };
+
+  const toggleAllowedTool = (name: string, enabled: boolean) => {
+    const next = enabled
+      ? [...new Set([...form.allowedToolNames, name])]
+      : form.allowedToolNames.filter((item) => item !== name);
+    onChange({ allowedToolNames: next });
+  };
+
   return (
     <section id="admin-section-mcp" className="admin-section admin-mcp-section">
       <div className="section-title">
@@ -54,9 +96,50 @@ export function AdminMcpSection({
       <div className="admin-mcp-boundary-note" role="note">
         <ShieldAlert size={17} aria-hidden="true" />
         <p>
-          <strong>仅管理员配置，当前只做能力发现</strong>
-          <span>服务端只允许公开 HTTPS 地址，并会在每次发现前重新校验 DNS。发现结果是不可信描述，不会发送给模型，也不会执行远程工具。</span>
+          <strong>管理员受控的远程 MCP</strong>
+          <span>仅允许公开 HTTPS 服务。执行默认关闭，工具白名单由服务端重新发现核验，每次调用仍需对话用户明确确认。</span>
         </p>
+      </div>
+
+      <div className="admin-mcp-execution-switch">
+        <div>
+          <strong>远程工具执行</strong>
+          <span>默认关闭。开启后仍需逐个服务、逐个工具授权，且每次调用都由用户确认。</span>
+        </div>
+        <label className="inline-check">
+          <input
+            type="checkbox"
+            checked={globalExecutionEnabled}
+            disabled={executionBusy}
+            onChange={(event) => void setGlobalExecution(event.target.checked)}
+          />
+          {globalExecutionEnabled ? "已开启" : "已关闭"}
+        </label>
+      </div>
+
+      <div className="admin-mcp-execution-switch">
+        <div>
+          <strong>允许用户添加 MCP 服务</strong>
+          <span>默认关闭。开启后，用户可在 AI 对话中临时连接无需认证的公开 HTTPS MCP 服务；地址仅保存在用户浏览器，服务端只保留短期会话连接。</span>
+        </div>
+        <label className="inline-check">
+          <input
+            type="checkbox"
+            checked={userConnectionsEnabled}
+            disabled={executionBusy || !globalExecutionEnabled}
+            onChange={(event) => void (async () => {
+              setExecutionBusy(true);
+              try {
+                await onExecutionPolicyChange({ userConnectionsEnabled: event.target.checked });
+              } catch {
+                // The parent owns the visible error state.
+              } finally {
+                setExecutionBusy(false);
+              }
+            })()}
+          />
+          {userConnectionsEnabled ? "已开启" : "已关闭"}
+        </label>
       </div>
 
       <div className="provider-picker">
@@ -159,12 +242,45 @@ export function AdminMcpSection({
                     <code>{tool.name}</code>
                   </div>
                   <p>{tool.description || "暂无描述"}</p>
+                  <label className="admin-mcp-tool-allow">
+                    <input
+                      type="checkbox"
+                      checked={form.allowedToolNames.includes(tool.name)}
+                      disabled={executionBusy}
+                      onChange={(event) => toggleAllowedTool(tool.name, event.target.checked)}
+                    />
+                    允许在 AI 对话中请求此工具
+                  </label>
                   {tool.inputSchema ? <pre>{JSON.stringify(tool.inputSchema, null, 2)}</pre> : null}
                 </article>
               ))}
             </div>
           ) : <p className="admin-mini-copy">服务没有返回可展示的工具。</p>}
         </section>
+      ) : null}
+
+      {selectedProfileId !== "new" ? (
+        <div className="admin-mcp-execution-config">
+          <label className="inline-check">
+            <input
+              type="checkbox"
+              checked={form.executionEnabled}
+              disabled={!form.enabled || executionBusy}
+              onChange={(event) => onChange({ executionEnabled: event.target.checked })}
+            />
+            启用此服务的工具执行
+          </label>
+          <p>白名单保存时会由服务端重新发现工具并核对名称。发现描述和返回内容始终按不可信数据处理。</p>
+          <button
+            type="button"
+            className="primary-action"
+            disabled={executionBusy || !form.enabled}
+            onClick={() => void saveExecution()}
+          >
+            <ShieldAlert size={16} />
+            {executionBusy ? "正在保存" : "保存执行权限"}
+          </button>
+        </div>
       ) : null}
     </section>
   );

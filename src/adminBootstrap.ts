@@ -112,7 +112,13 @@ function normalizedMcpServers(value: unknown): McpServerProfile[] {
       typeof profile.createdAt === "string" &&
       typeof profile.updatedAt === "string"
     );
-  });
+  }).map((profile) => ({
+    ...profile,
+    executionEnabled: profile.executionEnabled === true,
+    allowedToolNames: Array.isArray(profile.allowedToolNames)
+      ? profile.allowedToolNames.filter((name): name is string => typeof name === "string").slice(0, 128)
+      : []
+  }));
 }
 
 export function normalizeAdminBootstrapPayload<T extends Partial<AdminBootstrapPayload>>(
@@ -137,6 +143,12 @@ export function normalizeAdminBootstrapPayload<T extends Partial<AdminBootstrapP
     promptPresets: Array.isArray(payload.promptPresets) ? payload.promptPresets : [],
     langflowWorkflows: Array.isArray(payload.langflowWorkflows) ? payload.langflowWorkflows : [],
     mcpServers: normalizedMcpServers(payload.mcpServers),
-    toolSettings: Array.isArray(payload.toolSettings) ? payload.toolSettings : []
+    toolSettings: Array.isArray(payload.toolSettings) ? payload.toolSettings : [],
+    mcpExecution: payload.mcpExecution && typeof payload.mcpExecution.enabled === "boolean"
+      ? {
+          enabled: payload.mcpExecution.enabled,
+          userConnectionsEnabled: payload.mcpExecution.userConnectionsEnabled === true
+        }
+      : { enabled: false, userConnectionsEnabled: false }
   } as AdminBootstrapPayload & T;
 }

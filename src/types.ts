@@ -70,8 +70,48 @@ export type McpServerProfile = {
   label: string;
   endpoint: string;
   enabled: boolean;
+  executionEnabled: boolean;
+  allowedToolNames: string[];
   createdAt: string;
   updatedAt: string;
+};
+
+export type PublicMcpTool = {
+  id: string;
+  profileId: string;
+  profileLabel: string;
+  name: string;
+  label: string;
+  requiresApproval: true;
+  untrusted: true;
+  source: "preset" | "user";
+};
+
+export type PublicMcpExecution = {
+  enabled: boolean;
+  userConnectionsEnabled: boolean;
+  tools: PublicMcpTool[];
+};
+
+export type AdminMcpExecution = {
+  enabled: boolean;
+  userConnectionsEnabled: boolean;
+};
+
+export type UserMcpConnection = {
+  id: string;
+  profileId: string;
+  tools: PublicMcpTool[];
+  expiresAt: string;
+};
+
+export type McpApprovalRequest = {
+  id: string;
+  profileLabel: string;
+  toolLabel: string;
+  argumentsDigest: string;
+  argumentsPreview: string;
+  expiresAt: string;
 };
 
 export type McpToolDescriptor = {
@@ -256,6 +296,7 @@ export type PublicBootstrapPayload = {
   langflowWorkflows: LangflowWorkflow[];
   conversations: ConversationSummary[];
   toolSettings?: ToolSetting[];
+  mcpExecution: PublicMcpExecution;
 };
 
 export type AdminBootstrapPayload = {
@@ -271,6 +312,7 @@ export type AdminBootstrapPayload = {
   langflowWorkflows: AdminLangflowWorkflow[];
   mcpServers: McpServerProfile[];
   toolSettings?: ToolSetting[];
+  mcpExecution: AdminMcpExecution;
 };
 
 export type AdminStatus = {
@@ -870,6 +912,7 @@ export type ChatStreamPayload = {
   attachments?: ChatAttachment[];
   skillInstructions?: string[];
   allowedTools?: string[];
+  mcpToolIds?: string[];
   searchService?: SearchServiceConfig;
   knowledgeBaseIds?: KnowledgeRetrievalRequest["knowledgeBaseIds"];
   embeddingConnections?: KnowledgeRetrievalRequest["embeddingConnections"];
@@ -1431,6 +1474,7 @@ export type ChatStreamEvent =
       deliveryMode?: "native-stream" | "buffered";
     }
   | { type: "token"; token: string }
+  | { type: "mcp_approval_required"; approval: McpApprovalRequest }
   | { type: "error"; error: string }
   | { type: "done"; conversation: ConversationSummary; message: Message };
 

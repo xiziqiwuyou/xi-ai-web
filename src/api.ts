@@ -51,7 +51,9 @@ import type {
   ModelCatalogEntry,
   ModelVendorEntry,
   McpDiscoveryResponse,
+  McpApprovalRequest,
   McpServerProfile,
+  UserMcpConnection,
   PromptPreset,
   PublicBootstrapPayload,
   SiteSettings,
@@ -118,6 +120,68 @@ function exchangeShellJwt(token: string) {
   return promise;
 }
 
+type McpSessionProof = {
+  csrfToken: string;
+  expiresAt: string;
+  connections?: UserMcpConnection[];
+};
+
+let mcpSessionProof: McpSessionProof | null = null;
+let mcpSessionInFlight: Promise<McpSessionProof> | null = null;
+
+async function ensureMcpSession(): Promise<McpSessionProof> {
+  if (
+    mcpSessionProof &&
+    new Date(mcpSessionProof.expiresAt).getTime() > Date.now() + 30_000
+  ) return mcpSessionProof;
+  if (mcpSessionInFlight) return mcpSessionInFlight;
+  mcpSessionInFlight = apiJson<McpSessionProof>("/api/chat/mcp/session", {
+    credentials: "same-origin"
+  }).then((proof) => {
+    mcpSessionProof = proof;
+    return proof;
+  }).finally(() => {
+    mcpSessionInFlight = null;
+  });
+  return mcpSessionInFlight;
+}
+
+export async function respondMcpApproval(
+  approval: McpApprovalRequest,
+  decision: "approve" | "reject" | "cancel"
+) {
+  const proof = await ensureMcpSession();
+  return apiJson<{ status: string }>(
+    `/api/chat/mcp/approvals/${encodeURIComponent(approval.id)}/${decision}`,
+    {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "X-MCP-CSRF": proof.csrfToken },
+      body: "{}"
+    }
+  );
+}
+
+export async function connectUserMcpService(endpoint: string) {
+  const proof = await ensureMcpSession();
+  return apiJson<UserMcpConnection>("/api/chat/mcp/connections", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "X-MCP-CSRF": proof.csrfToken },
+    body: JSON.stringify({ endpoint })
+  });
+}
+
+export async function disconnectUserMcpService(connectionId: string) {
+  const proof = await ensureMcpSession();
+  await apiJson<void>(`/api/chat/mcp/connections/${encodeURIComponent(connectionId)}`, {
+    method: "DELETE",
+    credentials: "same-origin",
+    headers: { "X-MCP-CSRF": proof.csrfToken },
+    body: "{}"
+  });
+}
+
 export type ModelCatalogPayload = Partial<ModelCatalogEntry>;
 export type ModelVendorPayload = Pick<ModelVendorEntry, "label" | "adapter">;
 export type AppPresetPayload = Partial<AppPreset>;
@@ -175,6 +239,18 @@ export const api = {
       method: "POST",
       body: JSON.stringify({})
     }),
+  updateMcpExecution: (settings: Partial<AdminBootstrapPayload["mcpExecution"]>) =>
+    apiJson<AdminBootstrapPayload["mcpExecution"]>("/api/admin/mcp-execution", {
+      method: "PATCH",
+      body: JSON.stringify(settings)
+    }),
+  updateMcpServerExecution: (
+    id: string,
+    execution: Pick<McpServerProfile, "executionEnabled" | "allowedToolNames">
+  ) => apiJson<McpServerProfile>(`/api/admin/mcp-servers/${encodeURIComponent(id)}/execution`, {
+    method: "PUT",
+    body: JSON.stringify(execution)
+  }),
 
   generate: (moduleId: GenerationModuleId, payload: GenerationPayload, signal?: AbortSignal) =>
     apiJson<GenerationResult>(`/api/generate/${moduleId}`, {
@@ -803,6 +879,7 @@ export async function streamChat(
   signal?: AbortSignal,
   knowledgeCsrfToken = ""
 ) {
+  if (payload.mcpToolIds?.length) await ensureMcpSession();
   const response = await fetch("/api/chat/stream", {
     method: "POST",
     credentials: "same-origin",

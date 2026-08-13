@@ -4235,6 +4235,55 @@
   overflow-wrap: anywhere;
 }
 
+.admin-mcp-execution-switch,
+.admin-mcp-execution-config {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px;
+  border: 1px solid var(--xhs-line);
+  border-radius: 10px;
+  background: var(--xhs-surface);
+}
+
+.admin-mcp-execution-switch > div,
+.admin-mcp-execution-config {
+  min-width: 0;
+}
+
+.admin-mcp-execution-switch strong,
+.admin-mcp-execution-switch span {
+  display: block;
+}
+
+.admin-mcp-execution-switch span,
+.admin-mcp-execution-config p {
+  margin: 4px 0 0;
+  color: var(--xhs-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.admin-mcp-execution-config {
+  align-items: flex-start;
+  flex-direction: column;
+}
+
+.admin-mcp-tool-allow {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--xhs-text);
+  font-size: 12px;
+}
+
+.admin-mcp-tool-allow input,
+.admin-mcp-execution-switch input,
+.admin-mcp-execution-config input {
+  accent-color: var(--xhs-red);
+}
+
 .is-spinning {
   animation: admin-mcp-spin 0.9s linear infinite;
 }
@@ -4249,6 +4298,11 @@
   }
 
   .admin-mcp-discovery-heading {
+    flex-direction: column;
+  }
+
+  .admin-mcp-execution-switch {
+    align-items: flex-start;
     flex-direction: column;
   }
 }

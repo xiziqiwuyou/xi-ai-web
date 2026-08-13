@@ -20,6 +20,20 @@ git diff --check
 ## Browser Test Contract
 
 - Playwright uses deterministic route fixtures in `tests/e2e/support/app-fixture.ts`; never use real provider credentials.
+- `scripts/run-e2e.mjs` owns the canonical E2E lifecycle: build current source,
+  start an isolated production server on an ephemeral loopback port, use a
+  temporary data directory, and clean up the process/data afterward. Do not
+  restore Playwright's Windows `npm run dev` WebServer chain.
+- Runtime UI checks start an isolated temporary server by default. Reuse an
+  existing origin only when `UI_RUNTIME_URL` or `SMOKE_URL` is explicitly set;
+  a developer's configured `8787` instance must not decide source contracts.
+- Storage sanitizers and capacity limits belong in Node tests that import the
+  TypeScript owner directly. Browser E2E verifies the workflow and actual
+  persisted records; it must not dynamically import `/src/*.ts` through Vite.
+- Server integration tests run with bounded file concurrency on Windows because
+  many files start child HTTP servers and process-level fixtures. A focused file
+  may run alone, but the canonical `test:server` command must remain stable
+  under the full repository gate.
 - Required projects are `1440x900`, `1280x800`, `390x844`, and `375x812`.
 - Wait for `waitForPublicModule` before layout assertions. A correct shell title does not prove the lazy feature module has mounted.
 - Mobile checks assert one visible vertical scroll owner, no document overflow, and `44px` navigation/sheet targets.

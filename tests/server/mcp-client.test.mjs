@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import test from "node:test";
 import { MCP_ERROR_CODES, MCP_LIMITS } from "../../server/mcp/contract.mjs";
-import { discoverMcpTools, requestMcpJson } from "../../server/mcp/client.mjs";
+import { callMcpTool, discoverMcpTools, requestMcpJson } from "../../server/mcp/client.mjs";
 import { APP_VERSION } from "../../server/app-version.mjs";
 
 async function withHttpServer(handler, work) {
@@ -46,7 +46,7 @@ test("MCP discovery performs initialize, notification, and tools/list without ex
           body: JSON.stringify({
             jsonrpc: "2.0",
             id: body.id,
-            result: { protocolVersion: "2025-06-18", capabilities: {}, serverInfo: { name: "remote" } }
+            result: { protocolVersion: "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "remote" } }
           })
         };
       }
@@ -134,4 +134,61 @@ test("MCP discovery never turns a transport error into a successful empty result
     }),
     (error) => error.code === MCP_ERROR_CODES.TRANSPORT_UNSUPPORTED
   );
+});
+
+test("MCP tools/call creates a fresh bounded session and forwards no credentials", async () => {
+  const calls = [];
+  const headers = [];
+  await withHttpServer(async (req, res) => {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    calls.push(body);
+    headers.push(req.headers);
+    res.setHeader("content-type", "application/json");
+    if (body.method === "initialize") {
+      res.setHeader("mcp-session-id", "call-session");
+      res.end(JSON.stringify({
+        jsonrpc: "2.0",
+        id: body.id,
+        result: { protocolVersion: "2025-06-18", capabilities: { tools: {} } }
+      }));
+      return;
+    }
+    if (body.method === "notifications/initialized") {
+      res.statusCode = 202;
+      res.end();
+      return;
+    }
+    res.end(JSON.stringify({
+      jsonrpc: "2.0",
+      id: body.id,
+      result: { content: [{ type: "text", text: "<b>untrusted</b>" }] }
+    }));
+  }, async (target) => {
+    const result = await callMcpTool({
+      endpoint: target.url,
+      toolName: "fixture.read",
+      arguments: { query: "safe" },
+      production: false,
+      allowLocal: true,
+      allowInsecureHttp: true
+    });
+    assert.equal(result.untrusted, true);
+    assert.equal(result.content[0].text, "&lt;b&gt;untrusted&lt;/b&gt;");
+  });
+
+  assert.deepEqual(calls.map((call) => call.method), [
+    "initialize",
+    "notifications/initialized",
+    "tools/call"
+  ]);
+  assert.equal(calls[2].params.name, "fixture.read");
+  assert.deepEqual(calls[2].params.arguments, { query: "safe" });
+  assert.equal(headers[2]["mcp-session-id"], "call-session");
+  for (const requestHeaders of headers) {
+    assert.equal(requestHeaders.authorization, undefined);
+    assert.equal(requestHeaders.cookie, undefined);
+    assert.equal(requestHeaders["x-api-key"], undefined);
+  }
 });

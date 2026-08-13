@@ -37,6 +37,7 @@ type ModuleRouterProps = {
   langflow: PublicBootstrapPayload["langflow"];
   langflowWorkflows: PublicBootstrapPayload["langflowWorkflows"];
   toolSettings?: PublicBootstrapPayload["toolSettings"];
+  mcpExecution: PublicBootstrapPayload["mcpExecution"];
   userProvider: UserProviderConfig;
   searchService: SearchServiceConfig;
   onUserProviderChange: (patch: Partial<UserProviderConfig>) => void;
@@ -65,6 +66,7 @@ function ModuleRouter({
   langflow,
   langflowWorkflows,
   toolSettings,
+  mcpExecution,
   userProvider,
   searchService,
   onUserProviderChange,
@@ -88,6 +90,7 @@ function ModuleRouter({
         conversations={conversations}
         modelCatalog={modelCatalog}
         toolSettings={toolSettings || []}
+        mcpExecution={mcpExecution}
         userProvider={userProvider}
         onUserProviderChange={onUserProviderChange}
         onRequestApiConfig={onRequestApiConfig}

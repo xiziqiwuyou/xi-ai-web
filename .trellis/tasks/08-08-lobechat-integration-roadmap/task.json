@@ -23,10 +23,11 @@
     "08-08-conversation-retrieval-archive",
     "08-08-secure-local-artifact-workspace",
     "08-08-remote-mcp-secure-foundation",
-    "08-08-chat-branch-history-navigation"
+    "08-08-chat-branch-history-navigation",
+    "08-09-remote-mcp-tool-execution"
   ],
   "parent": null,
   "relatedFiles": [],
-  "notes": "",
+  "notes": "All planned clean-room child capabilities are implemented locally through the v0.0.13 MCP release candidate. The parent remains planning until the operator MCP smoke and release decision are complete.",
   "meta": {}
 }

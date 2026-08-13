@@ -30,6 +30,7 @@ import type {
   ModelVendorEntry,
   ProviderKind,
   PublicBootstrapPayload,
+  PublicMcpTool,
   SearchServiceConfig,
   UserProviderConfig
 } from "../../../src/types";
@@ -514,7 +515,8 @@ export const publicBootstrapFixture: PublicBootstrapPayload = {
       supportedVendors: ["openai", "anthropic", "gemini", "kimi", "deepseek", "qwen", "openai-compatible"],
       requiresContext: false
     }
-  ]
+  ],
+  mcpExecution: { enabled: false, userConnectionsEnabled: false, tools: [] }
 };
 
 const modelVendorFixtures: ModelVendorEntry[] = [
@@ -540,7 +542,8 @@ const adminBootstrapFixture: AdminBootstrapPayload = {
   langflow: publicBootstrapFixture.langflow,
   langflowWorkflows: [],
   mcpServers: [],
-  toolSettings: publicBootstrapFixture.toolSettings
+  toolSettings: publicBootstrapFixture.toolSettings,
+  mcpExecution: { enabled: false, userConnectionsEnabled: false }
 };
 
 const adminOpsFixture: AdminOpsPayload = {
@@ -847,6 +850,7 @@ type ApiHarness = {
   modelCatalogMutations: ModelCatalogMutation[];
   modelVendorMutations: ModelVendorMutation[];
   setBootstrap: (payload: PublicBootstrapPayload) => void;
+  setUserMcpConnectionsEnabled: (enabled: boolean) => void;
   setImageAssetUrls: (urls: string[] | null) => void;
   setGenerationDelayMs: (delayMs: number) => void;
   setAdminBootstrap: (payload: AdminBootstrapPayload) => void;
@@ -893,6 +897,12 @@ export const test = base.extend<BrowserFixtures>({
       const imageTimingEstimateRequests: ApiHarness["imageTimingEstimateRequests"] = [];
       const modelCatalogMutations: ModelCatalogMutation[] = [];
       const modelVendorMutations: ModelVendorMutation[] = [];
+      const userMcpConnections = new Map<string, {
+        id: string;
+        profileId: string;
+        tools: PublicMcpTool[];
+        expiresAt: string;
+      }>();
 
       await page.route("https://api.example.test/**", async (route) => {
         const request = route.request();
@@ -1138,6 +1148,8 @@ export const test = base.extend<BrowserFixtures>({
             label: String(payload.label || "MCP Service"),
             endpoint: String(payload.endpoint || "https://mcp.example.test/mcp"),
             enabled: payload.enabled !== false,
+            executionEnabled: false,
+            allowedToolNames: [],
             createdAt: "2026-01-01T00:00:00.000Z",
             updatedAt: "2026-01-01T00:00:00.000Z"
           };
@@ -1163,6 +1175,8 @@ export const test = base.extend<BrowserFixtures>({
             label: typeof payload.label === "string" ? payload.label : current.label,
             endpoint: typeof payload.endpoint === "string" ? payload.endpoint : current.endpoint,
             enabled: typeof payload.enabled === "boolean" ? payload.enabled : current.enabled,
+            executionEnabled: current.executionEnabled,
+            allowedToolNames: current.allowedToolNames,
             updatedAt: "2026-01-01T00:00:00.000Z"
           };
           adminBootstrap = {
@@ -1170,6 +1184,42 @@ export const test = base.extend<BrowserFixtures>({
             mcpServers: adminBootstrap.mcpServers.map((profile) => profile.id === profileId ? updated : profile)
           };
           await route.fulfill({ json: updated });
+          return;
+        }
+
+        if (request.method() === "PUT" && pathname.match(/^\/api\/admin\/mcp-servers\/[^/]+\/execution$/)) {
+          const profileId = decodeURIComponent(pathname.split("/")[4]);
+          const payload = request.postDataJSON() as Partial<McpServerProfile>;
+          const current = adminBootstrap.mcpServers.find((profile) => profile.id === profileId);
+          if (!current) {
+            await route.fulfill({ status: 404, json: { error: { code: "MCP_PROFILE_NOT_FOUND", message: "MCP profile not found" } } });
+            return;
+          }
+          const updated = {
+            ...current,
+            executionEnabled: payload.executionEnabled === true,
+            allowedToolNames: Array.isArray(payload.allowedToolNames) ? payload.allowedToolNames : [],
+            updatedAt: "2026-01-01T00:00:00.000Z"
+          };
+          adminBootstrap = {
+            ...adminBootstrap,
+            mcpServers: adminBootstrap.mcpServers.map((profile) => profile.id === profileId ? updated : profile)
+          };
+          await route.fulfill({ json: updated });
+          return;
+        }
+
+        if (request.method() === "PATCH" && pathname === "/api/admin/mcp-execution") {
+          const payload = request.postDataJSON() as { enabled?: boolean; userConnectionsEnabled?: boolean };
+          adminBootstrap = {
+            ...adminBootstrap,
+            mcpExecution: {
+              enabled: payload.enabled ?? adminBootstrap.mcpExecution.enabled,
+              userConnectionsEnabled: payload.userConnectionsEnabled ?? adminBootstrap.mcpExecution.userConnectionsEnabled
+            }
+          };
+          bootstrap = { ...bootstrap, mcpExecution: { ...adminBootstrap.mcpExecution, tools: [] } };
+          await route.fulfill({ json: adminBootstrap.mcpExecution });
           return;
         }
 
@@ -1195,7 +1245,8 @@ export const test = base.extend<BrowserFixtures>({
                   description: "Fixture tool",
                   inputSchema: { type: "object" },
                   requiresApproval: true,
-                  untrusted: true
+                  untrusted: true,
+                  source: "preset"
                 }]
               }
             }
@@ -1647,6 +1698,46 @@ export const test = base.extend<BrowserFixtures>({
           return;
         }
 
+        if (request.method() === "GET" && pathname === "/api/chat/mcp/session") {
+          await route.fulfill({
+            json: {
+              csrfToken: "e2e-mcp-csrf-token",
+              expiresAt: "2099-01-01T00:00:00.000Z",
+              connections: [...userMcpConnections.values()]
+            }
+          });
+          return;
+        }
+
+        if (request.method() === "POST" && pathname === "/api/chat/mcp/connections") {
+          const id = `umcp-connection-${userMcpConnections.size + 1}`;
+          const connection = {
+            id,
+            profileId: `umcp-profile-${userMcpConnections.size + 1}`,
+            tools: [{
+              id: `umcp-tool-${userMcpConnections.size + 1}`,
+              profileId: `umcp-profile-${userMcpConnections.size + 1}`,
+              profileLabel: "User MCP service",
+              name: "fixture.read",
+              label: "Fixture read",
+              requiresApproval: true as const,
+              untrusted: true as const,
+              source: "user" as const
+            }],
+            expiresAt: "2099-01-01T00:00:00.000Z"
+          };
+          userMcpConnections.set(id, connection);
+          await route.fulfill({ status: 201, json: connection });
+          return;
+        }
+
+        const userMcpDisconnectMatch = pathname.match(/^\/api\/chat\/mcp\/connections\/([^/]+)$/u);
+        if (request.method() === "DELETE" && userMcpDisconnectMatch) {
+          userMcpConnections.delete(decodeURIComponent(userMcpDisconnectMatch[1]));
+          await route.fulfill({ status: 204, body: "" });
+          return;
+        }
+
         if (request.method() === "POST" && pathname === "/api/chat/stream") {
           const payload = request.postDataJSON() as ChatStreamPayload;
           chatRequests.push(payload);
@@ -1963,6 +2054,16 @@ export const test = base.extend<BrowserFixtures>({
         modelVendorMutations,
         setBootstrap(nextPayload) {
           bootstrap = cloneBootstrap(nextPayload);
+        },
+        setUserMcpConnectionsEnabled(enabled) {
+          bootstrap = {
+            ...bootstrap,
+            mcpExecution: {
+              ...bootstrap.mcpExecution,
+              enabled: enabled || bootstrap.mcpExecution.enabled,
+              userConnectionsEnabled: enabled
+            }
+          };
         },
         setImageAssetUrls(urls) {
           imageAssetUrls = urls?.length ? [...urls] : null;

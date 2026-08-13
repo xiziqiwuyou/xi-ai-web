@@ -97,11 +97,24 @@ import { createMetadataWriteQueue } from "./metadata-write-queue.mjs";
 import { createAdminCredentialStore } from "./admin-credentials.mjs";
 import { createMcpAdminRouter } from "./mcp/routes.mjs";
 import {
+  MCP_ERROR_CODES,
   McpError,
   assertMcpServerCollection,
+  digestMcpToolArguments,
+  normalizeMcpToolArguments,
   normalizeMcpServers
 } from "./mcp/contract.mjs";
+import { callMcpTool, discoverMcpTools } from "./mcp/client.mjs";
 import { assertSafeMcpEndpoint } from "./mcp/security.mjs";
+import { createMcpApprovalStore } from "./mcp/approval.mjs";
+import {
+  mcpApprovalArgumentsPreview,
+  projectMcpProviderTool,
+  publicMcpToolCatalog,
+  selectMcpToolIds
+} from "./mcp/runtime.mjs";
+import { createMcpSessionStore, MCP_SESSION_COOKIE_NAME } from "./mcp/session.mjs";
+import { createMcpConnectionStore } from "./mcp/connection-store.mjs";
 import { createModelUsageStore, trackModelUsageResponse } from "./model-usage.mjs";
 import {
   createImageGenerationTimingStore,
@@ -212,7 +225,7 @@ function normalizeCatalogRequestModelAliases(modelCatalog) {
 
 function createDefaultData() {
   return {
-    version: 14,
+    version: 15,
     settings: defaultSettings(),
     menuItems: defaultMenuItems(),
     modelVendors: defaultModelVendors(),
@@ -223,7 +236,18 @@ function createDefaultData() {
     langflowWorkflows: [],
     toolSettings: normalizeToolSettings(),
     mcpServers: [],
+    mcpExecution: { enabled: false, userConnectionsEnabled: false },
     conversations: []
+  };
+}
+
+function normalizeMcpExecution(value) {
+  const enabled = Boolean(value && typeof value === "object" && value.enabled === true);
+  return {
+    enabled,
+    userConnectionsEnabled: enabled && Boolean(
+      value && typeof value === "object" && value.userConnectionsEnabled === true
+    )
   };
 }
 
@@ -400,6 +424,7 @@ function normalizeData(raw) {
     langflowWorkflows: normalizeLangflowWorkflows(data.langflowWorkflows, fallback.langflowWorkflows),
     toolSettings: normalizeToolsData(data.toolSettings || fallback.toolSettings),
     mcpServers: normalizeMcpServers(data.mcpServers),
+    mcpExecution: normalizeMcpExecution(data.mcpExecution),
     conversations: Array.isArray(data.conversations) ? data.conversations : []
   };
 }
@@ -706,7 +731,29 @@ function loadData() {
 }
 
 let db = loadData();
+const mcpApprovalStore = createMcpApprovalStore();
+const mcpSessionStore = createMcpSessionStore();
+const mcpConnectionStore = createMcpConnectionStore({
+  onRemove: ({ profileId }) => mcpApprovalStore.invalidate({ profileId })
+});
+const maxConcurrentMcpExecutions = Math.max(
+  1,
+  Math.min(16, Math.trunc(Number(process.env.MCP_EXECUTION_MAX_CONCURRENT || 4)) || 4)
+);
+let activeMcpExecutions = 0;
 progressSyncService.updateConfig(db.settings.progressSync);
+
+async function withMcpExecutionSlot(work) {
+  if (activeMcpExecutions >= maxConcurrentMcpExecutions) {
+    throw new McpError(MCP_ERROR_CODES.RATE_LIMITED, "Remote MCP execution is busy", { status: 429 });
+  }
+  activeMcpExecutions += 1;
+  try {
+    return await work();
+  } finally {
+    activeMcpExecutions -= 1;
+  }
+}
 let upstreamState = { state: "ready", reason: null };
 const allowLocalMcpEndpoints = !isProduction
   && String(process.env.MCP_ALLOW_LOCAL_ENDPOINTS || "").toLowerCase() === "true";
@@ -791,6 +838,21 @@ const requestGuards = {
     maxRequests: Number(process.env.MCP_DISCOVERY_IP_RATE_LIMIT_MAX || 24),
     maxConcurrent: Number(process.env.MCP_DISCOVERY_MAX_CONCURRENT || 2)
   }),
+  mcpSession: createRequestGuard({
+    scope: "mcp-session",
+    maxRequests: Number(process.env.MCP_SESSION_RATE_LIMIT_MAX || 60),
+    maxConcurrent: Number(process.env.MCP_SESSION_MAX_CONCURRENT || 8)
+  }),
+  mcpApproval: createRequestGuard({
+    scope: "mcp-approval",
+    maxRequests: Number(process.env.MCP_APPROVAL_RATE_LIMIT_MAX || 120),
+    maxConcurrent: Number(process.env.MCP_APPROVAL_MAX_CONCURRENT || 8)
+  }),
+  mcpConnection: createRequestGuard({
+    scope: "mcp-connection",
+    maxRequests: Number(process.env.MCP_CONNECTION_RATE_LIMIT_MAX || 24),
+    maxConcurrent: Number(process.env.MCP_CONNECTION_MAX_CONCURRENT || 2)
+  }),
   diagnostics: createRequestGuard({
     scope: "diagnostics",
     maxRequests: 60,
@@ -862,6 +924,9 @@ app.use("/api/public/shell-token/exchange", (req, res, next) => {
 });
 app.use("/api/public/shell-token/exchange", requestGuards.shellAuth);
 app.use("/api/admin/mcp-servers/:id/discover", requireAdmin, requestGuards.mcpDiscovery);
+app.use("/api/chat/mcp/session", requestGuards.mcpSession);
+app.use("/api/chat/mcp/approvals", requestGuards.mcpApproval);
+app.use("/api/chat/mcp/connections", requestGuards.mcpConnection);
 
 // Keep large media payloads available while preventing ordinary JSON endpoints
 // from inheriting the 32 MB parser limit.
@@ -876,6 +941,8 @@ app.use("/api/media/video/status", express.json({ limit: "1mb", strict: true }))
 app.use("/api/generate", express.json({ limit: "32mb", strict: true }));
 app.use("/api/public/shell-token/exchange", express.json({ limit: "16kb", strict: true }));
 app.use("/api/admin/mcp-servers", express.json({ limit: "64kb", strict: true }));
+app.use("/api/chat/mcp/approvals", express.json({ limit: "8kb", strict: true }));
+app.use("/api/chat/mcp/connections", express.json({ limit: "16kb", strict: true }));
 app.use(express.json({ limit: "2mb", strict: true }));
 
 function httpError(status, message) {
@@ -1009,6 +1076,147 @@ function setAdminCookie(req, res, token) {
 function clearAdminCookie(res) {
   res.setHeader("Set-Cookie", "cw_admin_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0");
 }
+
+function mcpSessionCookie(req) {
+  return parseCookies(req.headers.cookie || "")[MCP_SESSION_COOKIE_NAME] || "";
+}
+
+function setMcpSessionCookie(req, res, token) {
+  const secure = req.headers["x-forwarded-proto"] === "https" || req.secure;
+  res.setHeader(
+    "Set-Cookie",
+    `${MCP_SESSION_COOKIE_NAME}=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/api/chat; Max-Age=900${
+      secure ? "; Secure" : ""
+    }`
+  );
+}
+
+function noStore(res) {
+  res.setHeader("Cache-Control", "no-store, max-age=0");
+  res.setHeader("Pragma", "no-cache");
+}
+
+function assertEmptyMcpApprovalBody(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).length) {
+    throw new McpError(MCP_ERROR_CODES.APPROVAL_INVALID, "MCP approval payload is invalid", { status: 400 });
+  }
+}
+
+app.get("/api/chat/mcp/session", (req, res) => {
+  noStore(res);
+  assertChatAllowed();
+  if (!db.mcpExecution.enabled) {
+    throw new McpError(MCP_ERROR_CODES.EXECUTION_DISABLED, "Remote MCP execution is disabled", { status: 409 });
+  }
+  const session = mcpSessionStore.issue(mcpSessionCookie(req));
+  if (session.cookieToken) setMcpSessionCookie(req, res, session.cookieToken);
+  res.json({
+    csrfToken: session.csrfToken,
+    expiresAt: session.expiresAt,
+    connections: db.mcpExecution.userConnectionsEnabled
+      ? mcpConnectionStore.list(session.sessionId)
+      : []
+  });
+});
+
+function assertUserMcpConnectionsEnabled() {
+  if (!db.mcpExecution.enabled || !db.mcpExecution.userConnectionsEnabled) {
+    throw new McpError(
+      MCP_ERROR_CODES.USER_CONNECTIONS_DISABLED,
+      "User MCP connections are disabled",
+      { status: 409 }
+    );
+  }
+}
+
+function assertUserMcpConnectionBody(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw new McpError(MCP_ERROR_CODES.PROFILE_INVALID, "MCP connection request is invalid", { status: 400 });
+  }
+  const keys = Object.keys(body);
+  if (keys.some((key) => key !== "endpoint")) {
+    throw new McpError(MCP_ERROR_CODES.PROFILE_INVALID, "MCP connection request contains an unsupported field", { status: 400 });
+  }
+  const endpoint = String(body.endpoint || "").trim();
+  if (!endpoint || endpoint.length > 2_048) {
+    throw new McpError(MCP_ERROR_CODES.ENDPOINT_INVALID, "MCP connection endpoint is invalid", { status: 400 });
+  }
+  return { endpoint };
+}
+
+app.post("/api/chat/mcp/connections", asyncRoute(async (req, res) => {
+  noStore(res);
+  assertChatAllowed();
+  assertUserMcpConnectionsEnabled();
+  const session = mcpSessionStore.verify(mcpSessionCookie(req), req.headers["x-mcp-csrf"]);
+  const input = assertUserMcpConnectionBody(req.body);
+  const target = await assertSafeMcpEndpoint(input.endpoint, {
+    production: isProduction,
+    allowLocal: allowLocalMcpEndpoints,
+    allowInsecureHttp: allowInsecureMcpHttp
+  });
+  const controller = createRequestAbortController(req, res, 12_000);
+  const discovery = await discoverMcpTools({
+    profileId: "user-connection",
+    endpoint: target.url,
+    signal: controller.signal,
+    production: isProduction,
+    allowLocal: allowLocalMcpEndpoints,
+    allowInsecureHttp: allowInsecureMcpHttp
+  });
+  const connection = mcpConnectionStore.create({
+    sessionId: session.sessionId,
+    endpoint: target.url,
+    tools: discovery.tools
+  });
+  res.status(201).json(connection);
+}));
+
+app.delete("/api/chat/mcp/connections/:id", (req, res) => {
+  noStore(res);
+  assertChatAllowed();
+  assertUserMcpConnectionsEnabled();
+  assertEmptyMcpApprovalBody(req.body);
+  const session = mcpSessionStore.verify(mcpSessionCookie(req), req.headers["x-mcp-csrf"]);
+  mcpConnectionStore.disconnect({
+    sessionId: session.sessionId,
+    connectionId: req.params.id
+  });
+  res.status(204).end();
+});
+
+app.post("/api/chat/mcp/approvals/:id/approve", (req, res) => {
+  noStore(res);
+  assertEmptyMcpApprovalBody(req.body);
+  const session = mcpSessionStore.verify(mcpSessionCookie(req), req.headers["x-mcp-csrf"]);
+  const approval = mcpApprovalStore.approve({
+    approvalId: req.params.id,
+    sessionId: session.sessionId
+  });
+  res.json({ status: approval.status });
+});
+
+app.post("/api/chat/mcp/approvals/:id/reject", (req, res) => {
+  noStore(res);
+  assertEmptyMcpApprovalBody(req.body);
+  const session = mcpSessionStore.verify(mcpSessionCookie(req), req.headers["x-mcp-csrf"]);
+  const approval = mcpApprovalStore.reject({
+    approvalId: req.params.id,
+    sessionId: session.sessionId
+  });
+  res.json({ status: approval.status });
+});
+
+app.post("/api/chat/mcp/approvals/:id/cancel", (req, res) => {
+  noStore(res);
+  assertEmptyMcpApprovalBody(req.body);
+  const session = mcpSessionStore.verify(mcpSessionCookie(req), req.headers["x-mcp-csrf"]);
+  const approval = mcpApprovalStore.cancel({
+    approvalId: req.params.id,
+    sessionId: session.sessionId
+  });
+  res.json({ status: approval.status });
+});
 
 function sortedMenuItems(items = db.menuItems) {
   return [...items].sort((a, b) => a.order - b.order);
@@ -1770,6 +1978,7 @@ async function requestChatCompletion({
   tools,
   hostedTools,
   toolContext,
+  mcpRuntime,
   onUsage
 }) {
   const adapter = createProviderAdapter(provider);
@@ -1791,6 +2000,12 @@ async function requestChatCompletion({
       ? async (toolCall) => {
           const trace = toolContext?.trace;
           const startedAt = now();
+          if (mcpRuntime?.executors?.has(toolCall.name)) {
+            if (!enabledToolNames.has(toolCall.name)) {
+              throw new Error(`Tool is not allowed for this request: ${toolCall.name}`);
+            }
+            return mcpRuntime.executors.get(toolCall.name)(toolCall);
+          }
           try {
             if (!enabledToolNames.has(toolCall.name)) {
               throw new Error(`Tool is not allowed for this request: ${toolCall.name}`);
@@ -1895,6 +2110,162 @@ async function requestPromptToolCompletion({
   });
 }
 
+async function resolveMcpChatTools(selectors, signal) {
+  if (!selectors.length) return [];
+  const userTools = selectors
+    .filter((selector) => selector.source === "user")
+    .map((selector) => ({
+      selector,
+      descriptor: selector.descriptor,
+      providerTool: projectMcpProviderTool(selector, selector.descriptor)
+    }));
+  const presetSelectors = selectors.filter((selector) => selector.source !== "user");
+  if (!presetSelectors.length) return userTools;
+  const profileGroups = new Map();
+  for (const selector of presetSelectors) {
+    const group = profileGroups.get(selector.profileId) || { profile: selector.profile, selectors: [] };
+    group.selectors.push(selector);
+    profileGroups.set(selector.profileId, group);
+  }
+  const discoveries = await Promise.all([...profileGroups.values()].map(async ({ profile, selectors: group }) => ({
+    profile,
+    selectors: group,
+    discovery: await discoverMcpTools({
+      profileId: profile.id,
+      endpoint: profile.endpoint,
+      signal,
+      production: isProduction,
+      allowLocal: allowLocalMcpEndpoints,
+      allowInsecureHttp: allowInsecureMcpHttp
+    })
+  })));
+  const presetTools = discoveries.flatMap(({ profile, selectors: group, discovery }) => {
+    const descriptors = new Map(discovery.tools.map((tool) => [tool.name, tool]));
+    return group.map((selector) => {
+      const descriptor = descriptors.get(selector.name);
+      if (!descriptor || !profile.allowedToolNames.includes(descriptor.name)) {
+        throw new McpError(MCP_ERROR_CODES.TOOL_NOT_ALLOWED, "Remote MCP tool is not allowed", { status: 400 });
+      }
+      return {
+        selector,
+        descriptor,
+        providerTool: projectMcpProviderTool(selector, descriptor)
+      };
+    });
+  });
+  return [...presetTools, ...userTools];
+}
+
+function createChatMcpRuntime({
+  tools,
+  sessionId,
+  turnId,
+  signal,
+  downstreamSignal,
+  res
+}) {
+  const executors = new Map();
+  let queue = Promise.resolve();
+  let haltedError = null;
+  let callCount = 0;
+
+  const enqueue = (tool, toolCall) => {
+    const execution = queue.then(async () => {
+      if (haltedError) throw haltedError;
+      callCount += 1;
+      if (callCount > 8) {
+        throw new McpError(MCP_ERROR_CODES.RATE_LIMITED, "Remote MCP call limit reached", { status: 429 });
+      }
+      const argumentsObject = normalizeMcpToolArguments(toolCall.arguments || {});
+      const argumentsDigest = digestMcpToolArguments(argumentsObject);
+      const binding = {
+        sessionId,
+        turnId,
+        profileId: tool.selector.profileId,
+        toolName: tool.selector.name,
+        providerAlias: tool.selector.alias,
+        argumentsDigest
+      };
+      const pending = mcpApprovalStore.create(binding);
+      const cancelPending = () => {
+        try {
+          mcpApprovalStore.cancel({ approvalId: pending.approval.id, sessionId });
+        } catch {}
+      };
+      signal?.addEventListener("abort", cancelPending, { once: true });
+      try {
+        await writeSseEventWithBackpressure(res, "mcp_approval_required", {
+          approval: {
+            id: pending.approval.id,
+            profileLabel: tool.selector.profileLabel,
+            toolLabel: tool.descriptor.label || tool.selector.name,
+            argumentsDigest,
+            argumentsPreview: mcpApprovalArgumentsPreview(argumentsObject),
+            expiresAt: pending.approval.expiresAt
+          }
+        }, {
+          signal: downstreamSignal,
+          timeoutMs: optionalBoundedInteger(process.env.SSE_BACKPRESSURE_TIMEOUT_MS, 500, 30_000)
+            ?? DEFAULT_SSE_BACKPRESSURE_TIMEOUT_MS
+        });
+        await pending.wait;
+      } catch (error) {
+        cancelPending();
+        throw error;
+      } finally {
+        signal?.removeEventListener("abort", cancelPending);
+      }
+
+      let endpoint = "";
+      if (tool.selector.source === "user") {
+        if (!db.mcpExecution.enabled || !db.mcpExecution.userConnectionsEnabled) {
+          throw new McpError(MCP_ERROR_CODES.APPROVAL_INVALIDATED, "MCP approval is no longer valid", { status: 409 });
+        }
+        try {
+          endpoint = mcpConnectionStore.resolveLiveTool({
+            sessionId,
+            connectionId: tool.selector.connectionId,
+            toolName: tool.selector.name,
+            toolId: tool.selector.alias
+          }).endpoint;
+        } catch {
+          throw new McpError(MCP_ERROR_CODES.APPROVAL_INVALIDATED, "MCP approval is no longer valid", { status: 409 });
+        }
+      } else {
+        const liveProfile = db.mcpServers.find((profile) => profile.id === tool.selector.profileId);
+        if (
+          !db.mcpExecution.enabled ||
+          !liveProfile ||
+          !liveProfile.enabled ||
+          !liveProfile.executionEnabled ||
+          !liveProfile.allowedToolNames.includes(tool.selector.name)
+        ) {
+          throw new McpError(MCP_ERROR_CODES.APPROVAL_INVALIDATED, "MCP approval is no longer valid", { status: 409 });
+        }
+        endpoint = liveProfile.endpoint;
+      }
+      return withMcpExecutionSlot(() => callMcpTool({
+        endpoint,
+        toolName: tool.selector.name,
+        arguments: argumentsObject,
+        signal,
+        production: isProduction,
+        allowLocal: allowLocalMcpEndpoints,
+        allowInsecureHttp: allowInsecureMcpHttp
+      }));
+    });
+    queue = execution.catch((error) => {
+      haltedError = error;
+    });
+    return execution;
+  };
+
+  for (const tool of tools) {
+    executors.set(tool.selector.alias, (toolCall) => enqueue(tool, toolCall));
+  }
+  return { executors };
+}
+
 async function streamProviderReply({
   provider,
   assistant,
@@ -1914,6 +2285,7 @@ async function streamProviderReply({
   tools,
   hostedTools,
   toolContext,
+  mcpRuntime,
   signal,
   onToken,
   onUsage
@@ -1962,6 +2334,7 @@ async function streamProviderReply({
       tools,
       hostedTools,
       toolContext,
+      mcpRuntime,
       onUsage
     }));
     if (text) await onToken(text);
@@ -2151,7 +2524,12 @@ function publicBootstrapPayload() {
     langflow: publicLangflowStatus(langflowConfig),
     langflowWorkflows: publicLangflowWorkflows(db.langflowWorkflows),
     conversations: [],
-    toolSettings: publicToolSettings()
+    toolSettings: publicToolSettings(),
+    mcpExecution: {
+      enabled: db.mcpExecution.enabled,
+      userConnectionsEnabled: db.mcpExecution.userConnectionsEnabled,
+      tools: publicMcpToolCatalog(db.mcpServers, db.mcpExecution.enabled)
+    }
   };
 }
 
@@ -2219,11 +2597,51 @@ adminRouter.use(
     },
     save: () => saveData(),
     audit: appendAudit,
+    invalidateApprovals: (profileId) => mcpApprovalStore.invalidate({ profileId }),
     production: isProduction,
     allowLocal: allowLocalMcpEndpoints,
     allowInsecureHttp: allowInsecureMcpHttp
   })
 );
+
+adminRouter.patch("/mcp-execution", (req, res) => {
+  if (
+    !req.body ||
+    typeof req.body !== "object" ||
+    Array.isArray(req.body) ||
+    Object.keys(req.body).some((key) => !["enabled", "userConnectionsEnabled"].includes(key)) ||
+    (req.body.enabled !== undefined && typeof req.body.enabled !== "boolean") ||
+    (req.body.userConnectionsEnabled !== undefined && typeof req.body.userConnectionsEnabled !== "boolean") ||
+    (req.body.enabled === undefined && req.body.userConnectionsEnabled === undefined)
+  ) {
+    throw httpError(400, "MCP execution switch is invalid");
+  }
+  const enabled = req.body.enabled ?? db.mcpExecution.enabled;
+  const requestedUserConnections = req.body.userConnectionsEnabled ?? db.mcpExecution.userConnectionsEnabled;
+  if (req.body.userConnectionsEnabled === true && !enabled) {
+    throw new McpError(
+      MCP_ERROR_CODES.USER_CONNECTIONS_DISABLED,
+      "Global MCP execution must be enabled before user connections",
+      { status: 409 }
+    );
+  }
+  db.mcpExecution = {
+    enabled,
+    userConnectionsEnabled: enabled ? requestedUserConnections : false
+  };
+  if (!db.mcpExecution.enabled || !db.mcpExecution.userConnectionsEnabled) {
+    mcpConnectionStore.clear("policy-disabled");
+  }
+  if (!db.mcpExecution.enabled) {
+    for (const profile of db.mcpServers) mcpApprovalStore.invalidate({ profileId: profile.id });
+  }
+  saveData();
+  appendAudit("mcp-execution-update", {
+    enabled: db.mcpExecution.enabled,
+    userConnectionsEnabled: db.mcpExecution.userConnectionsEnabled
+  });
+  res.json(db.mcpExecution);
+});
 
 adminRouter.get("/bootstrap", (req, res) => {
   res.json({
@@ -2238,7 +2656,8 @@ adminRouter.get("/bootstrap", (req, res) => {
     langflow: publicLangflowStatus(langflowConfig),
     langflowWorkflows: db.langflowWorkflows,
     toolSettings: normalizeToolSettings(db.toolSettings),
-    mcpServers: db.mcpServers
+    mcpServers: db.mcpServers,
+    mcpExecution: db.mcpExecution
   });
 });
 
@@ -2757,8 +3176,10 @@ adminRouter.get("/backups", (req, res) => {
 
 adminRouter.post("/backups/:name/restore", asyncRoute(async (req, res) => {
   const backupPath = safeBackupPath(req.params.name);
+  const liveMcpExecution = db.mcpExecution;
   const restored = normalizeData(JSON.parse(fs.readFileSync(backupPath, "utf8")));
   restored.settings.oneapiSettingsHandoffEnabled = db.settings.oneapiSettingsHandoffEnabled;
+  restored.mcpExecution = liveMcpExecution;
   restored.mcpServers = await validateMcpProfiles(restored.mcpServers);
   try {
     restored.settings.upstreamBaseUrl = await assertManagedUpstreamBaseUrl(restored.settings.upstreamBaseUrl, {
@@ -2958,6 +3379,18 @@ app.post(
           .map((tool) => compact(tool, 140))
           .filter(Boolean)
       : [];
+    if (req.body?.mcpToolIds !== undefined && !Array.isArray(req.body.mcpToolIds)) {
+      throw httpError(400, "mcpToolIds must be an array");
+    }
+    const requestedMcpToolIds = Array.isArray(req.body?.mcpToolIds)
+      ? req.body.mcpToolIds.map((tool) => typeof tool === "string" ? compact(tool, 80) : tool)
+      : [];
+    if (
+      requestedMcpToolIds.length > 16 ||
+      requestedMcpToolIds.some((tool) => typeof tool !== "string" || !tool)
+    ) {
+      throw new McpError(MCP_ERROR_CODES.TOOL_NOT_ALLOWED, "Remote MCP tool selectors are invalid", { status: 400 });
+    }
     const toolContext = { trace: [] };
     const resolvedTools = resolveRequestedTools({
       context: toolContext,
@@ -2972,7 +3405,43 @@ app.post(
         resolvedTools.unavailable.map((tool) => `${tool.name}：${tool.reason}`).join("；")
       );
     }
+    const presetMcpToolIds = requestedMcpToolIds.filter((id) => typeof id === "string" && !id.startsWith("umcp_tool_"));
+    const userMcpToolIds = requestedMcpToolIds.filter((id) => typeof id === "string" && id.startsWith("umcp_tool_"));
+    const mcpSession = requestedMcpToolIds.length
+      ? mcpSessionStore.resolve(mcpSessionCookie(req))
+      : null;
+    if (userMcpToolIds.length && (!db.mcpExecution.enabled || !db.mcpExecution.userConnectionsEnabled)) {
+      throw new McpError(
+        MCP_ERROR_CODES.USER_CONNECTIONS_DISABLED,
+        "User MCP connections are disabled",
+        { status: 409 }
+      );
+    }
+    const presetMcpSelectors = selectMcpToolIds({
+      profiles: db.mcpServers,
+      executionEnabled: db.mcpExecution.enabled,
+      requestedIds: presetMcpToolIds,
+      invocationMode: toolInvocationMode
+    });
+    if (userMcpToolIds.length && toolInvocationMode !== "function") {
+      throw new McpError(
+        MCP_ERROR_CODES.EXECUTION_MODE_UNSUPPORTED,
+        "Remote MCP tools require function invocation mode",
+        { status: 400 }
+      );
+    }
+    const userMcpSelectors = userMcpToolIds.length
+      ? mcpConnectionStore.resolveTools({
+          sessionId: mcpSession.sessionId,
+          requestedIds: userMcpToolIds
+        })
+      : [];
+    const mcpSelectors = [...presetMcpSelectors, ...userMcpSelectors];
+    if (mcpSelectors.length && !entry.capabilities.includes("toolCalling")) {
+      throw httpError(400, "当前模型未启用工具调用能力，无法使用远程 MCP 工具");
+    }
     const controller = createRequestAbortController(req, res);
+    const mcpChatTools = await resolveMcpChatTools(mcpSelectors, controller.signal);
     const cloudKnowledge = await prepareCloudKnowledge(req, displayContent, controller.signal);
     const independentSearchService = resolvedTools.searchTools.length
       ? {
@@ -3044,6 +3513,7 @@ app.post(
       status: "streaming",
       createdAt
     }, cloudKnowledge);
+    const mcpTurnId = crypto.randomUUID();
 
     if (conversation.messages.length === 0 || conversation.title === "新对话") {
       conversation.title = makeTitle(displayContent);
@@ -3058,7 +3528,9 @@ app.post(
       "X-Accel-Buffering": "no"
     });
     res.flushHeaders?.();
-    const deliveryMode = streamOutput && !resolvedTools.localTools.length && !resolvedTools.hostedTools.length
+    const mcpProviderTools = mcpChatTools.map((tool) => tool.providerTool);
+    const functionTools = [...resolvedTools.localTools, ...mcpProviderTools];
+    const deliveryMode = streamOutput && !functionTools.length && !resolvedTools.hostedTools.length
       ? "native-stream"
       : "buffered";
     writeSse(res, "meta", {
@@ -3109,6 +3581,16 @@ app.post(
         tokenBuffer.cancel();
       }
     });
+    const mcpRuntime = mcpSession && mcpChatTools.length
+      ? createChatMcpRuntime({
+          tools: mcpChatTools,
+          sessionId: mcpSession.sessionId,
+          turnId: mcpTurnId,
+          signal: controller.signal,
+          downstreamSignal: downstreamController.signal,
+          res
+        })
+      : undefined;
 
     try {
       trackModelInvocation(res, entry, "chat");
@@ -3128,9 +3610,10 @@ app.post(
         skillInstructions,
         cloudKnowledge,
         searchContext,
-        tools: resolvedTools.localTools,
+        tools: functionTools,
         hostedTools: resolvedTools.hostedTools,
         toolContext,
+        mcpRuntime,
         signal: controller.signal,
         onUsage: (usage) => {
           responseUsage = addTokenUsage(responseUsage, usage);
@@ -3871,6 +4354,7 @@ app.use("/api", (req, res) => {
   res.status(404).json({ error: "API route not found" });
 });
 
+let viteDevServer = null;
 if (isProduction) {
   const distDir = path.join(rootDir, "dist");
   app.use(express.static(distDir, { index: false }));
@@ -3879,7 +4363,7 @@ if (isProduction) {
     res.sendFile(path.join(distDir, "index.html"));
   });
 } else {
-  const vite = await import("vite").then(({ createServer }) =>
+  viteDevServer = await import("vite").then(({ createServer }) =>
     createServer({
       root: rootDir,
       server: {
@@ -3902,11 +4386,11 @@ if (isProduction) {
       appType: "custom"
     })
   );
-  app.use(vite.middlewares);
+  app.use(viteDevServer.middlewares);
   app.use(
     asyncRoute(async (req, res) => {
       const template = fs.readFileSync(path.join(rootDir, "index.html"), "utf8");
-      const html = await vite.transformIndexHtml(req.originalUrl, template);
+      const html = await viteDevServer.transformIndexHtml(req.originalUrl, template);
       res.status(200).set({ "Content-Type": "text/html" }).end(html);
     })
   );
@@ -3954,6 +4438,7 @@ async function shutdown(signal) {
   console.log(`xi-ai-web stopping (${signal})`);
   const forceExit = setTimeout(() => process.exit(1), 10_000);
   forceExit.unref();
+  await viteDevServer?.close().catch((error) => console.error(error));
   httpServer.close(async () => {
     await Promise.all([
       knowledgeRuntime.close().catch((error) => console.error(error)),

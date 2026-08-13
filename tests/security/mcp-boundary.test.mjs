@@ -23,6 +23,16 @@ test("MCP endpoint syntax rejects credentials, query state, unsafe schemes, and 
     () => normalizeMcpEndpoint("https://mcp.example.test/tools?token=secret", { production: true }),
     (error) => error.code === MCP_ERROR_CODES.ENDPOINT_INVALID
   );
+  for (const value of [
+    "https://mcp.example.test/mcp/token/abc",
+    "https://mcp.example.test/mcp/sk-1234567890abcdef123456",
+    "https://mcp.example.test/mcp/eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
+  ]) {
+    assert.throws(
+      () => normalizeMcpEndpoint(value, { production: true }),
+      (error) => error.code === MCP_ERROR_CODES.ENDPOINT_INVALID
+    );
+  }
   assert.throws(
     () => normalizeMcpEndpoint("https://mcp.example.test:9443/tools", { production: true }),
     (error) => error.code === MCP_ERROR_CODES.ENDPOINT_INVALID

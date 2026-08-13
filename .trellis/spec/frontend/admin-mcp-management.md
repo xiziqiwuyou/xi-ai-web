@@ -1,107 +1,104 @@
 # Admin MCP Management Contract
 
-The Admin console exposes MCP only as a private configuration and discovery
-surface. It is not a public menu, tool marketplace, or execution console.
+The Admin console owns remote MCP configuration, discovery, and execution
+allowlists. It is not a public marketplace or a direct remote-tool console.
 
-## 1. Scope / Trigger
+## Scope / Trigger
 
-- Trigger: changes to `AdminMcpSection`, MCP entries in `adminConsoleConfig`,
-  Admin bootstrap normalization, MCP API helpers, or the Admin stylesheet.
-- Scope: responsive CRUD controls and display-only discovery results inside the
-  existing Admin workbench and two-level navigation.
+- Trigger: changes to `AdminMcpSection`, MCP Admin bootstrap/types/API helpers,
+  or MCP Admin styles.
+- Scope: responsive profile CRUD, explicit discovery, the global execution
+  switch, the separate anonymous user-connection switch, profile execution
+  switch, and individual tool allowlists.
 
-## 2. Signatures
+## Contracts
 
-```ts
-type AdminMcpSectionProps = {
-  profiles: McpServerProfile[];
-  selectedProfileId: string | "new";
-  form: { label: string; endpoint: string; enabled: boolean };
-  onSelect(id: string): void;
-  onCreate(): void;
-  onChange(patch: Partial<typeof form>): void;
-  onSubmit(event: FormEvent): void;
-  onDelete(): void;
-  onDiscover(): Promise<McpDiscoveryResult>;
-};
-```
-
-The client API surface is limited to `listMcpServers`, `createMcpServer`,
-`updateMcpServer`, `deleteMcpServer`, and `discoverMcpServer(id)`.
-
-## 3. Contracts
-
-- MCP appears under the existing Admin `AI capabilities` group as one second-
-  level destination. It must not be added to public navigation or Chat tool
-  menus.
-- The form accepts only label, endpoint, and enabled state. The UI must not
-  offer credential, cookie, custom-header, OAuth, or arbitrary URL fields.
-- Discovery is disabled for a new or disabled profile and sends `{}` with the
-  stored profile ID only. Selecting a profile, opening the menu, or editing a
-  field never performs network discovery.
-- Discovery results are explicitly labeled display-only. Render bounded name,
-  label, description, and optional schema; never render an execute/call action
-  or pass results to model state.
-- Profile changes remain in Admin bootstrap state and are persisted through the
-  authenticated Admin API. Endpoint validation and security errors come from
-  the server and must be shown without reflecting secrets or raw upstream
-  text.
+- MCP remains one second-level destination under the existing Admin AI group.
+- The profile form accepts only display label, endpoint, and enabled state. It
+  must not expose credentials, cookies, headers, OAuth, or arbitrary request
+  fields.
+- Discovery happens only after the operator presses Discover. Selecting or
+  editing a profile never causes network access.
+- The anonymous user-connection switch defaults off, remains disabled while
+  global execution is off, and is not mutable through metadata import, backup
+  restore, or public APIs. Turning either policy off clears ephemeral user
+  connections and invalidates their pending approvals.
+- Global execution defaults off. Profile execution and every tool checkbox also
+  default off, and all three gates are required before Chat can see a tool.
+- Saving an allowlist sends only tool names. The server performs fresh
+  discovery and rejects names not currently returned by that profile when
+  enabling execution. Disabling execution or clearing the allowlist remains
+  available during remote outages.
+- Disabling global/profile execution or deleting/changing a profile invalidates
+  pending approvals. The UI must communicate this without exposing arguments
+  or results.
+- Discovery schemas remain untrusted display data. The Admin page never gains a
+  Run button and never calls `/tools/call`.
 - Reuse the Admin workbench geometry: one mounted section, one page scroll
-  owner, stable form actions, visible keyboard focus, and containment at the
-  four standard desktop/mobile viewports.
+  owner, stable action placement, visible keyboard focus, and no horizontal
+  overflow at the four standard viewports.
 
-## 4. Validation & Error Matrix
+## UI State Matrix
 
 | Condition | Required UI behavior |
 | --- | --- |
-| Empty label or endpoint | Block submit with local field feedback |
-| Server rejects endpoint/profile | Keep the draft and show bounded server error |
-| New or disabled profile | Keep Discover disabled |
-| Discovery is running | Disable duplicate action and show progress state |
-| Discovery succeeds | Show protocol, count, truncation state, and display-only rows |
-| Discovery fails | Clear stale result, retain profile draft/selection, and show retryable error |
+| No saved profile | Open the new-profile form; discovery and execution controls are unavailable |
+| Empty label or endpoint | Preserve draft and block submit with clear feedback |
+| New or disabled profile | Disable discovery and profile execution |
+| Discovery running | Disable duplicate discovery and show bounded progress |
+| Discovery succeeds | Show protocol/count and bounded untrusted tool rows |
+| Tool allowlist edited | Keep changes local until the operator presses Save execution permissions |
+| Server rejects stale tool name | Preserve draft, show bounded retryable error, do not enable execution |
+| Global switch turned off | Refresh public bootstrap and state that pending calls were invalidated |
 | Delete requested | Use the shared confirmation flow; never delete silently |
-| Profile disappears after reload | Reset selection to `new` without mounting a public surface |
-| Mobile or 1280px viewport | Keep actions and details reachable without horizontal overflow or clipped sticky controls |
+| Mobile/1280px viewport | Keep switches, checkboxes, and actions reachable without clipping or horizontal overflow |
 
-## 5. Good / Base / Bad Cases
+## Client Surface
 
-- Good: an operator selects a saved profile, explicitly clicks Discover, and
-  sees a bounded untrusted list without a second dialog or execute button.
-- Base: no profiles exist; the section opens in the new-profile form and the
-  rest of the Admin console remains unchanged.
-- Bad: discovery runs on select, the browser submits an endpoint or token,
-  discovery results appear in public bootstrap, or a long schema expands the
-  page beyond the single Admin scroll owner.
+```ts
+api.listMcpServers()
+api.createMcpServer(profile)
+api.updateMcpServer(id, profile)
+api.deleteMcpServer(id)
+api.discoverMcpServer(id)
+api.updateMcpExecution(enabled)
+api.updateMcpServerExecution(id, { executionEnabled, allowedToolNames })
+```
 
-## 6. Tests Required
+The Admin client may send only persisted profile fields and bounded tool names.
+Endpoint safety, discovery freshness, and final authorization remain server
+responsibilities.
 
-- Type and bootstrap tests assert the profile allowlist and legacy empty-array
-  normalization.
-- Admin E2E asserts CRUD, disabled/new action states, explicit discovery,
-  display-only results, safe errors, keyboard focus, and geometry at
-  `1440x900`, `1280x800`, `390x844`, and `375x812`.
-- UI contract and privacy scans must continue to pass; request assertions must
-  prove that no URL, credential, or discovery result enters public bootstrap.
+## Verification
 
-## 7. Wrong vs Correct
+- Bootstrap normalization defaults legacy profiles to execution disabled with
+  an empty allowlist.
+- Server tests prove public bootstrap hides profiles/endpoints/schemas and
+  import/restore cannot alter the live global switch.
+- Admin E2E covers create, discover, global enable, per-tool allow, profile
+  enable, save, no direct tools-call, and geometry at `1440x900`, `1280x800`,
+  `390x844`, and `375x812`.
+- Privacy and UI contract scans must remain green.
+
+## Wrong Vs Correct
 
 ```tsx
-// Wrong: discover while the operator is merely browsing profiles.
+// Wrong: discovery runs while browsing profiles.
 onChange={(event) => {
   select(event.target.value);
   void discover(event.target.value);
 }}
 
-// Correct: selection is local; discovery is an explicit action.
+// Correct: selection is local and discovery is explicit.
 onChange={(event) => select(event.target.value)}
 <button type="button" onClick={() => void discover()}>Discover tools</button>
 ```
 
 ```tsx
-// Wrong: offer an execution affordance for untrusted metadata.
+// Wrong: execute untrusted metadata from Admin.
 <button onClick={() => callRemoteTool(tool.name)}>Run</button>
 
-// Correct: communicate the current release boundary.
-<span>Display only</span>
+// Correct: save a server-revalidated allowlist; Chat still requires per-call approval.
+<input type="checkbox" checked={allowedToolNames.includes(tool.name)} />
+<button onClick={saveExecutionPermissions}>Save execution permissions</button>
 ```

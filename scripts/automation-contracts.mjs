@@ -200,7 +200,14 @@ try {
   assert.equal(migratedLegacyAssistant.enabled, true);
   assert.equal(migratedLegacyAssistant.avatar, "sparkles");
   assert.equal(migratedLegacyAssistant.updatedAt, legacyCreatedAt, "normalization must preserve update timestamps");
-  assert.equal(JSON.parse(fs.readFileSync(path.join(dataDir, "app-data.json"), "utf8")).version, 14);
+  const migratedMetadata = JSON.parse(fs.readFileSync(path.join(dataDir, "app-data.json"), "utf8"));
+  assert.equal(migratedMetadata.version, 15);
+  assert.deepEqual(migratedMetadata.mcpExecution, { enabled: false, userConnectionsEnabled: false });
+  assert.deepEqual(bootstrap.mcpExecution, {
+    enabled: false,
+    userConnectionsEnabled: false,
+    tools: []
+  });
   const migratedOpenAi = bootstrap.modelCatalog.find((model) => model.id === "openai-gpt-4-1-mini");
   const migratedKimi = bootstrap.modelCatalog.find((model) => model.id === "kimi-k3");
   const migratedQwenFlash = bootstrap.modelCatalog.find((model) => model.id === "qwen3-6-flash");

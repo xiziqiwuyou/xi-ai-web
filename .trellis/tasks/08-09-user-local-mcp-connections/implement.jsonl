@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/remote-mcp-foundation.md","reason":"Server MCP transport, approval, persistence and release boundaries"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Managed outbound request and privacy requirements"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Browser-local and session-only state rules"}
+{"file":".trellis/spec/frontend/chat-capability-search.md","reason":"Chat tool state and approval interaction contracts"}

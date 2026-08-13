@@ -25,7 +25,7 @@ function successRequest(calls) {
       return {
         status: 200,
         headers: {},
-        body: { jsonrpc: "2.0", id: body.id, result: { protocolVersion: "2025-06-18" } }
+        body: { jsonrpc: "2.0", id: body.id, result: { protocolVersion: "2025-06-18", capabilities: { tools: {} } } }
       };
     }
     if (body.method === "notifications/initialized") return { status: 202, headers: {}, body: "" };
@@ -97,7 +97,7 @@ test("MCP deletion is rejected while discovery is in flight", async () => {
   const release = new Promise((resolve) => { releaseList = resolve; });
   const requestImpl = async (_target, body) => {
     if (body.method === "initialize") {
-      return { status: 200, headers: {}, body: { jsonrpc: "2.0", id: body.id, result: { protocolVersion: "2025-06-18" } } };
+      return { status: 200, headers: {}, body: { jsonrpc: "2.0", id: body.id, result: { protocolVersion: "2025-06-18", capabilities: { tools: {} } } } };
     }
     if (body.method === "notifications/initialized") return { status: 202, headers: {}, body: "" };
     listStarted();

@@ -163,7 +163,7 @@ assert(
   /id:\s*"deepseek-v4-flash"[\s\S]{0,320}endpointProtocol:\s*"openai-responses"/u.test(modelCatalogPresets),
   "Admin DeepSeek V4 Flash preset must select Responses"
 );
-assert(server.includes("version: 14") && server.includes('entry.model === "gpt-5.4-mini"'), "Current metadata must retain the assistant catalog and title-summary migrations");
+assert(server.includes("version: 15") && server.includes('entry.model === "gpt-5.4-mini"'), "Current metadata must retain the assistant catalog and title-summary migrations");
 assert(
   freshAssistants.length === 30
     && new Set(freshAssistants.map((assistant) => assistant.category)).size === 7

@@ -1,0 +1,34 @@
+{
+  "id": "remote-mcp-tool-execution",
+  "name": "remote-mcp-tool-execution",
+  "title": "Remote MCP tool execution with explicit approval",
+  "description": "Extend the v0.0.12 MCP discovery foundation with a disabled-by-default, server-owned, per-call approval flow for bounded public HTTPS tools.",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": "MCP server transport, Chat approval boundary, Admin allowlist, security and E2E contracts",
+  "package": null,
+  "priority": "P1",
+  "creator": "xiziqiwuyou",
+  "assignee": "xiziqiwuyou",
+  "createdAt": "2026-08-09",
+  "completedAt": null,
+  "branch": "master",
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "08-09-user-local-mcp-connections"
+  ],
+  "parent": "08-08-lobechat-integration-roadmap",
+  "relatedFiles": [
+    "server/mcp/contract.mjs",
+    "server/mcp/client.mjs",
+    "server/mcp/routes.mjs",
+    "src/features/admin/AdminMcpSection.tsx",
+    "src/features/chat/ChatModule.tsx"
+  ],
+  "notes": "P0-P4 implementation and release hardening passed locally on 2026-08-09. v0.0.13 metadata is prepared; execution remains disabled/operator-only because MCP_LIVE_ENDPOINT was not provided. No commit, tag, image build, or remote push is included.",
+  "meta": {}
+}

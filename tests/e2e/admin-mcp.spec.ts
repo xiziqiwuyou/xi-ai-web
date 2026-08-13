@@ -17,7 +17,7 @@ async function openMcpSection(page: Parameters<typeof documentOverflow>[0], proj
   await navigation.getByRole("button", { name: "MCP 服务", exact: true }).click();
 }
 
-test("Admin MCP profiles create and discover tools without exposing an execution control", async ({ page, apiHarness }, testInfo) => {
+test("Admin MCP profiles create, discover, and explicitly allow remote tools", async ({ page, apiHarness }, testInfo) => {
   apiHarness.setAdminStatus({
     authRequired: true,
     authenticated: true,
@@ -34,7 +34,7 @@ test("Admin MCP profiles create and discover tools without exposing an execution
   await openMcpSection(page, testInfo.project.name);
   await expect(page.locator("#admin-section-mcp")).toBeVisible();
   await expect(page.locator(".admin-section:visible")).toHaveCount(1);
-  await expect(page.getByText("仅管理员配置，当前只做能力发现", { exact: true })).toBeVisible();
+  await expect(page.getByText("管理员受控的远程 MCP", { exact: true })).toBeVisible();
 
   await page.getByLabel("服务显示名称", { exact: true }).fill("E2E MCP");
   await page.getByLabel("MCP 服务地址", { exact: true }).fill("https://mcp.example.test/mcp");
@@ -45,6 +45,21 @@ test("Admin MCP profiles create and discover tools without exposing an execution
   await page.getByRole("button", { name: "发现工具", exact: true }).click();
   await expect(page.getByText("Fixture read", { exact: true })).toBeVisible();
   await expect(page.getByText("fixture.read", { exact: true })).toBeVisible();
+  await expect(page.getByText("允许在 AI 对话中请求此工具", { exact: true })).toBeVisible();
+  const globalExecution = page.locator(".admin-mcp-execution-switch input[type=checkbox]").first();
+  await expect(globalExecution).not.toBeChecked();
+  await globalExecution.click();
+  await expect(globalExecution).toBeChecked();
+  const userConnections = page.locator(".admin-mcp-execution-switch input[type=checkbox]").nth(1);
+  await expect(userConnections).toBeEnabled();
+  await userConnections.click();
+  await expect(userConnections).toBeChecked();
+  await page.getByText("允许在 AI 对话中请求此工具", { exact: true }).locator("..")
+    .locator("input[type=checkbox]").check();
+  await page.locator(".admin-mcp-execution-config input[type=checkbox]").check();
+  await page.getByRole("button", { name: "保存执行权限", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("MCP 工具执行权限已保存");
+  expect(apiHarness.requests.some((request) => request.includes("/execution"))).toBe(true);
   expect(discoveryPayload).toEqual({});
   expect(apiHarness.requests.some((request) => request.includes("/tools/call"))).toBe(false);
   expect(apiHarness.requests.some((request) => request.startsWith("POST /api/chat"))).toBe(false);

@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/remote-mcp-foundation.md","reason":"Verify SSRF, approval, persistence and rollback invariants"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Verify provider boundary and test gates"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Verify frontend behavior and accessibility"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Verify no sensitive or server-persistent user state"}

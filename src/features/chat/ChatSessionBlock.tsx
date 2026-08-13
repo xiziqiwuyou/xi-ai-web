@@ -55,6 +55,8 @@ import { activeChatCommand, chatCommandMatches, removeChatCommand } from "./chat
 import { skillCompatibility } from "../automation/toolCompatibility";
 import CloudKnowledgeSelector from "../knowledge-cloud/CloudKnowledgeSelector";
 import KnowledgeCitationList from "../knowledge-cloud/KnowledgeCitationList";
+import UserMcpConnectionsMenu, { type ActiveUserMcpConnection } from "./UserMcpConnectionsMenu";
+import type { ScopedUserMcpProfile, UserMcpProfileScope } from "./userMcpProfiles";
 import { normalizeKnowledgeBaseIds } from "../knowledge-cloud/integrationState";
 import type {
   Assistant,
@@ -63,8 +65,10 @@ import type {
   ChatAttachment,
   Conversation,
   KnowledgeBase,
+  McpApprovalRequest,
   Message,
   ModelCatalogEntry,
+  PublicMcpTool,
   ReasoningEffort,
   SearchProviderKind,
   ToolSetting
@@ -79,9 +83,11 @@ export type SessionUiState = {
   skillIds: string[];
   appId: string;
   searchProvider: SearchProviderKind | "";
+  mcpToolIds: string[];
+  pendingMcpApproval?: McpApprovalRequest;
   knowledgeBaseIds: string[];
   reasoningEffort: ReasoningEffort;
-  requestPhase: "idle" | "searching" | "generating" | "buffering" | "failed" | "cancelled";
+  requestPhase: "idle" | "searching" | "generating" | "buffering" | "awaiting-approval" | "failed" | "cancelled";
   notice: string;
 };
 
@@ -149,6 +155,7 @@ export function defaultSessionUi(collapsed: boolean, knowledgeBaseIds: string[] 
     skillIds: [],
     appId: "",
     searchProvider: "",
+    mcpToolIds: [],
     knowledgeBaseIds: normalizeKnowledgeBaseIds(knowledgeBaseIds),
     reasoningEffort: "default",
     requestPhase: "idle",
@@ -200,6 +207,10 @@ export type ChatSessionBlockProps = {
   models: ModelCatalogEntry[];
   skills: AgentSkillDefinition[];
   tools: ToolSetting[];
+  mcpTools: PublicMcpTool[];
+  userMcpConnectionsEnabled: boolean;
+  userMcpProfiles: ScopedUserMcpProfile[];
+  userMcpConnections: ActiveUserMcpConnection[];
   searchConfigured: boolean;
   knowledgeAuthenticated: boolean;
   knowledgeBases: KnowledgeBase[];
@@ -225,6 +236,12 @@ export type ChatSessionBlockProps = {
   onKnowledgeChange: (knowledgeBaseIds: string[]) => void;
   onReasoningEffortChange: (value: ReasoningEffort) => void;
   onContextMessageCountChange: (value: ChatContextMessageCount) => void;
+  onMcpToolChange: (toolIds: string[]) => void;
+  onAddUserMcpProfile: (input: { label: string; endpoint: string; scope: UserMcpProfileScope }) => Promise<void>;
+  onConnectUserMcpProfile: (profile: ScopedUserMcpProfile) => Promise<void>;
+  onDisconnectUserMcpProfile: (profileId: string) => Promise<void>;
+  onDeleteUserMcpProfile: (profile: ScopedUserMcpProfile) => Promise<void>;
+  onMcpApprovalDecision: (approval: McpApprovalRequest, decision: "approve" | "reject") => void;
   onImageInput: (event: ChangeEvent<HTMLInputElement>) => void;
   onImageInputBlocked: () => void;
   onLongPaste: (text: string) => void;
@@ -245,6 +262,10 @@ export function ChatSessionBlock({
   models,
   skills,
   tools,
+  mcpTools,
+  userMcpConnectionsEnabled,
+  userMcpProfiles,
+  userMcpConnections,
   searchConfigured,
   knowledgeAuthenticated,
   knowledgeBases,
@@ -270,6 +291,12 @@ export function ChatSessionBlock({
   onKnowledgeChange,
   onReasoningEffortChange,
   onContextMessageCountChange,
+  onMcpToolChange,
+  onAddUserMcpProfile,
+  onConnectUserMcpProfile,
+  onDisconnectUserMcpProfile,
+  onDeleteUserMcpProfile,
+  onMcpApprovalDecision,
   onImageInput,
   onImageInputBlocked,
   onLongPaste,
@@ -284,6 +311,8 @@ export function ChatSessionBlock({
   onStop
 }: ChatSessionBlockProps) {
   const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const mcpApprovalRef = useRef<HTMLDivElement | null>(null);
+  const mcpApprovalActionRef = useRef<HTMLButtonElement | null>(null);
   const messageHistoryRef = useRef<HTMLDivElement | null>(null);
   const modelPickerRef = useRef<HTMLDivElement | null>(null);
   const modelTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -309,6 +338,12 @@ export function ChatSessionBlock({
   const [commandActiveIndex, setCommandActiveIndex] = useState(0);
   const [dismissedCommand, setDismissedCommand] = useState("");
   const focusAfterVendorChangeRef = useRef<"list" | "tab">("list");
+
+  useLayoutEffect(() => {
+    if (!ui.pendingMcpApproval) return;
+    mcpApprovalRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    mcpApprovalActionRef.current?.focus({ preventScroll: true });
+  }, [ui.pendingMcpApproval?.id]);
   const vendorModels = useMemo(
     () => models.filter((model) => vendorTabForModel(model) === activeModelVendor),
     [activeModelVendor, models]
@@ -316,6 +351,14 @@ export function ChatSessionBlock({
   const selectedModelInVendor = vendorModels.some((model) => model.id === selectedModel?.id);
   const command = settings.enableCommandMenu ? activeChatCommand(ui.draft) : null;
   const searchTool = tools.find((tool) => tool.name === "web_search");
+  const mcpToolOptions = [
+    { value: "off", label: "MCP 工具关闭", detail: "本轮不允许远程工具调用" },
+    ...mcpTools.map((tool) => ({
+      value: tool.id,
+      label: `${tool.profileLabel} · ${tool.label}`,
+      detail: "每次调用都需要确认"
+    }))
+  ];
   const imageInputEnabled = supportsChatImageInput(selectedModel);
   const incompatibleImageCount = countIncompatibleChatImages(ui.attachments, selectedModel);
   const searchProviderLabel = ui.searchProvider === "glm" ? "智谱 GLM" : "Kimi";
@@ -1069,6 +1112,30 @@ export function ChatSessionBlock({
                     disabled={streaming}
                   />
                 ) : null}
+                {mcpTools.length ? (
+                  <FigmaMenu
+                    className={`figma-mcp-tool-menu${ui.mcpToolIds.length ? " active" : ""}`}
+                    label="远程 MCP 工具"
+                    value={ui.mcpToolIds[0] || "off"}
+                    options={mcpToolOptions}
+                    onChange={(value) => onMcpToolChange(value === "off" ? [] : [value])}
+                    ariaLabel="远程 MCP 工具"
+                    disabled={streaming}
+                    triggerIcon={<Puzzle size={14} aria-hidden="true" />}
+                    triggerText={ui.mcpToolIds.length ? "MCP 工具" : "MCP"}
+                  />
+                ) : null}
+                {userMcpConnectionsEnabled ? (
+                  <UserMcpConnectionsMenu
+                    profiles={userMcpProfiles}
+                    connections={userMcpConnections}
+                    disabled={streaming}
+                    onAddAndConnect={onAddUserMcpProfile}
+                    onConnect={onConnectUserMcpProfile}
+                    onDisconnect={onDisconnectUserMcpProfile}
+                    onDelete={onDeleteUserMcpProfile}
+                  />
+                ) : null}
                 <button
                   type="button"
                   className="figma-image-input-button"
@@ -1207,6 +1274,20 @@ export function ChatSessionBlock({
                       const app = apps.find((item) => item.id === ui.appId);
                       return app ? <span className="app"><LayoutGrid size={12} />/{app.name}<button type="button" onClick={onClearApp} aria-label={`移除应用 ${app.name}`}><X size={11} /></button></span> : null;
                     })() : null}
+                  </div>
+                ) : null}
+                {ui.pendingMcpApproval ? (
+                  <div ref={mcpApprovalRef} className="figma-mcp-approval" role="alert" aria-live="assertive">
+                    <div className="figma-mcp-approval-copy">
+                      <strong>远程工具请求确认</strong>
+                      <span>{ui.pendingMcpApproval.profileLabel} · {ui.pendingMcpApproval.toolLabel}</span>
+                      <code>{ui.pendingMcpApproval.argumentsPreview}</code>
+                      <small>仅确认这一轮调用。安全指纹：{ui.pendingMcpApproval.argumentsDigest.slice(0, 12)}</small>
+                    </div>
+                    <div className="figma-mcp-approval-actions">
+                      <button type="button" className="secondary-action" onClick={() => onMcpApprovalDecision(ui.pendingMcpApproval!, "reject")}>拒绝</button>
+                      <button ref={mcpApprovalActionRef} type="button" className="primary-action" onClick={() => onMcpApprovalDecision(ui.pendingMcpApproval!, "approve")}>确认并执行</button>
+                    </div>
                   </div>
                 ) : null}
                 {ui.notice ? <p className="figma-session-notice" role="alert">{ui.notice}</p> : null}

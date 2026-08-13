@@ -45,6 +45,20 @@ function createRateLimiter({ windowMs, maxRequests, now = () => Date.now() }) {
   };
 }
 
+function assertBodyKeys(body, allowedKeys) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw new McpError(MCP_ERROR_CODES.PROFILE_INVALID, "MCP profile request is invalid", { status: 400 });
+  }
+  for (const key of Object.keys(body)) {
+    if (!allowedKeys.has(key)) {
+      throw new McpError(MCP_ERROR_CODES.PROFILE_INVALID, "MCP profile contains an unsupported field", { status: 400 });
+    }
+  }
+}
+
+const profileMutationKeys = new Set(["label", "endpoint", "enabled"]);
+const executionMutationKeys = new Set(["executionEnabled", "allowedToolNames"]);
+
 export function createMcpAdminRouter({
   getProfiles,
   setProfiles,
@@ -55,6 +69,7 @@ export function createMcpAdminRouter({
   allowInsecureHttp = false,
   lookup,
   requestImpl,
+  invalidateApprovals = () => {},
   now = () => new Date().toISOString(),
   rateLimitWindowMs = positiveInt(process.env.MCP_DISCOVERY_RATE_LIMIT_WINDOW_MS, 60_000, 3_600_000),
   rateLimitMaxRequests = positiveInt(process.env.MCP_DISCOVERY_RATE_LIMIT_MAX, 12, 120)
@@ -95,6 +110,7 @@ export function createMcpAdminRouter({
   });
 
   router.post("/", asyncRoute(async (req, res) => {
+    assertBodyKeys(req.body || {}, profileMutationKeys);
     let profile = normalizeMcpServerProfile(req.body || {}, {
       now,
       touch: true,
@@ -110,6 +126,7 @@ export function createMcpAdminRouter({
   }));
 
   router.patch("/:id", asyncRoute(async (req, res) => {
+    assertBodyKeys(req.body || {}, profileMutationKeys);
     const profiles = currentProfiles();
     const index = profiles.findIndex((item) => item.id === req.params.id);
     if (index === -1) {
@@ -124,6 +141,7 @@ export function createMcpAdminRouter({
     profile = await validateEndpoint(profile);
     profiles[index] = profile;
     const next = commitProfiles(profiles, "mcp-profile-update", { id: profile.id, enabled: profile.enabled });
+    invalidateApprovals(profile.id);
     res.json(next[index]);
   }));
 
@@ -138,8 +156,68 @@ export function createMcpAdminRouter({
     }
     const [removed] = profiles.splice(index, 1);
     commitProfiles(profiles, "mcp-profile-delete", { id: removed.id });
+    invalidateApprovals(removed.id);
     res.status(204).end();
   });
+
+  router.put("/:id/execution", asyncRoute(async (req, res) => {
+    assertBodyKeys(req.body || {}, executionMutationKeys);
+    const profiles = currentProfiles();
+    const index = profiles.findIndex((item) => item.id === req.params.id);
+    if (index === -1) {
+      throw new McpError(MCP_ERROR_CODES.PROFILE_NOT_FOUND, "MCP profile was not found", { status: 404 });
+    }
+    const current = profiles[index];
+    if (req.body?.executionEnabled === true && !current.enabled) {
+      throw new McpError(MCP_ERROR_CODES.PROFILE_DISABLED, "MCP profile is disabled", { status: 409 });
+    }
+    if (typeof req.body?.executionEnabled !== "boolean" || !Array.isArray(req.body?.allowedToolNames)) {
+      throw new McpError(MCP_ERROR_CODES.PROFILE_INVALID, "MCP execution allowlist is invalid", { status: 400 });
+    }
+    const profile = normalizeMcpServerProfile({
+      executionEnabled: req.body.executionEnabled,
+      allowedToolNames: req.body.allowedToolNames
+    }, {
+      existing: current,
+      now,
+      touch: true,
+      allowTimestamps: false
+    });
+    const requestedNames = profile.allowedToolNames;
+    if (!profile.executionEnabled) {
+      profiles[index] = profile;
+      const next = commitProfiles(profiles, "mcp-profile-execution-update", {
+        id: profile.id,
+        enabled: false,
+        toolCount: profile.allowedToolNames.length
+      });
+      invalidateApprovals(profile.id);
+      res.json(next[index]);
+      return;
+    }
+    const discovery = await discoverMcpTools({
+      profileId: current.id,
+      endpoint: current.endpoint,
+      production,
+      allowLocal,
+      allowInsecureHttp,
+      lookup,
+      requestImpl,
+      now
+    });
+    const discoveredNames = new Set(discovery.tools.map((tool) => tool.name));
+    if (requestedNames.some((name) => !discoveredNames.has(name))) {
+      throw new McpError(MCP_ERROR_CODES.TOOL_NOT_ALLOWED, "MCP allowlist contains an unavailable tool", { status: 400 });
+    }
+    profiles[index] = profile;
+    const next = commitProfiles(profiles, "mcp-profile-execution-update", {
+      id: profile.id,
+      enabled: profile.executionEnabled,
+      toolCount: profile.allowedToolNames.length
+    });
+    invalidateApprovals(profile.id);
+    res.json(next[index]);
+  }));
 
   router.post("/:id/tools/call", (_req, _res, next) => {
     try {

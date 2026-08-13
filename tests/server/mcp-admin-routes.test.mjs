@@ -142,6 +142,16 @@ test("MCP Admin profiles stay private, discover only by ID, and round-trip metad
   const runtime = await startApp(dataDir, "http://127.0.0.1:9");
   t.after(() => stopApp(runtime.child));
 
+  const unauthenticated = await fetch(`${runtime.baseUrl}/api/admin/mcp-execution`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ enabled: true })
+  });
+  assert.equal(unauthenticated.status, 401);
+  const disabledSession = await fetch(`${runtime.baseUrl}/api/chat/mcp/session`);
+  assert.equal(disabledSession.status, 409);
+  assert.equal(disabledSession.headers.get("set-cookie"), null);
+
   let result = await api(runtime, "/api/admin/mcp-servers", {
     method: "POST",
     body: JSON.stringify({ label: "Fixture MCP", endpoint: mcp.endpoint, enabled: true })
@@ -150,6 +160,8 @@ test("MCP Admin profiles stay private, discover only by ID, and round-trip metad
   const profile = result.body;
   assert.equal(profile.label, "Fixture MCP");
   assert.equal(profile.endpoint, mcp.endpoint);
+  assert.equal(profile.executionEnabled, false);
+  assert.deepEqual(profile.allowedToolNames, []);
 
   const beforeDiscovery = mcp.calls.length;
   result = await api(runtime, `/api/admin/mcp-servers/${encodeURIComponent(profile.id)}/discover`, {
@@ -166,16 +178,57 @@ test("MCP Admin profiles stay private, discover only by ID, and round-trip metad
   assert.equal(result.body.discovery.tools[0].name, "fixture.read");
   assert.equal(mcp.calls.length - beforeDiscovery, 3);
 
+  result = await api(runtime, "/api/admin/mcp-execution", {
+    method: "PATCH",
+    body: JSON.stringify({ enabled: true })
+  });
+  assert.equal(result.response.status, 200);
+  assert.equal(result.body.enabled, true);
+  result = await api(runtime, `/api/admin/mcp-servers/${encodeURIComponent(profile.id)}/execution`, {
+    method: "PUT",
+    body: JSON.stringify({ executionEnabled: true, allowedToolNames: ["fixture.read"] })
+  });
+  assert.equal(result.response.status, 200);
+  assert.equal(result.body.executionEnabled, true);
+  assert.deepEqual(result.body.allowedToolNames, ["fixture.read"]);
+
+  const callsBeforeDisable = mcp.calls.length;
+  result = await api(runtime, `/api/admin/mcp-servers/${encodeURIComponent(profile.id)}/execution`, {
+    method: "PUT",
+    body: JSON.stringify({ executionEnabled: false, allowedToolNames: ["fixture.read"] })
+  });
+  assert.equal(result.response.status, 200);
+  assert.equal(result.body.executionEnabled, false);
+  assert.equal(mcp.calls.length, callsBeforeDisable);
+  result = await api(runtime, `/api/admin/mcp-servers/${encodeURIComponent(profile.id)}/execution`, {
+    method: "PUT",
+    body: JSON.stringify({ executionEnabled: true, allowedToolNames: ["fixture.read"] })
+  });
+  assert.equal(result.response.status, 200);
+  assert.equal(mcp.calls.length, callsBeforeDisable + 3);
+
   result = await api(runtime, "/api/public/bootstrap");
   assert.equal(result.response.status, 200);
   assert.equal(Object.hasOwn(result.body, "mcpServers"), false);
   assert.equal(JSON.stringify(result.body).includes(mcp.endpoint), false);
+  assert.equal(result.body.mcpExecution.enabled, true);
+  assert.deepEqual(result.body.mcpExecution.tools.map((tool) => tool.name), ["fixture.read"]);
+  assert.equal(Object.hasOwn(result.body.mcpExecution.tools[0], "inputSchema"), false);
 
   result = await api(runtime, "/api/admin/metadata-export");
   assert.equal(result.response.status, 200);
   assert.equal(result.body.mcpServers.length, 1);
+  assert.equal(Object.hasOwn(result.body, "mcpExecution"), false);
+  const exportedMetadata = structuredClone(result.body);
 
-  const unsafeImport = structuredClone(result.body);
+  const forbiddenExecutionImport = { ...structuredClone(exportedMetadata), mcpExecution: { enabled: false } };
+  result = await api(runtime, "/api/admin/metadata-import", {
+    method: "PATCH",
+    body: JSON.stringify(forbiddenExecutionImport)
+  });
+  assert.equal(result.response.status, 400);
+
+  const unsafeImport = structuredClone(exportedMetadata);
   unsafeImport.mcpServers[0].apiKey = "secret";
   result = await api(runtime, "/api/admin/metadata-import", {
     method: "PATCH",
