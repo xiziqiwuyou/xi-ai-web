@@ -38,4 +38,3 @@
 Pin `ghcr.io/xiziqiwuyou/xi-ai-web:v0.0.12` and restart Compose. MCP-only
 rollback requires disabling the user-connections switch and then global MCP
 execution; no migration is required.
-

@@ -35,4 +35,3 @@ release without changing the operator-only MCP enablement boundary.
 - Real Provider API calls.
 - Enabling remote MCP execution for public users.
 - Multi-instance approval/session coordination.
-
