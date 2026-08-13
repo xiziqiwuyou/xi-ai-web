@@ -21,10 +21,10 @@ bookkeeping, without adding runtime behavior.
 
 - [x] All version surfaces agree on `0.0.14`.
 - [x] Full QA and diff hygiene pass.
-- [ ] `master` and annotated `v0.0.14` are pushed.
-- [ ] Branch and tag container workflows complete successfully.
-- [ ] GHCR publishes `v0.0.14`, the full SHA tag, and `latest`.
-- [ ] Release notes distinguish publication from production deployment.
+- [x] `master` and annotated `v0.0.14` are pushed.
+- [x] Branch and tag container workflows complete successfully.
+- [x] GHCR publishes `v0.0.14`, the full SHA tag, and `latest`.
+- [x] Release notes distinguish publication from production deployment.
 
 ## Out Of Scope
 
