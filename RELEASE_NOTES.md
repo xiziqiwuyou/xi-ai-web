@@ -1,3 +1,45 @@
+# xi-ai-web v0.0.14
+
+## Release status
+
+This maintenance release republishes the verified v0.0.13 remote MCP runtime
+with the completed release and Trellis bookkeeping now present on `master`.
+There are no additional product or protocol changes after v0.0.13.
+
+## Included
+
+- All v0.0.13 functionality: disabled-by-default remote MCP execution,
+  explicit per-call approval, browser-local user MCP profiles, short-lived
+  process-local grants, isolated browser verification, and bounded no-auth
+  public HTTPS transport.
+- Completed v0.0.13 release evidence and task archives are included in the
+  source history so a fresh checkout has the same project state as `master`.
+- Package metadata, README, and both Compose templates are pinned to
+  `v0.0.14` for direct server upgrades.
+
+## Operating classification
+
+- Remote MCP execution and user-added MCP services remain disabled by default.
+- Real MCP enablement still requires an operator-approved public HTTPS no-auth
+  discovery and harmless `tools/call` smoke.
+- Publishing this image does not claim that `chat.xi-api.cn` has already been
+  upgraded; verify `/api/health` after the server pull and restart.
+
+## Upgrade
+
+```bash
+docker compose pull
+docker compose up -d
+docker compose ps
+```
+
+## Rollback
+
+Pin `ghcr.io/xiziqiwuyou/xi-ai-web:v0.0.13` and restart Compose. No data
+migration is introduced by this maintenance release.
+
+---
+
 # xi-ai-web v0.0.13
 
 ## Release status
