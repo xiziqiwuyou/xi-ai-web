@@ -1,10 +1,6 @@
 import { defineConfig } from "@playwright/test";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 
-const port = Number(process.env.PLAYWRIGHT_PORT || 4174);
-const externalBaseUrl = process.env.PLAYWRIGHT_BASE_URL;
-const baseURL = externalBaseUrl || `http://127.0.0.1:${port}`;
+const baseURL = process.env.PLAYWRIGHT_BASE_URL || "http://127.0.0.1:4174";
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -29,20 +25,6 @@ export default defineConfig({
     trace: "retain-on-failure",
     video: "off"
   },
-  webServer: externalBaseUrl
-    ? undefined
-    : {
-        command: "npm run dev",
-        url: `${baseURL}/api/health`,
-        timeout: 120_000,
-        reuseExistingServer: false,
-        env: {
-          PORT: String(port),
-          DATA_DIR: join(tmpdir(), "xi-ai-web-playwright"),
-          ADMIN_PASSWORD: "playwright-admin",
-          NODE_ENV: "test"
-        }
-      },
   projects: [
     {
       name: "desktop-1440",

@@ -5,7 +5,26 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const requestedBaseUrl = process.env.UI_RUNTIME_URL || process.env.SMOKE_URL || "http://localhost:8787";
+async function reserveLoopbackPort() {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.unref();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        server.close();
+        reject(new Error("Unable to allocate an isolated UI runtime port."));
+        return;
+      }
+      server.close((error) => error ? reject(error) : resolve(address.port));
+    });
+  });
+}
+
+const configuredBaseUrl = process.env.UI_RUNTIME_URL || process.env.SMOKE_URL || "";
+const requestedBaseUrl = configuredBaseUrl || `http://127.0.0.1:${await reserveLoopbackPort()}`;
+const mayReuseExistingServer = Boolean(configuredBaseUrl);
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const baseUrlObject = new URL(requestedBaseUrl);
 const baseUrl = `${baseUrlObject.origin}${baseUrlObject.pathname === "/" ? "" : baseUrlObject.pathname}`;
@@ -61,11 +80,13 @@ async function isPortOpen(host, port) {
 
 async function ensureAppServer() {
   const healthUrl = `${baseUrl}/api/health`;
-  try {
-    await waitForEndpoint(healthUrl, 1200, "Local app server");
-    return { async close() {} };
-  } catch {
-    // Start a disposable app server when the requested local port is free.
+  if (mayReuseExistingServer) {
+    try {
+      await waitForEndpoint(healthUrl, 1200, "Configured app server");
+      return { async close() {} };
+    } catch {
+      // A configured local URL may still be started below when its port is free.
+    }
   }
 
   if (baseUrlObject.hostname !== "localhost" && baseUrlObject.hostname !== "127.0.0.1") {
@@ -78,7 +99,12 @@ async function ensureAppServer() {
   const runtimeDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "xi-ai-web-ui-runtime-"));
   const child = spawn("node", ["server/index.mjs"], {
     cwd: rootDir,
-    env: { ...process.env, PORT: String(appPort), DATA_DIR: runtimeDataDir },
+    env: {
+      ...process.env,
+      NODE_ENV: "test",
+      PORT: String(appPort),
+      DATA_DIR: runtimeDataDir
+    },
     stdio: "pipe"
   });
   let output = "";
