@@ -52,6 +52,15 @@ x-app-environment: &app-environment
   SHELL_AUTH_MAX_CONCURRENT: ${SHELL_AUTH_MAX_CONCURRENT:-2}
   ADMIN_LOGIN_RATE_LIMIT_MAX: ${ADMIN_LOGIN_RATE_LIMIT_MAX:-5}
   ADMIN_LOGIN_MAX_CONCURRENT: ${ADMIN_LOGIN_MAX_CONCURRENT:-2}
+  MCP_EXECUTION_MAX_CONCURRENT: ${MCP_EXECUTION_MAX_CONCURRENT:-4}
+  MCP_DISCOVERY_IP_RATE_LIMIT_MAX: ${MCP_DISCOVERY_IP_RATE_LIMIT_MAX:-24}
+  MCP_DISCOVERY_MAX_CONCURRENT: ${MCP_DISCOVERY_MAX_CONCURRENT:-2}
+  MCP_SESSION_RATE_LIMIT_MAX: ${MCP_SESSION_RATE_LIMIT_MAX:-60}
+  MCP_SESSION_MAX_CONCURRENT: ${MCP_SESSION_MAX_CONCURRENT:-8}
+  MCP_APPROVAL_RATE_LIMIT_MAX: ${MCP_APPROVAL_RATE_LIMIT_MAX:-120}
+  MCP_APPROVAL_MAX_CONCURRENT: ${MCP_APPROVAL_MAX_CONCURRENT:-8}
+  MCP_CONNECTION_RATE_LIMIT_MAX: ${MCP_CONNECTION_RATE_LIMIT_MAX:-24}
+  MCP_CONNECTION_MAX_CONCURRENT: ${MCP_CONNECTION_MAX_CONCURRENT:-2}
   PROGRESS_SYNC_ENABLED: ${PROGRESS_SYNC_ENABLED:-false}
   PROGRESS_SYNC_TTL_SECONDS: ${PROGRESS_SYNC_TTL_SECONDS:-600}
   PROGRESS_SYNC_MAX_PAYLOAD_MB: ${PROGRESS_SYNC_MAX_PAYLOAD_MB:-32}
@@ -90,7 +99,7 @@ x-app-environment: &app-environment
 
 services:
   xi-ai-web:
-    image: ghcr.io/xiziqiwuyou/xi-ai-web:v0.0.12
+    image: ghcr.io/xiziqiwuyou/xi-ai-web:v0.0.13
     pull_policy: always
     <<: *app-security
     restart: unless-stopped
@@ -138,7 +147,7 @@ services:
       retries: 20
 
   migrate:
-    image: ghcr.io/xiziqiwuyou/xi-ai-web:v0.0.12
+    image: ghcr.io/xiziqiwuyou/xi-ai-web:v0.0.13
     pull_policy: always
     profiles:
       - knowledge
@@ -159,7 +168,7 @@ services:
       - xi-ai
 
   knowledge-worker:
-    image: ghcr.io/xiziqiwuyou/xi-ai-web:v0.0.12
+    image: ghcr.io/xiziqiwuyou/xi-ai-web:v0.0.13
     pull_policy: always
     profiles:
       - knowledge

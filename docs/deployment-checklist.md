@@ -11,6 +11,9 @@ This checklist covers the no-account BYOK deployment path for xi-ai-web. It inte
 - Keep `LANGFLOW_ENABLED=false` until the separate Langflow runtime has been secured and a published Flow has been tested.
 - Keep `PROGRESS_SYNC_ENABLED=false` until HTTPS, the persistent `DATA_DIR` volume,
   and a reverse-proxy request limit of at least 68 MB have been verified.
+- Keep both Admin MCP execution switches off until a public HTTPS, no-auth MCP
+  endpoint passes the operator smoke gate. MCP state is process-local, so the
+  current release supports one application instance while MCP is enabled.
 - Generate a unique `ADMIN_PASSWORD` of at least 8 characters. The bundled
   deployment derives a domain-separated session-signing secret from it; an
   explicit `ADMIN_SESSION_SECRET` remains an optional advanced override.
@@ -35,8 +38,13 @@ npm run provider-contracts
 npm run chat-local-contracts
 npm run workspace-storage-contracts
 npm run automation-contracts
+npm run user-mcp-storage-contracts
 npm run search-contracts
+npm run test:frontend
 npm run test:langflow
+npm run test:security
+npm run test:server
+npm run test:e2e:mcp
 npm run release-check
 ```
 
@@ -140,6 +148,9 @@ In `/xizi2333`:
   HTTPS; keep the code lifetime within 180-1800 seconds and ciphertext within
   5-64 MB. The default is 600 seconds and 32 MB.
 - Export Admin metadata after setup and store the file outside the application container.
+- Leave global MCP execution and user-added MCP services disabled during initial
+  setup. Saving or discovering a profile never authorizes execution; the global
+  switch, profile switch, and exact tool allowlist must all be enabled.
 
 ## 6. Public BYOK Flow
 
@@ -185,7 +196,29 @@ When the separate Langflow service is enabled:
 - confirm the public bootstrap does not contain `flowId` or the Langflow API key;
 - confirm a disabled mapping returns to the local workflow fallback and is not callable through the gateway.
 
-## 9. Data And Secret Review
+## 9. Optional Remote MCP Gate
+
+Do not enable remote MCP execution until all of these checks pass:
+
+- The endpoint is public HTTPS and requires no OAuth, bearer token, custom
+  header, cookie, stdio, WebSocket, or SSE-only transport.
+- `MCP_LIVE_ENDPOINT=https://... npm run smoke:mcp-live` discovers at least one
+  bounded tool without printing endpoint paths, schemas, arguments, or results.
+- When a harmless tool exists, set `MCP_LIVE_CALL_TOOL` and
+  `MCP_LIVE_CALL_ARGUMENTS_JSON` and confirm the optional exactly-one-call smoke.
+- `npm run test:e2e:mcp` passes Admin, approval, and user-connection checks at
+  all four standard desktop/mobile viewports.
+- The deployment runs one xi-ai-web application instance. Process-local MCP
+  sessions, approvals, and connections are intentionally not shared.
+- Operators treat remote output as untrusted external context; every invocation
+  still requires explicit user approval.
+
+Rollback requires no migration: turn off user-added MCP services to clear
+anonymous connections, then turn off global MCP execution to invalidate all
+pending approvals. Admin discovery profiles may remain saved while execution
+is disabled.
+
+## 10. Data And Secret Review
 
 - Admin metadata export must not contain public BYOK API Keys.
 - Workspace export must not contain public BYOK API Keys.
@@ -196,7 +229,7 @@ When the separate Langflow service is enabled:
   API Keys; expired/claimed/cancelled sessions are cleaned automatically.
 - Browser-private conversations, gallery items, agents, Skills, and workflows remain in IndexedDB.
 
-## 10. Backup And Rollback
+## 11. Backup And Rollback
 
 For the main no-account workspace:
 
@@ -216,7 +249,7 @@ Rollback shape:
 Active temporary synchronization codes are intentionally invalidated by a
 service restart. Users must create a new code after deploy or rollback.
 
-## 11. Optional Cloud Knowledge Gate
+## 12. Optional Cloud Knowledge Gate
 
 Do not enable cloud knowledge until all of these are ready:
 

@@ -1,6 +1,6 @@
 {
   "name": "xi-ai-web",
-  "version": "0.0.12",
+  "version": "0.0.13",
   "private": true,
   "type": "module",
   "engines": {
@@ -15,6 +15,7 @@
     "clean:cache": "node scripts/clean-cache.mjs",
     "smoke": "node scripts/smoke.mjs",
     "smoke:live": "node scripts/live-provider-smoke.mjs",
+    "smoke:mcp-live": "node scripts/mcp-live-smoke.mjs",
     "release-check": "npm run build && node scripts/release-check.mjs",
     "ui-contract": "node scripts/ui-contract.mjs",
     "ui-runtime": "node scripts/ui-runtime.mjs",
@@ -23,6 +24,7 @@
     "chat-local-contracts": "node scripts/chat-local-contracts.mjs",
     "workspace-storage-contracts": "node scripts/workspace-storage-contracts.mjs",
     "automation-contracts": "node scripts/automation-contracts.mjs",
+    "user-mcp-storage-contracts": "node scripts/user-mcp-storage-contracts.mjs",
     "search-contracts": "node scripts/search-contracts.mjs",
     "prompt-tool-contracts": "node scripts/prompt-tool-contracts.mjs",
     "knowledge:migrate": "node server/knowledge-cloud/migrate.mjs",
@@ -31,12 +33,14 @@
     "test:langflow": "node --test tests/langflow/*.test.mjs",
     "test:knowledge": "node --test tests/knowledge-cloud/*.test.mjs",
     "test:security": "node --test tests/security/*.test.mjs",
-    "test:server": "node --test tests/server/*.test.mjs",
+    "test:server": "node --test --test-concurrency=1 tests/server/*.test.mjs",
+    "test:frontend": "node --test tests/frontend/*.test.mjs",
     "test:knowledge:db": "node --test tests/knowledge-cloud/postgres.integration.mjs",
-    "test:e2e": "playwright test",
+    "test:e2e": "node scripts/run-e2e.mjs",
+    "test:e2e:mcp": "node scripts/run-e2e.mjs tests/e2e/admin-mcp.spec.ts tests/e2e/chat-mcp-approval.spec.ts tests/e2e/user-mcp-connections.spec.ts --workers=1",
     "test:e2e:install": "playwright install chromium",
     "privacy": "node scripts/privacy-scan.mjs",
-    "qa": "npm run check && npm run build && npm run privacy && npm run ui-contract && npm run feature-audit && npm run provider-contracts && npm run prompt-tool-contracts && npm run chat-local-contracts && npm run workspace-storage-contracts && npm run automation-contracts && npm run search-contracts && npm run test:langflow && npm run test:knowledge && npm run test:security && npm run test:server && npm run test:knowledge:db && npm run ui-runtime && npm run release-check"
+    "qa": "npm run check && npm run build && npm run privacy && npm run ui-contract && npm run feature-audit && npm run provider-contracts && npm run prompt-tool-contracts && npm run chat-local-contracts && npm run workspace-storage-contracts && npm run automation-contracts && npm run user-mcp-storage-contracts && npm run search-contracts && npm run test:frontend && npm run test:langflow && npm run test:knowledge && npm run test:security && npm run test:server && npm run test:knowledge:db && npm run ui-runtime && npm run release-check"
   },
   "dependencies": {
     "@xyflow/react": "^12.11.2",

@@ -1,3 +1,72 @@
+# xi-ai-web v0.0.13
+
+## Release status
+
+This release candidate extends the v0.0.12 MCP discovery foundation with
+disabled-by-default remote tool execution, explicit per-call approval, and
+browser-local user MCP profiles backed by short-lived server grants. It also
+stabilizes the Windows test lifecycle used to validate these flows.
+
+## Included
+
+- Administrators can enable remote MCP execution independently from discovery,
+  enable individual profiles, and allow exact discovered tool names. Every new
+  execution permission remains off by default.
+- Chat exposes only opaque allowed tool selectors and pauses each remote call
+  for explicit inline approval. Confirm, reject, cancel, expiry, disconnect,
+  policy disable, and replay retain deterministic zero/one-call behavior.
+- Anonymous users may add public HTTPS no-auth MCP endpoints when the separate
+  Admin policy is enabled. Labels and endpoints remain browser-local; the
+  server retains only bounded, session-bound, 15-minute process-memory grants.
+- OAuth, bearer tokens, custom headers, cookies, stdio, WebSocket, SSE-only
+  transport, private-network targets, and multi-instance MCP session sharing
+  remain out of scope.
+- Runtime UI checks now use isolated ports/data by default. The E2E runner
+  builds current source, starts an ephemeral production server, and reliably
+  cleans up on Windows instead of reusing a configured local instance.
+- User MCP storage sanitizers and limits have deterministic Node tests, and a
+  Langflow timestamp race no longer makes the complete quality gate flaky.
+- Compose templates and runtime metadata are prepared for `v0.0.13`.
+
+## Operating classification
+
+- Ready for local and operator evaluation: Admin MCP allowlists, inline Chat
+  approval, browser-local personal profiles, and ephemeral user connections.
+- Disabled by default: global MCP execution and user-added MCP services.
+- Production enablement still requires a real public HTTPS MCP discovery/call
+  smoke against an operator-approved harmless tool. This workstation run had
+  no `MCP_LIVE_ENDPOINT`, so that check was explicitly skipped.
+
+## Verification
+
+- The complete `npm run qa` gate passed after the version candidate changes.
+- 131 server tests, 153 knowledge tests, 14 security tests, 17 Langflow tests,
+  two frontend storage tests, provider/privacy/UI contracts, production build,
+  isolated UI runtime, and release-check passed locally.
+- Admin MCP, inline approval, and user-connection Playwright coverage passed
+  twice across `1440x900`, `1280x800`, `390x844`, and `375x812` (12 tests).
+- No real MCP endpoint, Provider Key, GHCR image, local Docker build,
+  production reverse proxy, PostgreSQL/COS, or physical device is claimed.
+
+## Upgrade
+
+After the immutable image has been published, pull and restart:
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+Keep MCP execution disabled until the operator smoke in `README.md` succeeds.
+
+## Rollback
+
+For MCP-only rollback, disable user-added services and then global MCP
+execution; no migration is required. For a full application rollback, pin
+`ghcr.io/xiziqiwuyou/xi-ai-web:v0.0.12` and restart Compose.
+
+---
+
 # xi-ai-web v0.0.12
 
 ## Release status

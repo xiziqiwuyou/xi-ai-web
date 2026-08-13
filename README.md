@@ -106,7 +106,7 @@ docker run -d \
   xi-ai-web
 ```
 
-The unified deployment template is available at [`docker-compose.yml`](docker-compose.yml), with a complete environment sample in [`.env.example`](.env.example). It pulls the pinned prebuilt `ghcr.io/xiziqiwuyou/xi-ai-web:v0.0.12` image and keeps optional services behind Compose profiles. The server does not need a source checkout or a local image build:
+The unified deployment template is available at [`docker-compose.yml`](docker-compose.yml), with a complete environment sample in [`.env.example`](.env.example). It pulls the pinned prebuilt `ghcr.io/xiziqiwuyou/xi-ai-web:v0.0.13` image and keeps optional services behind Compose profiles. The server does not need a source checkout or a local image build:
 
 ```bash
 mkdir -p /opt/xi-ai-web
@@ -191,6 +191,7 @@ The previous split templates remain available in [`deploy/app`](deploy/app), [`d
 | `LANGFLOW_RATE_LIMIT_WINDOW_MS` | `60000` | No | Per-IP/per-workflow gateway rate limit window. |
 | `LANGFLOW_RATE_LIMIT_MAX_REQUESTS` | `12` | No | Maximum requests in one gateway window. |
 | `KNOWLEDGE_ENABLED` | `false` | No | Keep disabled for the first production rollout unless the cloud knowledge stack is configured. |
+| `MCP_EXECUTION_MAX_CONCURRENT` | `4` | No | Process-wide cap for approved MCP calls. Admin MCP execution remains off until explicitly enabled. |
 
 See `.env.example` for the complete optional knowledge configuration.
 
@@ -207,6 +208,8 @@ Open `/xizi2333` directly. The Admin console can manage:
 - backups, restore, validation, operations, and audit logs;
 - optional knowledge account operations when cloud knowledge is enabled.
 - optional Langflow workflow publication mappings.
+- disabled-by-default MCP profiles, discovery, execution allowlists, and the
+  separate anonymous user-connection policy.
 
 Admin configuration is operator metadata only. It is not a public user account system and does not store public BYOK credentials.
 The Site Settings page can rotate the Admin username and password. Rotated credentials are stored only as a salted `scrypt` hash in `DATA_DIR/admin-credentials.json`; deleting that file and restarting restores the environment-provided credentials.
@@ -253,6 +256,37 @@ Set `LIVE_SMOKE_EDIT_IMAGE_PATH` only when a disposable local source image is av
 
 The deployment check exposes `/api/diagnostics/sse`, a rate-limited fixed two-event stream used only to identify reverse-proxy buffering. It does not accept a URL, Key, prompt, or arbitrary payload.
 
+### Opt-in live MCP check
+
+Remote MCP execution and user-added MCP connections are disabled by default.
+The web deployment supports only public HTTPS Streamable HTTP/JSON-RPC MCP
+services that require no authentication. OAuth, bearer tokens, custom headers,
+browser cookies, stdio, WebSocket, SSE-only endpoints, private network
+addresses, and local HTTP are not supported.
+
+Before enabling either Admin MCP switch, run discovery against a disposable
+public endpoint. To verify one harmless tool call, provide its exact tool name
+and a bounded JSON object. The command prints only host/protocol/count/result
+shape metadata; it never prints arguments or returned content.
+
+```bash
+export MCP_LIVE_ENDPOINT=https://mcp.example.com/mcp
+export MCP_LIVE_EXPECT_TOOL=fixture.read
+npm run smoke:mcp-live
+
+# Optional exactly-one-call smoke for an operator-approved harmless tool.
+export MCP_LIVE_CALL_TOOL=fixture.read
+export MCP_LIVE_CALL_ARGUMENTS_JSON='{"query":"health check"}'
+npm run smoke:mcp-live
+unset MCP_LIVE_ENDPOINT MCP_LIVE_EXPECT_TOOL MCP_LIVE_CALL_TOOL MCP_LIVE_CALL_ARGUMENTS_JSON
+```
+
+Anonymous MCP sessions and user connections live only in process memory and
+expire after 15 minutes. They are not shared between application instances.
+Use one xi-ai-web application instance while MCP is enabled. Disable anonymous
+user connections to clear those grants, or disable global MCP execution to
+invalidate all pending approvals.
+
 ## Optional Cloud Knowledge
 
 Cloud knowledge is disabled by default. Leave `KNOWLEDGE_ENABLED=false` for the initial no-database deployment.
@@ -292,8 +326,12 @@ npm run provider-contracts
 npm run chat-local-contracts
 npm run workspace-storage-contracts
 npm run automation-contracts
+npm run user-mcp-storage-contracts
 npm run search-contracts
+npm run test:frontend
 npm run test:langflow
+npm run test:e2e:mcp
+npm run smoke:mcp-live
 npm run smoke
 npm run release-check
 npm run test:e2e
