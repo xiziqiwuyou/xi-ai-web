@@ -16,7 +16,8 @@ test("normalizes a workflow and preserves immutable creation metadata on update"
   }, null, { touch: false });
   const updated = normalizeLangflowWorkflow(
     { name: "Support v2", description: "Updated" },
-    created
+    created,
+    { touch: true, now: () => created.updatedAt }
   );
 
   assert.equal(created.id, "flow-display");
@@ -26,6 +27,7 @@ test("normalizes a workflow and preserves immutable creation metadata on update"
   assert.equal(updated.flowId, created.flowId);
   assert.equal(updated.createdAt, created.createdAt);
   assert.notEqual(updated.updatedAt, created.updatedAt);
+  assert.equal(Date.parse(updated.updatedAt), Date.parse(created.updatedAt) + 1);
   assert.equal(updated.name, "Support v2");
 });
 

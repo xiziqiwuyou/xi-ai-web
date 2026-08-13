@@ -21,9 +21,22 @@ function workflowId(value, fallback = "") {
   return candidate.replace(/[^a-zA-Z0-9_-]/g, "-");
 }
 
-export function normalizeLangflowWorkflow(value, existing = null, { touch = Boolean(existing) } = {}) {
+function nextUpdatedAt(existingTimestamp, nowTimestamp) {
+  const existingMs = Date.parse(existingTimestamp || "");
+  const nowMs = Date.parse(nowTimestamp || "");
+  if (Number.isFinite(existingMs) && Number.isFinite(nowMs) && nowMs <= existingMs) {
+    return new Date(existingMs + 1).toISOString();
+  }
+  return nowTimestamp;
+}
+
+export function normalizeLangflowWorkflow(
+  value,
+  existing = null,
+  { touch = Boolean(existing), now = () => new Date().toISOString() } = {}
+) {
   const source = value && typeof value === "object" ? value : {};
-  const now = new Date().toISOString();
+  const nowTimestamp = now();
   const flowId = text(source.flowId, 180, existing?.flowId);
   const name = text(source.name, 80, existing?.name);
   if (!flowId) throw new Error("Langflow Flow ID 不能为空");
@@ -39,8 +52,10 @@ export function normalizeLangflowWorkflow(value, existing = null, { touch = Bool
     tags: tagsValue(source.tags ?? existing?.tags),
     enabled: typeof source.enabled === "boolean" ? source.enabled : existing?.enabled !== false,
     order: orderValue(source.order, existing?.order ?? 100),
-    createdAt: existing?.createdAt || text(source.createdAt, 40, now),
-    updatedAt: touch ? now : text(source.updatedAt, 40, now)
+    createdAt: existing?.createdAt || text(source.createdAt, 40, nowTimestamp),
+    updatedAt: touch
+      ? nextUpdatedAt(existing?.updatedAt, nowTimestamp)
+      : text(source.updatedAt, 40, nowTimestamp)
   };
 }
 
