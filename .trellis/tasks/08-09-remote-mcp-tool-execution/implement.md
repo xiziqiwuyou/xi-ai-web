@@ -59,6 +59,18 @@
 - [x] P4: prepare the v0.0.13 metadata, Compose pins, release notes, full QA,
       and release classification without committing, tagging, or publishing.
 
+## P5 - Published Release And Deferred Operator Acceptance
+
+- [x] Commit the verified implementation and publish `master` plus annotated
+      `v0.0.13` at `21a8d35`.
+- [x] Verify branch and tag GitHub Actions plus the amd64/arm64 GHCR image.
+- [x] Verify the existing online v0.0.12 deployment remains healthy without
+      claiming that it has upgraded to v0.0.13.
+- [ ] Run discovery and one approved harmless `tools/call` against a real
+      public HTTPS no-auth MCP endpoint supplied by the operator.
+- [ ] After that smoke succeeds, record the enablement/rollback decision and
+      archive this task.
+
 ## Rollback Points
 
 - After P0: planning-only, no runtime behavior.

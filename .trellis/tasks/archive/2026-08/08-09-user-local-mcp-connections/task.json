@@ -11,11 +11,11 @@
   "creator": "xiziqiwuyou",
   "assignee": "xiziqiwuyou",
   "createdAt": "2026-08-09",
-  "completedAt": "2026-08-09",
+  "completedAt": "2026-08-13",
   "branch": "master",
   "base_branch": "master",
   "worktree_path": null,
-  "commit": null,
+  "commit": "6e53431",
   "pr_url": null,
   "subtasks": [],
   "children": [],
@@ -27,6 +27,6 @@
     "src/features/chat/ChatModule.tsx",
     "src/features/chat/ChatSessionBlock.tsx"
   ],
-  "notes": "Implementation approved on 2026-08-09. Public HTTPS and no-auth only; no release or push is included.",
+  "notes": "Committed in 6e53431 and published in v0.0.13 at 21a8d35. Public HTTPS and no-auth only; browser persistence remains closed and server grants remain process-local. Full QA and 12/12 MCP E2E passed. Real MCP live smoke remains an operator gate on the parent task.",
   "meta": {}
 }

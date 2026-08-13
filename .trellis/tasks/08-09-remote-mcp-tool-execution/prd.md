@@ -89,21 +89,24 @@ xi-ai-web an open remote proxy or an automatic tool runner.
 
 ## Acceptance Criteria
 
-- [ ] Execution remains off by default and cannot be enabled by public/import/
+- [x] Execution remains off by default and cannot be enabled by public/import/
       restore paths.
-- [ ] Unknown profile/tool IDs, forged endpoints, forged schemas, replayed
+- [x] Unknown profile/tool IDs, forged endpoints, forged schemas, replayed
       approvals, expired approvals, wrong sessions, and oversized arguments
       fail before remote network access.
-- [ ] Approval, rejection, cancellation, timeout, profile disable, and page
+- [x] Approval, rejection, cancellation, timeout, profile disable, and page
       disconnect produce deterministic zero/one remote-call behavior.
-- [ ] Successful and failed `tools/call` results are bounded, redacted, marked
+- [x] Successful and failed `tools/call` results are bounded, redacted, marked
       untrusted, and preserved through the selected Chat protocol without
       leaking keys or endpoint data.
-- [ ] Local Chat behavior, independent GLM/Kimi search, existing registered
+- [x] Local Chat behavior, independent GLM/Kimi search, existing registered
       tools, Shell/OneAPI handoffs, and manual BYOK remain unchanged.
-- [ ] Server contracts, security/privacy scans, Admin desktop/mobile E2E,
+- [x] Server contracts, security/privacy scans, Admin desktop/mobile E2E,
       Chat desktop/mobile E2E, keyboard paths, dark mode, and release-check
       pass before a version decision.
+- [ ] An operator-approved public HTTPS no-auth MCP endpoint passes discovery
+      plus one harmless `tools/call`; the enablement and rollback decision is
+      recorded before this task is archived.
 
 ## Explicit Non-goals
 

@@ -28,6 +28,6 @@
   ],
   "parent": null,
   "relatedFiles": [],
-  "notes": "All planned clean-room child capabilities are implemented locally through the v0.0.13 MCP release candidate. The parent remains planning until the operator MCP smoke and release decision are complete.",
+  "notes": "All planned clean-room child capabilities are committed and published through v0.0.13. The parent remains planning because remote MCP execution is still disabled/operator-only pending a real public HTTPS no-auth discovery/call smoke and final enablement decision.",
   "meta": {}
 }

@@ -15,7 +15,7 @@
   "branch": "master",
   "base_branch": "master",
   "worktree_path": null,
-  "commit": null,
+  "commit": "6e53431",
   "pr_url": null,
   "subtasks": [],
   "children": [
@@ -29,6 +29,6 @@
     "src/features/admin/AdminMcpSection.tsx",
     "src/features/chat/ChatModule.tsx"
   ],
-  "notes": "P0-P4 implementation and release hardening passed locally on 2026-08-09. v0.0.13 metadata is prepared; execution remains disabled/operator-only because MCP_LIVE_ENDPOINT was not provided. No commit, tag, image build, or remote push is included.",
+  "notes": "Implementation committed in 6e53431 and published by v0.0.13 at 21a8d35. Full QA, 12/12 MCP E2E, branch/tag Actions, and the multi-architecture GHCR image passed. chat.xi-api.cn still reports v0.0.12. Execution remains disabled/operator-only because MCP_LIVE_ENDPOINT was not provided; this task stays in progress until an approved real public HTTPS no-auth MCP discovery/call smoke succeeds.",
   "meta": {}
 }

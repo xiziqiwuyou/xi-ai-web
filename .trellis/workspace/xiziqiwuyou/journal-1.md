@@ -640,3 +640,45 @@ Audited progress since v0.0.11, packaged verified Chat branching/retrieval/artif
 ### Next Steps
 
 - None - task complete
+
+
+## Session 20: Prepare and publish v0.0.13
+
+**Date**: 2026-08-13
+**Task**: Approved remote MCP execution release
+**Branch**: `master`
+
+### Summary
+
+Published v0.0.13 with disabled-by-default remote MCP execution, explicit
+single-use Chat approval, browser-local user MCP profiles, process-local
+ephemeral grants, isolated browser verification, and credential-like endpoint
+path rejection. The source tag and amd64/arm64 GHCR image were verified; the
+production site remains on v0.0.12 and real MCP acceptance is still deferred.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6e53431` | feat: add approved remote MCP execution |
+| `595dfb8` | fix: stabilize Langflow workflow timestamps |
+| `7c5c4eb` | test: isolate browser verification runtime |
+| `21a8d35` | release: prepare v0.0.13 |
+
+### Testing
+
+- Full `npm run qa` passed on the committed release snapshot.
+- MCP E2E passed 12/12 across two desktop and two mobile viewports.
+- Branch and tag GitHub Actions published the multi-architecture GHCR image.
+- Credential-free online smoke passed against the existing v0.0.12 site.
+- Real MCP smoke explicitly skipped because `MCP_LIVE_ENDPOINT` was absent.
+
+### Status
+
+[OK] **Release published; operator MCP acceptance remains open**
+
+### Next Steps
+
+- Upgrade `chat.xi-api.cn` to v0.0.13 and rerun the versioned online smoke.
+- Supply an approved public HTTPS no-auth MCP endpoint, run discovery plus one
+  harmless call, then decide whether to enable the feature.
