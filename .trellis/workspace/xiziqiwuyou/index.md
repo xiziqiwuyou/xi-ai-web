@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 20
+- **Total Sessions**: 21
 - **Last Active**: 2026-08-14
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~717 | Active |
+| `journal-1.md` | ~751 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 21 | 2026-08-14 | Publish v0.0.15 knowledge release | `77b32d1`, `01f24f8` | `master` |
 | 20 | 2026-08-14 | Knowledge P0-P6 production closure | `4c48664` | `master` |
 | 19 | 2026-08-09 | Prepare and publish v0.0.12 | `367ef68`, `b30631e` | `master` |
 | 18 | 2026-08-08 | Conversation branch history navigation | `6be7f88` | `master` |

@@ -715,3 +715,37 @@ Completed and verified private knowledge production readiness, chunk drafts and 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 21: Publish v0.0.15 knowledge release
+
+**Date**: 2026-08-14
+**Task**: Publish v0.0.15 knowledge release
+**Branch**: `master`
+
+### Summary
+
+Published the verified knowledge/RAG release, pushed annotated v0.0.15, confirmed both GitHub Actions workflows, and verified the amd64/arm64 GHCR manifest while keeping production knowledge disabled by default.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `77b32d1` | (see git log) |
+| `01f24f8` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
