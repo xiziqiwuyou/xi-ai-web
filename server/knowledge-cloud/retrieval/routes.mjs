@@ -32,6 +32,26 @@ function connectionSecrets(value, result = [], depth = 0) {
   return result;
 }
 
+function requestDisconnectController(req, res) {
+  const controller = new AbortController();
+  const abort = () => {
+    if (!controller.signal.aborted) controller.abort(new Error("Knowledge retrieval request cancelled"));
+  };
+  const cleanup = () => {
+    req.removeListener("aborted", abort);
+    res.removeListener("close", onClose);
+    res.removeListener("finish", cleanup);
+  };
+  const onClose = () => {
+    if (!res.writableEnded) abort();
+    cleanup();
+  };
+  req.once("aborted", abort);
+  res.once("close", onClose);
+  res.once("finish", cleanup);
+  return { controller, cleanup };
+}
+
 function requireServices(runtime, { citations = false } = {}) {
   if (!runtime?.auth) {
     throw new KnowledgeError(KNOWLEDGE_ERROR_CODES.UNAVAILABLE, "知识库认证服务暂时不可用", {
@@ -72,10 +92,19 @@ export function createKnowledgeRetrievalRouter(runtime) {
     sameOrigin,
     asyncRoute(async (req, res) => {
       const { session, service } = await authenticatedRequest(req, runtime, { csrf: true });
-      res.json({
-        ...(await service.retrieve(session.account.id, req.body)),
-        requestId: req.knowledgeRequestId
-      });
+      const request = requestDisconnectController(req, res);
+      try {
+        const result = await service.retrieve(session.account.id, req.body, {
+          signal: request.controller.signal
+        });
+        if (!request.controller.signal.aborted && !res.destroyed) {
+          res.json({ ...result, requestId: req.knowledgeRequestId });
+        }
+      } catch (error) {
+        if (!request.controller.signal.aborted || (!req.aborted && !res.destroyed)) throw error;
+      } finally {
+        request.cleanup();
+      }
     })
   );
 

@@ -14,7 +14,11 @@ if (!runtime.available) {
     library: runtime.library,
     operations: runtime.operations,
     objectStore: runtime.objectStore,
-    config: runtime.config.worker
+    ocrProvider: runtime.ocrProvider,
+    config: {
+      ...runtime.config.worker,
+      ocrMaxOutputBytes: runtime.config.ocr?.maxOutputBytes
+    }
   });
   console.log(
     JSON.stringify({
@@ -25,7 +29,7 @@ if (!runtime.available) {
       leaseSeconds: runtime.config.worker.leaseSeconds
     })
   );
-  worker.start();
+  await worker.start();
   const shutdown = async (signal) => {
     console.log(JSON.stringify({ event: "knowledge_worker_stopping", signal }));
     await worker.stop();

@@ -105,7 +105,66 @@ test("batch completion and shadow cloning keep exact account/index predicates", 
   });
   assert.match(calls[1].sql, /md5\(c\.id::text \|\| ':' \|\| \$4::text\)::uuid/);
   assert.match(calls[1].sql, /c\.embedding_state = 'ready'/);
+  assert.match(calls[1].sql, /LEFT JOIN LATERAL/);
+  assert.match(calls[1].sql, /ORDER BY r\.revision DESC/);
+  assert.match(calls[1].sql, /COALESCE\(draft\.enabled, c\.enabled\)/);
   assert.deepEqual(calls[1].params, ["account", "base", "old-index", "new-index"]);
+});
+
+test("shadow materialization locks the source before sizing the latest effective draft set", async () => {
+  const { calls, repository } = captureRepository((_call, index) => index === 0
+    ? { rows: [{ id: "chunk-1" }, { id: "chunk-2" }], rowCount: 2 }
+    : {
+        rows: [{
+          source_chunk_count: 2,
+          target_chunk_count: 1,
+          chunk_bytes: "23",
+          draft_chunk_count: 2,
+          disabled_chunk_count: 1,
+          incomplete_chunks: 0
+        }],
+        rowCount: 1
+      });
+
+  const footprint = await repository.prepareShadowMaterialization("account", "base", "old-index");
+
+  assert.deepEqual(footprint, {
+    lockedChunkCount: 2,
+    sourceChunkCount: 2,
+    targetChunkCount: 1,
+    chunkBytes: "23",
+    draftChunkCount: 2,
+    disabledChunkCount: 1,
+    incompleteChunks: 0
+  });
+  assert.match(calls[0].sql, /FROM kb_chunks/);
+  assert.match(calls[0].sql, /FOR UPDATE/);
+  assert.deepEqual(calls[0].params, ["account", "base", "old-index"]);
+  assert.match(calls[1].sql, /LEFT JOIN LATERAL/);
+  assert.match(calls[1].sql, /ORDER BY r\.revision DESC/);
+  assert.match(calls[1].sql, /COUNT\(\*\) FILTER \(WHERE effective\.enabled\)/);
+  assert.match(calls[1].sql, /SUM\(CASE WHEN effective\.enabled THEN effective\.text_bytes ELSE 0 END\)/);
+  assert.doesNotMatch(calls.map((call) => call.sql).join("\n"), /UPDATE kb_chunks|DELETE FROM kb_chunks/);
+});
+
+test("shadow draft lineage is inserted immutably and keeps disabled revisions targetless", async () => {
+  const { calls, repository } = captureRepository(() => ({ rows: [{ id: "lineage-1" }], rowCount: 1 }));
+
+  const inserted = await repository.recordShadowDraftMaterializations({
+    accountId: "account",
+    knowledgeBaseId: "base",
+    sourceIndexVersionId: "old-index",
+    targetIndexVersionId: "new-index"
+  });
+
+  assert.equal(inserted, 1);
+  assert.match(calls[0].sql, /INSERT INTO kb_chunk_revision_materializations/);
+  assert.match(calls[0].sql, /CASE WHEN r\.enabled THEN md5/);
+  assert.match(calls[0].sql, /ELSE NULL END/);
+  assert.match(calls[0].sql, /ORDER BY r\.revision DESC/);
+  assert.match(calls[0].sql, /ON CONFLICT \(target_index_version_id, source_chunk_id\) DO NOTHING/);
+  assert.deepEqual(calls[0].params, ["account", "base", "old-index", "new-index"]);
+  assert.doesNotMatch(calls[0].sql, /UPDATE kb_chunks|DELETE FROM kb_chunks/);
 });
 
 test("shadow attribution footprints remain scoped to one account, base and index", async () => {

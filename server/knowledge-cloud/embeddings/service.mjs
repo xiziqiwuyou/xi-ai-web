@@ -656,25 +656,43 @@ export function createKnowledgeEmbeddingService({
             status: 409
           });
         }
-        const footprint = await transaction.embeddings.indexFootprint(accountId, id, activeIndex.id);
-        if (footprint.incompleteChunks > 0) {
+        const materialization = await transaction.embeddings.prepareShadowMaterialization(
+          accountId,
+          id,
+          activeIndex.id
+        );
+        if (materialization.lockedChunkCount !== materialization.sourceChunkCount) {
+          throw knowledgeError(KNOWLEDGE_ERROR_CODES.REINDEX_IN_PROGRESS, "Shadow index source changed while materializing", {
+            status: 409,
+            details: {
+              lockedChunkCount: materialization.lockedChunkCount,
+              sourceChunkCount: materialization.sourceChunkCount
+            }
+          });
+        }
+        if (materialization.incompleteChunks > 0) {
           throw knowledgeError(KNOWLEDGE_ERROR_CODES.REINDEX_IN_PROGRESS, "请先完成当前文档的向量化", {
             status: 409,
-            details: { incompleteChunks: footprint.incompleteChunks }
+            details: { incompleteChunks: materialization.incompleteChunks }
           });
         }
         const nextVersion = Math.max(base.activeIndexVersion, base.pendingIndexVersion || 0) + 1;
         const nextIndexId = cryptoModule.randomUUID();
-        const vectorBytes = BigInt(footprint.chunkCount) * BigInt(profile.dimensions) * BigInt(profile.bytesPerComponent);
-        if (BigInt(footprint.chunkBytes) > 0n) {
+        const vectorBytes = BigInt(materialization.targetChunkCount) *
+          BigInt(profile.dimensions) * BigInt(profile.bytesPerComponent);
+        if (BigInt(materialization.chunkBytes) > 0n) {
           await quotaService.reserve(transaction, {
             accountId,
             reservationKey: reindexChunkReservationKey(nextIndexId),
             component: "chunk_text",
-            bytes: footprint.chunkBytes,
+            bytes: materialization.chunkBytes,
             knowledgeBaseId: id,
             indexVersionId: nextIndexId,
-            metadata: { reason: "reindex_shadow_chunks", chunkCount: footprint.chunkCount }
+            metadata: {
+              reason: "reindex_shadow_chunks",
+              chunkCount: materialization.targetChunkCount,
+              draftChunkCount: materialization.draftChunkCount
+            }
           });
         }
         if (vectorBytes > 0n) {
@@ -687,7 +705,7 @@ export function createKnowledgeEmbeddingService({
             indexVersionId: nextIndexId,
             metadata: {
               reason: "reindex_shadow_vectors",
-              chunkCount: footprint.chunkCount,
+              chunkCount: materialization.targetChunkCount,
               dimensions: profile.dimensions
             }
           });
@@ -712,20 +730,39 @@ export function createKnowledgeEmbeddingService({
           sourceIndexVersionId: activeIndex.id,
           targetIndexVersionId: nextIndexId
         });
-        if (cloned !== footprint.chunkCount) {
+        if (cloned !== materialization.targetChunkCount) {
           throw knowledgeError(KNOWLEDGE_ERROR_CODES.REINDEX_IN_PROGRESS, "影子索引分块复制不完整", {
             status: 409
           });
         }
-        if (BigInt(footprint.chunkBytes) > 0n) {
+        const materializedDrafts = await transaction.embeddings.recordShadowDraftMaterializations({
+          accountId,
+          knowledgeBaseId: id,
+          sourceIndexVersionId: activeIndex.id,
+          targetIndexVersionId: nextIndexId
+        });
+        if (materializedDrafts !== materialization.draftChunkCount) {
+          throw knowledgeError(KNOWLEDGE_ERROR_CODES.REINDEX_IN_PROGRESS, "Shadow index draft lineage is incomplete", {
+            status: 409,
+            details: {
+              expectedDrafts: materialization.draftChunkCount,
+              materializedDrafts
+            }
+          });
+        }
+        if (BigInt(materialization.chunkBytes) > 0n) {
           await quotaService.settle(transaction, {
             accountId,
             reservationKey: reindexChunkReservationKey(nextIndexId),
             component: "chunk_text",
-            actualBytes: footprint.chunkBytes,
+            actualBytes: materialization.chunkBytes,
             knowledgeBaseId: id,
             indexVersionId: nextIndexId,
-            metadata: { reason: "reindex_shadow_chunks", chunkCount: cloned }
+            metadata: {
+              reason: "reindex_shadow_chunks",
+              chunkCount: cloned,
+              draftChunkCount: materializedDrafts
+            }
           });
         }
         const updated = await transaction.library.updateBase(accountId, id, expectedVersion, {
@@ -749,7 +786,7 @@ export function createKnowledgeEmbeddingService({
         }
         await transaction.embeddings.refreshIndexLogicalBytes(accountId, id, nextIndexId);
         let cutover = false;
-        if (footprint.chunkCount === 0) {
+        if (materialization.targetChunkCount === 0) {
           const nextIndex = await transaction.embeddings.findIndex(
             accountId,
             id,
@@ -784,8 +821,11 @@ export function createKnowledgeEmbeddingService({
             sourceIndexVersion: activeIndex.version,
             pendingIndexVersion: nextVersion,
             embeddingProfileId: profile.id,
-            totalChunks: footprint.chunkCount,
-            reservedBytes: (BigInt(footprint.chunkBytes) + vectorBytes).toString(),
+            sourceChunks: materialization.sourceChunkCount,
+            totalChunks: materialization.targetChunkCount,
+            materializedDrafts,
+            disabledChunks: materialization.disabledChunkCount,
+            reservedBytes: (BigInt(materialization.chunkBytes) + vectorBytes).toString(),
             cutover
           }
         };

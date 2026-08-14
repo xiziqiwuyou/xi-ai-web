@@ -21,6 +21,7 @@ import {
   HardDrive,
   KeyRound,
   LoaderCircle,
+  ListTree,
   LogOut,
   Pause,
   Pencil,
@@ -69,6 +70,8 @@ import {
   updateKnowledgeMigrationItem,
   type KnowledgeMigrationSnapshot
 } from "./localMigration";
+import { KnowledgeChunkInspector } from "./KnowledgeChunkInspector";
+import { KnowledgeRetrievalLab } from "./KnowledgeRetrievalLab";
 
 type EmbeddingVendor = KnowledgeEmbeddingConnection["vendor"];
 
@@ -182,6 +185,7 @@ function KnowledgeCloudWorkspace({
   const [bases, setBases] = useState<KnowledgeBase[]>([]);
   const [selectedBaseId, setSelectedBaseId] = useState("");
   const [documents, setDocuments] = useState<KnowledgeCloudDocument[]>([]);
+  const [chunkDocumentId, setChunkDocumentId] = useState("");
   const [loading, setLoading] = useState(true);
   const [documentsLoading, setDocumentsLoading] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -219,6 +223,10 @@ function KnowledgeCloudWorkspace({
   const selectedBase = useMemo(
     () => bases.find((base) => base.id === selectedBaseId) || null,
     [bases, selectedBaseId]
+  );
+  const chunkDocument = useMemo(
+    () => documents.find((document) => document.id === chunkDocumentId) || null,
+    [chunkDocumentId, documents]
   );
   const profileById = useMemo(
     () => new Map(profiles.map((profile) => [profile.id, profile])),
@@ -384,6 +392,7 @@ function KnowledgeCloudWorkspace({
 
   const selectBase = (baseId: string) => {
     setSelectedBaseId(baseId);
+    setChunkDocumentId("");
     setError("");
     setNotice("");
   };
@@ -994,6 +1003,14 @@ function KnowledgeCloudWorkspace({
                           {document.errorCode ? <em>{document.errorCode}</em> : null}
                         </div>
                         <StatusBadge status={document.status} />
+                        <button
+                          type="button"
+                          className="knowledge-document-chunks"
+                          onClick={() => setChunkDocumentId((current) => current === document.id ? "" : document.id)}
+                          aria-expanded={chunkDocumentId === document.id}
+                          aria-label={`查看 ${document.displayName} 分块`}
+                          disabled={document.status !== "ready"}
+                        ><ListTree size={14} />分块</button>
                         <button type="button" className="knowledge-icon-button danger" onClick={() => setDialog({ kind: "delete-document", documentId: document.id })} aria-label={`删除 ${document.displayName}`} title="删除文档" disabled={document.status === "deleting"}><Trash2 size={14} /></button>
                       </article>
                     ))}
@@ -1003,6 +1020,22 @@ function KnowledgeCloudWorkspace({
                     {documentsLoading ? <div className="knowledge-document-loading"><LoaderCircle className="knowledge-cloud-spin" size={18} />正在读取文档</div> : null}
                   </div>
                 </section>
+
+                {chunkDocument ? (
+                  <KnowledgeChunkInspector
+                    document={chunkDocument}
+                    csrfToken={csrfToken}
+                    onClose={() => setChunkDocumentId("")}
+                    onError={setError}
+                    onNotice={setNotice}
+                  />
+                ) : null}
+
+                <KnowledgeRetrievalLab
+                  bases={bases}
+                  selectedBaseId={selectedBase.id}
+                  csrfToken={csrfToken}
+                />
 
                 {migration?.items.length ? (
                   <section className="knowledge-migration-progress">

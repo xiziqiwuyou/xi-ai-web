@@ -4,7 +4,6 @@ const { Pool } = pg;
 
 function databaseSslConfig(config) {
   if (config.sslMode === "disable") return false;
-  if (config.sslMode === "require") return { rejectUnauthorized: false };
   return {
     rejectUnauthorized: true,
     ...(config.sslCa ? { ca: config.sslCa } : {})

@@ -27,7 +27,7 @@ function settings() {
   };
 }
 
-function harness({ needsOcr = false } = {}) {
+function harness({ needsOcr = false, ocrEnabled = false, ocrReady = false } = {}) {
   const source = Buffer.from("source document", "utf8");
   const state = {
     account: {
@@ -43,7 +43,8 @@ function harness({ needsOcr = false } = {}) {
       activeUploadCount: 0
     },
     document: {
-      status: "uploaded",
+      status: ocrReady ? "needs_ocr" : "uploaded",
+      ocrStatus: ocrReady ? "ready" : null,
       parserVersion: null,
       normalizedObjectKey: null,
       normalizedBytes: null,
@@ -67,7 +68,8 @@ function harness({ needsOcr = false } = {}) {
     chunks: [],
     ledger: [],
     uploads: [],
-    deletes: []
+    deletes: [],
+    queuedJobs: []
   };
 
   const jobs = {
@@ -76,13 +78,15 @@ function harness({ needsOcr = false } = {}) {
         accountId,
         knowledgeBaseId: baseId,
         documentId,
-        displayName: "guide.txt",
+        displayName: ocrReady ? "scan.pdf.ocr.txt" : "guide.txt",
         declaredMimeType: "text/plain",
         verifiedMimeType: "text/plain",
+        originalVerifiedMimeType: ocrReady ? "application/pdf" : "text/plain",
         verifiedBytes: String(source.byteLength),
         checksumSha256: crypto.createHash("sha256").update(source).digest("hex"),
         objectKey: `knowledge/${accountId}/${baseId}/${documentId}/source/file`,
         objectVersionId: "version-1",
+        sourceIsOcr: ocrReady,
         documentStatus: state.document.status,
         documentVersion: 2,
         baseStatus: "active",
@@ -95,7 +99,9 @@ function harness({ needsOcr = false } = {}) {
       return structuredClone(state.job);
     },
     async markDocumentParsing() {
-      if (!["uploaded", "parsing"].includes(state.document.status)) return null;
+      const canParse = ["uploaded", "parsing"].includes(state.document.status) ||
+        (state.document.status === "needs_ocr" && state.document.ocrStatus === "ready");
+      if (!canParse) return null;
       state.document.status = "parsing";
       return documentId;
     },
@@ -118,16 +124,25 @@ function harness({ needsOcr = false } = {}) {
       Object.assign(state.document, {
         status: "awaiting_embedding",
         parserVersion: input.parserVersion,
+        verifiedMimeType: input.verifiedMimeType,
         normalizedObjectKey: input.normalizedObjectKey,
         normalizedBytes: input.normalizedBytes,
         errorCode: null
       });
       return documentId;
     },
-    async markDocumentNeedsOcr(_ownerId, _documentId, parserVersion) {
+    async markDocumentNeedsOcr(_ownerId, _documentId, parserVersion, _mimeType, enabled) {
       if (state.document.status !== "parsing") return null;
-      Object.assign(state.document, { status: "needs_ocr", parserVersion });
+      Object.assign(state.document, {
+        status: "needs_ocr",
+        parserVersion,
+        ocrStatus: enabled ? "queued" : "needed"
+      });
       return documentId;
+    },
+    async enqueueJob(input) {
+      state.queuedJobs.push(structuredClone(input));
+      return { ...input, status: "queued" };
     },
     async refreshIndexLogicalBytes() {
       return state.chunks.reduce((sum, chunk) => sum + BigInt(chunk.text_bytes), 0n).toString();
@@ -210,7 +225,7 @@ function harness({ needsOcr = false } = {}) {
         needsOcr: false,
         blocks: [{ text: "Useful body", locator: { type: "text_lines", lineStart: 1, lineEnd: 1 } }]
       };
-  const service = createKnowledgeIngestionService({ repositories, objectStore, parser });
+  const service = createKnowledgeIngestionService({ repositories, objectStore, parser, ocrEnabled });
   return { service, state };
 }
 
@@ -262,4 +277,31 @@ test("image-only parsing enters needs_ocr without chunks, normalized objects or 
   assert.deepEqual(state.uploads, []);
   assert.deepEqual(state.ledger, []);
   assert.equal(state.account.usedBytes, "15");
+  assert.equal(state.document.ocrStatus, "needed");
+  assert.deepEqual(state.queuedJobs, []);
+});
+
+test("enabled OCR queues a durable OCR job without storing request credentials", async () => {
+  const { service, state } = harness({ needsOcr: true, ocrEnabled: true });
+  await service.executeParseJob(structuredClone(state.job), {
+    workerId,
+    reportProgress: async () => {}
+  });
+  assert.equal(state.document.ocrStatus, "queued");
+  assert.equal(state.queuedJobs.length, 1);
+  assert.equal(state.queuedJobs[0].kind, "ocr");
+  assert.equal(state.queuedJobs[0].dedupeKey, `document-ocr:${documentId}`);
+  assert.equal(JSON.stringify(state.queuedJobs).includes("apiKey"), false);
+});
+
+test("ready OCR text re-enters parsing and preserves the original source MIME type", async () => {
+  const { service, state } = harness({ ocrReady: true });
+  const result = await service.executeParseJob(structuredClone(state.job), {
+    workerId,
+    reportProgress: async () => {}
+  });
+  assert.equal(result.status, "awaiting_embedding");
+  assert.equal(state.document.status, "awaiting_embedding");
+  assert.equal(state.document.verifiedMimeType, "application/pdf");
+  assert.equal(state.job.status, "succeeded");
 });

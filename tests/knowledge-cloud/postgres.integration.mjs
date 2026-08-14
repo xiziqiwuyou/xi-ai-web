@@ -32,7 +32,13 @@ test(
         "0005_library_upload_lifecycle.sql",
         "0006_durable_parsing_worker.sql",
         "0007_resumable_embeddings_pgvector.sql",
-        "0008_embedding_retry_quota_attribution.sql"
+        "0008_embedding_retry_quota_attribution.sql",
+        "0009_chunk_revisions_and_strategy.sql",
+        "0010_retrieval_fulltext_gin.sql",
+        "0011_worker_heartbeats.sql",
+        "0012_chunk_draft_shadow_rebuild.sql",
+        "0013_ocr_operations_metrics.sql",
+        "0014_retrieval_enhancement_flags.sql"
       ]);
       const second = await applyKnowledgeMigrations(pool, { logger: { info() {} } });
       assert.deepEqual(second.applied, []);
@@ -54,6 +60,14 @@ test(
       assert(tables.rows[0].vectors_1536);
       assert(tables.rows[0].vectors_3072);
       assert(tables.rows[0].vectors_3072_hnsw);
+      assert.equal(
+        (await pool.query("SELECT to_regclass('kb_worker_heartbeats') AS workers")).rows[0].workers,
+        "kb_worker_heartbeats"
+      );
+      assert.equal(
+        (await pool.query("SELECT to_regclass('kb_reconciliation_runs') AS runs")).rows[0].runs,
+        "kb_reconciliation_runs"
+      );
       const storageTypes = await pool.query(
         `SELECT c.relname, format_type(a.atttypid, a.atttypmod) AS storage_type
          FROM pg_attribute a

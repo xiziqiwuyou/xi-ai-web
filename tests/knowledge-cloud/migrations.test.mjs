@@ -49,7 +49,10 @@ test("migration checksums are stable across LF and CRLF checkouts", () => {
 
 test("migration manifest is ordered, contiguous, and includes vector foundation", async () => {
   const manifest = await loadKnowledgeMigrationManifest();
-  assert.deepEqual(manifest.map((migration) => migration.version), [1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.deepEqual(
+    manifest.map((migration) => migration.version),
+    Array.from({ length: manifest.length }, (_, index) => index + 1)
+  );
   assert.match(manifest[0].source, /CREATE EXTENSION IF NOT EXISTS vector/);
   assert.match(manifest[1].source, /CREATE TABLE kb_accounts/);
   assert.match(manifest[1].source, /CREATE TABLE kb_chunks/);
@@ -74,6 +77,27 @@ test("migration manifest is ordered, contiguous, and includes vector foundation"
   assert.match(manifest[7].source, /DROP INDEX IF EXISTS kb_usage_ledger_unique_reserve_idx/);
   assert.match(manifest[7].source, /kb_usage_ledger_document_capacity_idx/);
   assert.match(manifest[7].source, /kb_usage_ledger_index_capacity_idx/);
+  assert.match(manifest[8].source, /CREATE TABLE kb_chunk_revisions/);
+  assert.match(manifest[8].source, /ADD COLUMN enabled boolean NOT NULL DEFAULT true/);
+  assert.match(manifest[8].source, /kb_chunk_revisions_immutable/);
+  assert.match(manifest[9].source, /ADD COLUMN search_vector tsvector/);
+  assert.match(manifest[10].source, /CREATE TABLE kb_worker_heartbeats/);
+  assert.match(manifest[10].source, /heartbeat_at/);
+  assert.match(manifest[11].source, /CREATE TABLE kb_chunk_revision_materializations/);
+  assert.match(manifest[11].source, /kb_chunk_revision_materializations_immutable/);
+  assert.match(
+    manifest[11].source,
+    /BEFORE UPDATE ON kb_chunk_revision_materializations/
+  );
+  assert.doesNotMatch(
+    manifest[11].source,
+    /FOREIGN KEY \(target_index_version_id, account_id, knowledge_base_id\)/
+  );
+  assert.match(manifest[12].source, /ADD COLUMN ocr_status text/);
+  assert.match(manifest[12].source, /CREATE TABLE kb_reconciliation_runs/);
+  assert.match(manifest[12].source, /'ocr'/);
+  assert.match(manifest[13].source, /query_rewrite_enabled boolean NOT NULL DEFAULT false/);
+  assert.match(manifest[13].source, /rerank_enabled boolean NOT NULL DEFAULT false/);
 });
 
 test("migration comparison rejects changed and future migrations", async () => {

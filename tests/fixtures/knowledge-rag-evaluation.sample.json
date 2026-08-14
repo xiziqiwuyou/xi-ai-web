@@ -1,0 +1,23 @@
+{
+  "cases": [
+    {
+      "id": "account-recovery-answer",
+      "answerable": true,
+      "expectedChunkIds": ["kb-fixture-recovery-1"],
+      "returned": [
+        {
+          "chunkId": "kb-fixture-recovery-1",
+          "citationAuthorized": true
+        }
+      ],
+      "latencyMs": 85
+    },
+    {
+      "id": "unsupported-question-no-answer",
+      "answerable": false,
+      "expectedChunkIds": [],
+      "returned": [],
+      "latencyMs": 42
+    }
+  ]
+}

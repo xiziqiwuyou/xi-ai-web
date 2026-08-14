@@ -8,6 +8,14 @@ export const KNOWLEDGE_NODE_MIN_VERSION = "24.7.0";
 
 const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
 const FALSE_VALUES = new Set(["", "0", "false", "no", "off"]);
+const DATABASE_URL_TLS_PARAMETERS = Object.freeze([
+  "ssl",
+  "sslcert",
+  "sslkey",
+  "sslmode",
+  "sslrootcert",
+  "uselibpqcompat"
+]);
 
 function parseBoolean(value, name, fallback = false) {
   if (value === undefined || value === null) return fallback;
@@ -99,6 +107,19 @@ function parseDatabaseUrl(value) {
       { status: 503, details: { field: "DATABASE_URL" } }
     );
   }
+  const conflictingTlsParameter = DATABASE_URL_TLS_PARAMETERS.find((name) =>
+    url.searchParams.has(name)
+  );
+  if (conflictingTlsParameter) {
+    throw knowledgeError(
+      KNOWLEDGE_ERROR_CODES.CONFIG_INVALID,
+      "DATABASE_URL TLS options must use the dedicated DATABASE_SSL_* settings",
+      {
+        status: 503,
+        details: { field: "DATABASE_URL", parameter: conflictingTlsParameter }
+      }
+    );
+  }
   return value;
 }
 
@@ -114,7 +135,14 @@ function parseSslMode(value) {
   return mode;
 }
 
-function parsePublicOrigin(value) {
+function isLoopbackHostname(hostname) {
+  const normalized = String(hostname || "").toLowerCase();
+  if (normalized === "localhost" || normalized === "[::1]" || normalized === "::1") return true;
+  const match = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(normalized);
+  return Boolean(match && Number(match[1]) === 127 && match.slice(1).every((part) => Number(part) <= 255));
+}
+
+function parsePublicOrigin(value, { production = false } = {}) {
   let url;
   try {
     url = new URL(value);
@@ -125,22 +153,58 @@ function parsePublicOrigin(value) {
       { status: 503, details: { field: "PUBLIC_ORIGIN" } }
     );
   }
-  if (!new Set(["http:", "https:"]).has(url.protocol) || url.pathname !== "/") {
+  if (
+    !new Set(["http:", "https:"]).has(url.protocol) ||
+    url.pathname !== "/" ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash
+  ) {
     throw knowledgeError(
       KNOWLEDGE_ERROR_CODES.CONFIG_INVALID,
       "PUBLIC_ORIGIN 必须是 HTTP(S) 站点根地址",
       { status: 503, details: { field: "PUBLIC_ORIGIN" } }
     );
   }
+  if (url.protocol !== "https:" && (production || !isLoopbackHostname(url.hostname))) {
+    throw knowledgeError(
+      KNOWLEDGE_ERROR_CODES.CONFIG_INVALID,
+      "PUBLIC_ORIGIN requires HTTPS except for loopback development and test runtimes",
+      { status: 503, details: { field: "PUBLIC_ORIGIN", reason: "https_required" } }
+    );
+  }
   return url.origin;
 }
 
-export function loadKnowledgeDatabaseConfig(env = process.env) {
+function isProductionRuntime(env, runtime = {}) {
+  return runtime.production ?? (
+    env.NODE_ENV === "production" ||
+    (env === process.env && process.argv.includes("--production"))
+  );
+}
+
+export function loadKnowledgeDatabaseConfig(env = process.env, runtime = {}) {
   requireEnvironment(env, ["DATABASE_URL"]);
+  const sslMode = parseSslMode(env.DATABASE_SSL_MODE);
+  const production = isProductionRuntime(env, runtime);
+  const allowInsecure = parseBoolean(
+    env.KNOWLEDGE_ALLOW_INSECURE_DATABASE,
+    "KNOWLEDGE_ALLOW_INSECURE_DATABASE",
+    false
+  );
+  if (production && sslMode === "disable" && !allowInsecure) {
+    throw knowledgeError(
+      KNOWLEDGE_ERROR_CODES.CONFIG_INVALID,
+      "Production PostgreSQL requires certificate-verified TLS",
+      { status: 503, details: { field: "DATABASE_SSL_MODE", reason: "verified_tls_required" } }
+    );
+  }
   return Object.freeze({
     connectionString: parseDatabaseUrl(String(env.DATABASE_URL).trim()),
-    sslMode: parseSslMode(env.DATABASE_SSL_MODE),
+    sslMode,
     sslCa: String(env.DATABASE_SSL_CA || "").trim(),
+    tlsVerification: sslMode === "disable" ? "disabled" : "full",
     connectionTimeoutMs: parseInteger(
       env.KNOWLEDGE_DATABASE_CONNECT_TIMEOUT_MS,
       "KNOWLEDGE_DATABASE_CONNECT_TIMEOUT_MS",
@@ -198,6 +262,94 @@ function loadCosConfig(env) {
       "KNOWLEDGE_COS_SOURCE_URL_TTL_SECONDS",
       5 * 60,
       { min: 30, max: 15 * 60 }
+    ),
+    probeEnabled: parseBoolean(
+      env.KNOWLEDGE_COS_PROBE_ENABLED,
+      "KNOWLEDGE_COS_PROBE_ENABLED",
+      true
+    ),
+    probeIntervalSeconds: parseInteger(
+      env.KNOWLEDGE_COS_PROBE_INTERVAL_SECONDS,
+      "KNOWLEDGE_COS_PROBE_INTERVAL_SECONDS",
+      60,
+      { min: 10, max: 3600 }
+    ),
+    probeTimeoutMs: parseInteger(
+      env.KNOWLEDGE_COS_PROBE_TIMEOUT_MS,
+      "KNOWLEDGE_COS_PROBE_TIMEOUT_MS",
+      5000,
+      { min: 500, max: 30000 }
+    )
+  });
+}
+
+function parseOcrEndpoint(value, { production = false } = {}) {
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw knowledgeError(
+      KNOWLEDGE_ERROR_CODES.CONFIG_INVALID,
+      "KNOWLEDGE_OCR_ENDPOINT must be a valid HTTP(S) URL",
+      { status: 503, details: { field: "KNOWLEDGE_OCR_ENDPOINT" } }
+    );
+  }
+  if (
+    !new Set(["http:", "https:"]).has(url.protocol) ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    (url.protocol !== "https:" && (production || !isLoopbackHostname(url.hostname)))
+  ) {
+    throw knowledgeError(
+      KNOWLEDGE_ERROR_CODES.CONFIG_INVALID,
+      "KNOWLEDGE_OCR_ENDPOINT requires HTTPS except for loopback development and test runtimes",
+      { status: 503, details: { field: "KNOWLEDGE_OCR_ENDPOINT" } }
+    );
+  }
+  return url.toString();
+}
+
+function loadOcrConfig(env, { production = false } = {}) {
+  const enabled = parseBoolean(env.KNOWLEDGE_OCR_ENABLED, "KNOWLEDGE_OCR_ENABLED", false);
+  if (!enabled) return Object.freeze({ enabled: false, provider: "disabled" });
+
+  requireEnvironment(env, [
+    "KNOWLEDGE_OCR_PROVIDER",
+    "KNOWLEDGE_OCR_ENDPOINT",
+    "KNOWLEDGE_OCR_API_KEY"
+  ]);
+  const provider = String(env.KNOWLEDGE_OCR_PROVIDER).trim().toLowerCase();
+  if (provider !== "http-json-v1") {
+    throw knowledgeError(
+      KNOWLEDGE_ERROR_CODES.CONFIG_INVALID,
+      "KNOWLEDGE_OCR_PROVIDER must be http-json-v1",
+      { status: 503, details: { field: "KNOWLEDGE_OCR_PROVIDER" } }
+    );
+  }
+  return Object.freeze({
+    enabled: true,
+    provider,
+    endpoint: parseOcrEndpoint(String(env.KNOWLEDGE_OCR_ENDPOINT).trim(), { production }),
+    apiKey: String(env.KNOWLEDGE_OCR_API_KEY).trim(),
+    requestTimeoutMs: parseInteger(
+      env.KNOWLEDGE_OCR_REQUEST_TIMEOUT_MS,
+      "KNOWLEDGE_OCR_REQUEST_TIMEOUT_MS",
+      60_000,
+      { min: 1_000, max: 120_000 }
+    ),
+    maxInputBytes: parseInteger(
+      env.KNOWLEDGE_OCR_MAX_INPUT_BYTES,
+      "KNOWLEDGE_OCR_MAX_INPUT_BYTES",
+      50 * 1024 * 1024,
+      { min: 1_024, max: 100 * 1024 * 1024 }
+    ),
+    maxOutputBytes: parseInteger(
+      env.KNOWLEDGE_OCR_MAX_OUTPUT_BYTES,
+      "KNOWLEDGE_OCR_MAX_OUTPUT_BYTES",
+      8 * 1024 * 1024,
+      { min: 1_024, max: 16 * 1024 * 1024 }
     )
   });
 }
@@ -252,11 +404,33 @@ export function loadKnowledgeConfig(
       }
     );
   }
+  const workerHeartbeatIntervalSeconds = parseInteger(
+    env.KNOWLEDGE_WORKER_HEARTBEAT_SECONDS,
+    "KNOWLEDGE_WORKER_HEARTBEAT_SECONDS",
+    10,
+    { min: 2, max: 300 }
+  );
+  const workerStaleAfterSeconds = parseInteger(
+    env.KNOWLEDGE_WORKER_STALE_SECONDS,
+    "KNOWLEDGE_WORKER_STALE_SECONDS",
+    45,
+    { min: 10, max: 3600 }
+  );
+  if (workerHeartbeatIntervalSeconds >= workerStaleAfterSeconds) {
+    throw knowledgeError(
+      KNOWLEDGE_ERROR_CODES.CONFIG_INVALID,
+      "Knowledge worker heartbeat interval must be shorter than the stale threshold",
+      { status: 503, details: { field: "KNOWLEDGE_WORKER_HEARTBEAT_SECONDS" } }
+    );
+  }
+  const production = isProductionRuntime(env, runtime);
   return Object.freeze({
     enabled: true,
-    database: loadKnowledgeDatabaseConfig(env),
+    database: loadKnowledgeDatabaseConfig(env, runtime),
     cos: loadCosConfig(env),
-    publicOrigin: parsePublicOrigin(env.PUBLIC_ORIGIN),
+    publicOrigin: parsePublicOrigin(env.PUBLIC_ORIGIN, {
+      production
+    }),
     auth: Object.freeze({
       tokenSecret,
       sessionTtlSeconds: parseInteger(
@@ -278,12 +452,23 @@ export function loadKnowledgeConfig(
         "KNOWLEDGE_WORKER_LEASE_SECONDS",
         60,
         { min: 15, max: 3600 }
-      )
+      ),
+      heartbeatIntervalSeconds: workerHeartbeatIntervalSeconds,
+      staleAfterSeconds: workerStaleAfterSeconds
     }),
     embedding: Object.freeze({
       leaseSeconds: embeddingLeaseSeconds,
       requestTimeoutMs: embeddingRequestTimeoutMs
-    })
+    }),
+    retrieval: Object.freeze({
+      enhancementTimeoutMs: parseInteger(
+        env.KNOWLEDGE_RETRIEVAL_ENHANCEMENT_TIMEOUT_MS,
+        "KNOWLEDGE_RETRIEVAL_ENHANCEMENT_TIMEOUT_MS",
+        15_000,
+        { min: 1_000, max: 60_000 }
+      )
+    }),
+    ocr: loadOcrConfig(env, { production })
   });
 }
 
@@ -293,6 +478,7 @@ export function knowledgeConfigSecrets(config) {
     config.database?.connectionString,
     config.auth?.tokenSecret,
     config.cos?.secretId,
-    config.cos?.secretKey
+    config.cos?.secretKey,
+    config.ocr?.apiKey
   ].filter(Boolean);
 }

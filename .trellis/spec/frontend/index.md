@@ -24,6 +24,7 @@ This directory contains guidelines for frontend development. Fill in each file w
 | [Type Safety](./type-safety.md) | Shared types, route guards, and runtime boundaries | Active |
 | [Chat Capability And Independent Search](./chat-capability-search.md) | Vision attachment gating and explicit GLM/Kimi search state | Active |
 | [Chat Message Actions And Conversation Branching](./chat-branching.md) | Message actions, immutable branch projection, persistence, and recovery | Active |
+| [Knowledge Workspace](./knowledge-workspace.md) | Private owner UI, partial readiness, Retrieval Lab, citations, and session-only Key boundaries | Active |
 
 ---
 

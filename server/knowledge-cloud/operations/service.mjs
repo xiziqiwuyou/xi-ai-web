@@ -10,6 +10,7 @@ import { createKnowledgeQuotaService } from "../quotas/service.mjs";
 const MAX_REASON_LENGTH = 1000;
 const DEFAULT_MAINTENANCE_LIMIT = 50;
 const MAX_MAINTENANCE_LIMIT = 500;
+const MAX_RECONCILIATION_OBJECTS = 200;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function assertObject(value, field = "payload") {
@@ -112,9 +113,15 @@ function projectJob(job) {
   };
 }
 
-function readinessStatus({ runtime, metrics }) {
+function readinessStatus({ runtime, metrics, ready }) {
   if (!runtime.available) return "unavailable";
-  if (metrics.queue.failed > 0 || metrics.storage.staleReservationCount > 0) return "degraded";
+  if (!ready) return "unavailable";
+  if (
+    metrics.queue.failed > 0 ||
+    metrics.storage.staleReservationCount > 0 ||
+    metrics.quota?.driftAccounts > 0 ||
+    metrics.reconciliation?.state === "failed"
+  ) return "degraded";
   if (metrics.cleanup.deletingAccounts > 0 || metrics.storage.expiredPendingUploads > 0) {
     return "maintenance_required";
   }
@@ -128,6 +135,7 @@ export function createKnowledgeOperationsService({
   schemaVersion,
   vectorVersion,
   objectStoreConfigured = false,
+  objectStore,
   clock = () => new Date(),
   cryptoModule = crypto,
   logger = console,
@@ -203,7 +211,8 @@ export function createKnowledgeOperationsService({
       expiredSessions,
       expiredAdminResets,
       expiredInvites,
-      finalizedAccounts
+      finalizedAccounts,
+      queuedOcr
     ] = await Promise.all([
       library?.cleanupExpiredUploads
         ? library.cleanupExpiredUploads({ limit: Math.min(100, limit) })
@@ -212,7 +221,28 @@ export function createKnowledgeOperationsService({
       repositories.operations.revokeExpiredSessions(limit),
       repositories.operations.expireAdminResets(),
       repositories.operations.expireInvites(),
-      repositories.operations.deleteAccountsReadyForFinalization(limit)
+      repositories.operations.deleteAccountsReadyForFinalization(limit),
+      config?.ocr?.enabled
+        ? repositories.transaction(async (transaction) => {
+            const documents = await transaction.operations.listNeededOcrDocuments(limit);
+            let queued = 0;
+            for (const document of documents) {
+              if (!(await transaction.operations.markDocumentOcrQueued(document.accountId, document.id))) {
+                continue;
+              }
+              await transaction.operations.enqueueJob({
+                id: cryptoModule.randomUUID(),
+                accountId: document.accountId,
+                knowledgeBaseId: document.knowledgeBaseId,
+                documentId: document.id,
+                dedupeKey: `document-ocr:${document.id}`,
+                kind: "ocr"
+              });
+              queued += 1;
+            }
+            return queued;
+          })
+        : Promise.resolve(0)
     ]);
     const result = {
       expiredUploads,
@@ -220,7 +250,8 @@ export function createKnowledgeOperationsService({
       expiredSessions,
       expiredAdminResets,
       expiredInvites,
-      finalizedAccountIds: finalizedAccounts
+      finalizedAccountIds: finalizedAccounts,
+      queuedOcr
     };
     logger.info?.(JSON.stringify({
       event: "knowledge_operations_maintenance",
@@ -231,7 +262,21 @@ export function createKnowledgeOperationsService({
 
   const service = {
     async readiness() {
-      const metrics = await repositories.operations.healthMetrics();
+      const [metrics, worker, objectStoreProbe] = await Promise.all([
+        repositories.operations.healthMetrics(),
+        repositories.operations.workerFreshness(config?.worker?.staleAfterSeconds || 45),
+        objectStore?.readinessProbe
+          ? objectStore.readinessProbe()
+          : Promise.resolve({
+              state: objectStoreConfigured ? "unknown" : "disabled",
+              checkedAt: null,
+              latencyMs: null,
+              errorCode: null
+            })
+      ]);
+      const infrastructureReady =
+        worker.state === "fresh" &&
+        new Set(["ok", "disabled"]).has(objectStoreProbe.state);
       const runtime = {
         enabled: true,
         available: true,
@@ -239,20 +284,29 @@ export function createKnowledgeOperationsService({
         vectorVersion: vectorVersion || null,
         worker: {
           concurrency: config?.worker?.concurrency || null,
-          leaseSeconds: config?.worker?.leaseSeconds || null
+          leaseSeconds: config?.worker?.leaseSeconds || null,
+          ...worker
         },
         objectStore: {
-          state: objectStoreConfigured ? "configured" : "not_checked"
+          ...objectStoreProbe
         }
       };
       return {
         generatedAt: new Date(clock()).toISOString(),
-        status: readinessStatus({ runtime, metrics }),
+        ready: infrastructureReady,
+        status: readinessStatus({ runtime, metrics, ready: infrastructureReady }),
+        reasonCodes: [
+          ...(worker.state === "fresh" ? [] : [KNOWLEDGE_ERROR_CODES.WORKER_STALE]),
+          ...(new Set(["ok", "disabled"]).has(objectStoreProbe.state)
+            ? []
+            : [KNOWLEDGE_ERROR_CODES.OBJECT_STORE_UNAVAILABLE])
+        ],
         checks: {
           database: "ok",
           migrations: schemaVersion ? "ok" : "unknown",
           vectorExtension: vectorVersion ? "ok" : "unknown",
-          objectStore: objectStoreConfigured ? "configured" : "not_checked"
+          worker: worker.state,
+          objectStore: objectStoreProbe.state
         },
         runtime,
         metrics
@@ -285,6 +339,7 @@ export function createKnowledgeOperationsService({
                   status: 404
                 });
               }
+              await transaction.operations.markReconciliationQueued(id);
               queued.push(await transaction.operations.enqueueJob({
                 id: cryptoModule.randomUUID(),
                 accountId: id,
@@ -300,6 +355,55 @@ export function createKnowledgeOperationsService({
           };
         }
       );
+    },
+
+    async executeReconciliation(accountIdValue) {
+      const accountId = validateUuid(accountIdValue, "accountId");
+      await repositories.operations.beginReconciliation(accountId);
+      try {
+        const quota = await repositories.transaction((transaction) =>
+          quotaService.reconcileAccountCounters(transaction, accountId)
+        );
+        const references = await repositories.operations.listAccountObjectReferences(
+          accountId,
+          MAX_RECONCILIATION_OBJECTS
+        );
+        let missingObjects = 0;
+        for (const reference of references.items) {
+          try {
+            await objectStore.headObject(reference);
+          } catch (error) {
+            if (error?.code === KNOWLEDGE_ERROR_CODES.UPLOAD_NOT_FOUND) {
+              missingObjects += 1;
+              continue;
+            }
+            throw error;
+          }
+        }
+        const state = await repositories.operations.completeReconciliation({
+          accountId,
+          databaseObjectCount: references.total,
+          checkedObjectCount: references.items.length,
+          missingObjectCount: missingObjects,
+          quotaChanged: quota.changed,
+          truncated: references.truncated
+        });
+        return {
+          accountId,
+          state,
+          databaseObjectCount: references.total,
+          checkedObjectCount: references.items.length,
+          missingObjectCount: missingObjects,
+          quotaChanged: quota.changed,
+          truncated: references.truncated
+        };
+      } catch (error) {
+        await repositories.operations.failReconciliation(
+          accountId,
+          error?.code || KNOWLEDGE_ERROR_CODES.INTERNAL
+        ).catch(() => undefined);
+        throw error;
+      }
     },
 
     async runMaintenance(input, context) {

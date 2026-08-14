@@ -23,6 +23,47 @@ test("library repository scopes base and document reads to the authenticated acc
   assert.deepEqual(queries[1].params, ["account-a", "document-a"]);
 });
 
+test("chunk drafts use the active account scope and never update active chunk rows", async () => {
+  const queries = [];
+  const repository = createKnowledgeLibraryRepository({
+    async query(text, params) {
+      queries.push({ text: String(text), params });
+      return { rows: [] };
+    }
+  });
+
+  await repository.listDocumentChunks("account-a", "document-a", { afterOrdinal: 4, limit: 11 });
+  await repository.findActiveChunk("account-a", "chunk-a", { forUpdate: true });
+  await repository.insertChunkRevision({
+    id: "revision-a",
+    accountId: "account-a",
+    knowledgeBaseId: "base-a",
+    documentId: "document-a",
+    sourceChunkId: "chunk-a",
+    sourceIndexVersionId: "index-a",
+    revision: 2,
+    text: "revised text",
+    textBytes: 12,
+    tokenEstimate: 3,
+    locator: { type: "text", line: 1 },
+    enabled: false,
+    strategyId: "balanced"
+  });
+  await repository.hasChunkDrafts("account-a", "base-a");
+
+  assert.match(queries[0].text, /c\.account_id = \$1 AND c\.document_id = \$2/);
+  assert.match(queries[0].text, /i\.version = b\.active_index_version/);
+  assert.deepEqual(queries[0].params, ["account-a", "document-a", 4, 11]);
+  assert.match(queries[1].text, /c\.account_id = \$1 AND c\.id = \$2/);
+  assert.match(queries[1].text, /FOR UPDATE OF c/);
+  assert.match(queries[2].text, /INSERT INTO kb_chunk_revisions/);
+  assert.doesNotMatch(queries[2].text, /UPDATE kb_chunks|DELETE FROM kb_chunks/);
+  assert.match(queries[3].text, /i\.version = b\.active_index_version/);
+  assert.match(queries[3].text, /c\.index_version_id = i\.id/);
+  assert.match(queries[3].text, /r\.source_index_version_id = c\.index_version_id/);
+  assert.deepEqual(queries[3].params, ["account-a", "base-a"]);
+});
+
 test("quota repository locks the account row and usage ledger stays append-only", async () => {
   const queries = [];
   const queryable = {

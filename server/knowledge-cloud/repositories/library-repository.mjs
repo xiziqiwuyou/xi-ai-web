@@ -9,6 +9,10 @@ function asByteString(value) {
   return /^-?\d+$/.test(String(value ?? "")) ? String(value) : "0";
 }
 
+function asObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
 function normalizeEmbedding(row) {
   if (!row?.embedding_vendor) return null;
   return {
@@ -73,6 +77,14 @@ function normalizeDocument(row) {
     uploadExpiresAt: row.upload_expires_at || null,
     normalizedObjectKey: row.normalized_object_key || null,
     normalizedBytes: row.normalized_bytes === null ? null : asByteString(row.normalized_bytes),
+    ocrStatus: row.ocr_status || null,
+    ocrProvider: row.ocr_provider || null,
+    ocrObjectKey: row.ocr_object_key || null,
+    ocrBytes: row.ocr_bytes == null ? null : asByteString(row.ocr_bytes),
+    ocrChecksumSha256: row.ocr_checksum_sha256 || null,
+    ocrDurationMs: row.ocr_duration_ms == null ? null : asNumber(row.ocr_duration_ms),
+    ocrStartedAt: row.ocr_started_at || null,
+    ocrCompletedAt: row.ocr_completed_at || null,
     status: row.status,
     parserVersion: row.parser_version || null,
     errorCode: row.error_code || null,
@@ -93,6 +105,36 @@ function normalizeJob(row) {
     status: row.status,
     dedupeKey: row.dedupe_key || null,
     runAfter: row.run_after || null
+  };
+}
+
+function normalizeChunk(row) {
+  if (!row) return null;
+  const draft = row.draft_revision !== null && row.draft_revision !== undefined;
+  return {
+    id: row.id,
+    knowledgeBaseId: row.knowledge_base_id,
+    documentId: row.document_id,
+    sourceIndexVersionId: row.index_version_id,
+    documentName: row.document_name,
+    ordinal: asNumber(row.ordinal),
+    text: draft ? row.draft_text_content : row.text_content,
+    textBytes: asByteString(draft ? row.draft_text_bytes : row.text_bytes),
+    tokenEstimate: asNumber(draft ? row.draft_token_estimate : row.token_estimate),
+    locator: asObject(draft ? row.draft_source_locator : row.source_locator),
+    enabled: draft ? Boolean(row.draft_enabled) : Boolean(row.enabled),
+    revision: asNumber(draft ? row.draft_revision : row.revision),
+    draft,
+    embeddingStatus: row.embedding_state,
+    strategyId: draft ? row.draft_strategy_id : row.chunk_strategy_id,
+    pendingIndexVersion: row.pending_index_version === null || row.pending_index_version === undefined
+      ? null
+      : asNumber(row.pending_index_version),
+    activeChunkBytes: asByteString(row.text_bytes),
+    activeVectorBytes: asByteString(row.active_vector_bytes),
+    draftChunkBytes: draft ? asByteString(row.draft_text_bytes) : "0",
+    createdAt: draft ? row.draft_created_at : row.created_at,
+    updatedAt: row.updated_at
   };
 }
 
@@ -143,9 +185,51 @@ const DOCUMENT_SELECT = `SELECT id, account_id, knowledge_base_id, display_name,
                                 verified_bytes, declared_checksum_sha256, checksum_sha256,
                                 object_key, object_version_id, object_etag,
                                 upload_reservation_key, upload_grant_issued_at, upload_expires_at,
-                                normalized_object_key, normalized_bytes, status, parser_version,
+                                normalized_object_key, normalized_bytes, ocr_status, ocr_provider,
+                                ocr_object_key, ocr_bytes, ocr_checksum_sha256, ocr_duration_ms,
+                                ocr_started_at, ocr_completed_at, status, parser_version,
                                 error_code, version, created_at, updated_at
-                         FROM kb_documents`;
+                          FROM kb_documents`;
+
+const CHUNK_SELECT = `SELECT c.id, c.account_id, c.knowledge_base_id, c.document_id,
+                             d.display_name AS document_name, c.index_version_id,
+                             c.ordinal, c.text_content, c.text_bytes, c.token_estimate,
+                             c.source_locator, c.embedding_state, c.enabled, c.revision,
+                             c.chunk_strategy_id, c.created_at, c.updated_at,
+                             b.pending_index_version,
+                             CASE WHEN c.embedding_state = 'ready'
+                               THEN i.embedding_dimensions *
+                                 CASE i.embedding_dimensions WHEN 3072 THEN 2 ELSE 4 END
+                               ELSE 0 END AS active_vector_bytes,
+                             draft.revision AS draft_revision,
+                             draft.text_content AS draft_text_content,
+                             draft.text_bytes AS draft_text_bytes,
+                             draft.token_estimate AS draft_token_estimate,
+                             draft.source_locator AS draft_source_locator,
+                             draft.enabled AS draft_enabled,
+                             draft.chunk_strategy_id AS draft_strategy_id,
+                             draft.created_at AS draft_created_at
+                      FROM kb_chunks c
+                      JOIN kb_documents d
+                        ON d.id = c.document_id AND d.account_id = c.account_id
+                       AND d.knowledge_base_id = c.knowledge_base_id
+                      JOIN kb_knowledge_bases b
+                        ON b.id = c.knowledge_base_id AND b.account_id = c.account_id
+                      JOIN kb_index_versions i
+                        ON i.id = c.index_version_id AND i.account_id = c.account_id
+                       AND i.knowledge_base_id = c.knowledge_base_id
+                       AND i.version = b.active_index_version AND i.status = 'active'
+                      LEFT JOIN LATERAL (
+                        SELECT r.revision, r.text_content, r.text_bytes, r.token_estimate,
+                               r.source_locator, r.enabled, r.chunk_strategy_id, r.created_at
+                        FROM kb_chunk_revisions r
+                        WHERE r.account_id = c.account_id
+                          AND r.knowledge_base_id = c.knowledge_base_id
+                          AND r.document_id = c.document_id
+                          AND r.source_chunk_id = c.id
+                        ORDER BY r.revision DESC
+                        LIMIT 1
+                      ) draft ON TRUE`;
 
 export function createKnowledgeLibraryRepository(queryable) {
   if (!queryable || typeof queryable.query !== "function") {
@@ -297,6 +381,127 @@ export function createKnowledgeLibraryRepository(queryable) {
       return (result.rows || []).map(normalizeDocument);
     },
 
+    async listDocumentChunks(accountId, documentId, { afterOrdinal = null, limit = 51 } = {}) {
+      const result = await queryable.query(
+        `${CHUNK_SELECT}
+         WHERE c.account_id = $1 AND c.document_id = $2
+           AND ($3::integer IS NULL OR c.ordinal > $3)
+         ORDER BY c.ordinal, c.id
+         LIMIT $4`,
+        [accountId, documentId, afterOrdinal, limit]
+      );
+      return (result.rows || []).map(normalizeChunk);
+    },
+
+    async findActiveChunk(accountId, chunkId, { forUpdate = false } = {}) {
+      const result = await queryable.query(
+        `${CHUNK_SELECT}
+         WHERE c.account_id = $1 AND c.id = $2${forUpdate ? " FOR UPDATE OF c" : ""}`,
+        [accountId, chunkId]
+      );
+      return normalizeChunk(result.rows?.[0]);
+    },
+
+    async insertChunkRevision(revision) {
+      const result = await queryable.query(
+        `INSERT INTO kb_chunk_revisions (
+           id, account_id, knowledge_base_id, document_id, source_chunk_id,
+           source_index_version_id, revision, text_content, text_bytes,
+           token_estimate, source_locator, enabled, chunk_strategy_id
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+         RETURNING id`,
+        [
+          revision.id,
+          revision.accountId,
+          revision.knowledgeBaseId,
+          revision.documentId,
+          revision.sourceChunkId,
+          revision.sourceIndexVersionId,
+          revision.revision,
+          revision.text,
+          revision.textBytes,
+          revision.tokenEstimate,
+          revision.locator,
+          revision.enabled,
+          revision.strategyId
+        ]
+      );
+      return result.rows?.[0]?.id || null;
+    },
+
+    async listActiveChunkText(accountId, documentId, limit = 501) {
+      const result = await queryable.query(
+        `${CHUNK_SELECT}
+         WHERE c.account_id = $1 AND c.document_id = $2
+         ORDER BY c.ordinal, c.id
+         LIMIT $3`,
+        [accountId, documentId, limit]
+      );
+      return (result.rows || []).map(normalizeChunk);
+    },
+
+    async documentChunkCapacity(accountId, documentId) {
+      const result = await queryable.query(
+        `SELECT COALESCE(d.verified_bytes, 0)::text AS source_bytes,
+                COALESCE(d.normalized_bytes, 0)::text AS normalized_bytes,
+                COALESCE(SUM(c.text_bytes), 0)::text AS active_chunk_bytes,
+                COALESCE(SUM(CASE WHEN c.embedding_state = 'ready'
+                  THEN i.embedding_dimensions *
+                    CASE i.embedding_dimensions WHEN 3072 THEN 2 ELSE 4 END
+                  ELSE 0 END), 0)::text AS active_vector_bytes,
+                COALESCE(SUM(draft.text_bytes), 0)::text AS draft_chunk_bytes
+         FROM kb_documents d
+         JOIN kb_knowledge_bases b
+           ON b.id = d.knowledge_base_id AND b.account_id = d.account_id
+         LEFT JOIN kb_index_versions i
+           ON i.account_id = b.account_id AND i.knowledge_base_id = b.id
+          AND i.version = b.active_index_version AND i.status = 'active'
+         LEFT JOIN kb_chunks c
+           ON c.account_id = d.account_id AND c.knowledge_base_id = b.id
+          AND c.document_id = d.id AND c.index_version_id = i.id
+         LEFT JOIN LATERAL (
+           SELECT r.text_bytes
+           FROM kb_chunk_revisions r
+           WHERE r.account_id = c.account_id AND r.knowledge_base_id = c.knowledge_base_id
+             AND r.document_id = c.document_id AND r.source_chunk_id = c.id
+           ORDER BY r.revision DESC LIMIT 1
+         ) draft ON TRUE
+         WHERE d.account_id = $1 AND d.id = $2
+         GROUP BY d.verified_bytes, d.normalized_bytes`,
+        [accountId, documentId]
+      );
+      const row = result.rows?.[0] || {};
+      return {
+        sourceBytes: asByteString(row.source_bytes),
+        normalizedBytes: asByteString(row.normalized_bytes),
+        activeChunkBytes: asByteString(row.active_chunk_bytes),
+        activeVectorBytes: asByteString(row.active_vector_bytes),
+        draftChunkBytes: asByteString(row.draft_chunk_bytes)
+      };
+    },
+
+    async hasChunkDrafts(accountId, baseId) {
+      const result = await queryable.query(
+        `SELECT EXISTS (
+           SELECT 1
+           FROM kb_knowledge_bases b
+           JOIN kb_index_versions i
+             ON i.account_id = b.account_id AND i.knowledge_base_id = b.id
+            AND i.version = b.active_index_version AND i.status = 'active'
+           JOIN kb_chunks c
+             ON c.account_id = i.account_id AND c.knowledge_base_id = i.knowledge_base_id
+            AND c.index_version_id = i.id
+           JOIN kb_chunk_revisions r
+             ON r.account_id = c.account_id AND r.knowledge_base_id = c.knowledge_base_id
+            AND r.document_id = c.document_id AND r.source_chunk_id = c.id
+            AND r.source_index_version_id = c.index_version_id
+           WHERE b.account_id = $1 AND b.id = $2
+         ) AS present`,
+        [accountId, baseId]
+      );
+      return Boolean(result.rows?.[0]?.present);
+    },
+
     async findDocument(accountId, documentId, { forUpdate = false } = {}) {
       const result = await queryable.query(
         `${DOCUMENT_SELECT}
@@ -318,8 +523,9 @@ export function createKnowledgeLibraryRepository(queryable) {
                    declared_checksum_sha256, checksum_sha256, object_key,
                    object_version_id, object_etag, upload_reservation_key,
                    upload_grant_issued_at, upload_expires_at, normalized_object_key,
-                   normalized_bytes, status, parser_version, error_code, version,
-                   created_at, updated_at`,
+                   normalized_bytes, ocr_status, ocr_provider, ocr_object_key, ocr_bytes,
+                   ocr_checksum_sha256, ocr_duration_ms, ocr_started_at, ocr_completed_at,
+                   status, parser_version, error_code, version, created_at, updated_at`,
         [
           document.id,
           document.accountId,
@@ -349,8 +555,9 @@ export function createKnowledgeLibraryRepository(queryable) {
                    declared_checksum_sha256, checksum_sha256, object_key,
                    object_version_id, object_etag, upload_reservation_key,
                    upload_grant_issued_at, upload_expires_at, normalized_object_key,
-                   normalized_bytes, status, parser_version, error_code, version,
-                   created_at, updated_at`,
+                   normalized_bytes, ocr_status, ocr_provider, ocr_object_key, ocr_bytes,
+                   ocr_checksum_sha256, ocr_duration_ms, ocr_started_at, ocr_completed_at,
+                   status, parser_version, error_code, version, created_at, updated_at`,
         [
           accountId,
           documentId,

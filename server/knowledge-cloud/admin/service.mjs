@@ -31,7 +31,7 @@ const ACCOUNT_STATUSES = new Set(["active", "frozen", "deleting"]);
 const MUTABLE_ACCOUNT_STATUSES = new Set(["active", "frozen"]);
 const INVITE_STATUSES = new Set(["active", "consumed", "revoked", "expired"]);
 const JOB_STATUSES = new Set(["queued", "running", "retry", "succeeded", "failed", "cancelled"]);
-const JOB_KINDS = new Set(["parse", "cleanup", "reconcile", "reindex"]);
+const JOB_KINDS = new Set(["parse", "cleanup", "reconcile", "reindex", "ocr"]);
 const AUDIT_RESULTS = new Set(["succeeded", "failed"]);
 
 function assertObject(value, field = "payload") {
@@ -124,12 +124,34 @@ function publicSettings(settings) {
   return {
     version: settings.version,
     registrationMode: settings.registrationMode,
+    retrievalEnhancements: {
+      queryRewriteEnabled: settings.queryRewriteEnabled === true,
+      rerankEnabled: settings.rerankEnabled === true
+    },
     limits: Object.fromEntries(
       Object.keys(KNOWLEDGE_RUNTIME_LIMIT_BOUNDS).map((key) => [key, settings[key]])
     ),
     updatedBy: settings.updatedBy,
     updatedAt: settings.updatedAt
   };
+}
+
+function validateRetrievalEnhancements(value) {
+  const input = assertObject(value, "retrievalEnhancements");
+  rejectUnknownKeys(
+    input,
+    new Set(["queryRewriteEnabled", "rerankEnabled"]),
+    "retrievalEnhancements"
+  );
+  for (const field of ["queryRewriteEnabled", "rerankEnabled"]) {
+    if (typeof input[field] !== "boolean") {
+      throw knowledgeError(KNOWLEDGE_ERROR_CODES.INVALID_REQUEST, `${field} 无效`, {
+        status: 400,
+        details: { field: `retrievalEnhancements.${field}` }
+      });
+    }
+  }
+  return input;
 }
 
 function projectAccount(account, settings) {
@@ -332,7 +354,7 @@ export function createKnowledgeAdminService({
       const payload = assertObject(input);
       rejectUnknownKeys(
         payload,
-        new Set(["expectedVersion", "registrationMode", "limits", "reason"])
+        new Set(["expectedVersion", "registrationMode", "retrievalEnhancements", "limits", "reason"])
       );
       const expectedVersion = validateExpectedVersion(payload.expectedVersion);
       const registrationMode = String(payload.registrationMode || "");
@@ -343,6 +365,9 @@ export function createKnowledgeAdminService({
         });
       }
       const limits = validateLimitObject(payload.limits, KNOWLEDGE_RUNTIME_LIMIT_BOUNDS);
+      const retrievalEnhancements = payload.retrievalEnhancements === undefined
+        ? null
+        : validateRetrievalEnhancements(payload.retrievalEnhancements);
       return auditedMutation(
         {
           operation: "settings.update",
@@ -350,7 +375,11 @@ export function createKnowledgeAdminService({
           targetId: "global",
           reason: payload.reason,
           context,
-          metadata: (result) => ({ version: result.version, registrationMode: result.registrationMode })
+          metadata: (result) => ({
+            version: result.version,
+            registrationMode: result.registrationMode,
+            retrievalEnhancements: result.retrievalEnhancements
+          })
         },
         async (transaction, { actor }) => {
           const current = await transaction.admin.getRuntimeSettings({ forUpdate: true });
@@ -359,8 +388,12 @@ export function createKnowledgeAdminService({
               status: 409
             });
           }
+          const nextEnhancements = retrievalEnhancements || {
+            queryRewriteEnabled: current.queryRewriteEnabled === true,
+            rerankEnabled: current.rerankEnabled === true
+          };
           const next = await transaction.admin.updateRuntimeSettings(
-            { registrationMode, ...limits },
+            { registrationMode, ...limits, ...nextEnhancements },
             expectedVersion,
             actor
           );
@@ -705,6 +738,16 @@ export function createKnowledgeAdminService({
                 status: 409
               });
             }
+          } else if (current.kind === "ocr" && current.documentId) {
+            const reset = await transaction.jobs.resetOcrDocumentForRetry(
+              current.accountId,
+              current.documentId
+            );
+            if (!reset) {
+              throw knowledgeError(KNOWLEDGE_ERROR_CODES.JOB_STATE_INVALID, "OCR document cannot be retried", {
+                status: 409
+              });
+            }
           }
           const retried = await transaction.jobs.retryJob(id);
           if (!retried) {
@@ -756,6 +799,11 @@ export function createKnowledgeAdminService({
           }
           if (current.kind === "parse" && current.documentId) {
             await transaction.jobs.markParseDocumentCancelled(
+              current.accountId,
+              current.documentId
+            );
+          } else if (current.kind === "ocr" && current.documentId) {
+            await transaction.jobs.markOcrDocumentCancelled(
               current.accountId,
               current.documentId
             );

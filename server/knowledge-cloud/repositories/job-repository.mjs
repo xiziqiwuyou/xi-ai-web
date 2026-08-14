@@ -28,6 +28,8 @@ function normalizeJob(row) {
     errorCode: row.error_code || null,
     errorDetail: row.error_detail || null,
     runAfter: row.run_after || null,
+    startedAt: row.started_at || null,
+    completedAt: row.completed_at || null,
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null
   };
@@ -44,8 +46,10 @@ function normalizeParseContext(row) {
     verifiedMimeType: row.verified_mime_type || null,
     verifiedBytes: asByteString(row.verified_bytes),
     checksumSha256: row.checksum_sha256 || null,
-    objectKey: row.object_key,
+    objectKey: row.source_object_key || row.object_key,
     objectVersionId: row.object_version_id || null,
+    sourceIsOcr: Boolean(row.source_is_ocr),
+    originalVerifiedMimeType: row.original_verified_mime_type || row.verified_mime_type || null,
     documentStatus: row.status,
     documentVersion: asNumber(row.version),
     baseStatus: row.base_status,
@@ -55,11 +59,30 @@ function normalizeParseContext(row) {
   };
 }
 
+function normalizeOcrContext(row) {
+  if (!row) return null;
+  return {
+    accountId: row.account_id,
+    knowledgeBaseId: row.knowledge_base_id,
+    documentId: row.id,
+    displayName: row.display_name,
+    declaredMimeType: row.declared_mime_type || "",
+    verifiedMimeType: row.verified_mime_type || null,
+    verifiedBytes: asByteString(row.verified_bytes),
+    checksumSha256: row.checksum_sha256 || null,
+    objectKey: row.object_key,
+    objectVersionId: row.object_version_id || null,
+    documentStatus: row.status,
+    ocrStatus: row.ocr_status || null,
+    baseStatus: row.base_status
+  };
+}
+
 const JOB_SELECT = `SELECT id, account_id, knowledge_base_id, document_id,
                            dedupe_key, kind, status, attempts, max_attempts,
                            lease_owner, lease_expires_at, progress_current,
                            progress_total, error_code, error_detail, run_after,
-                           created_at, updated_at
+                           started_at, completed_at, created_at, updated_at
                     FROM kb_jobs`;
 
 export function createKnowledgeJobRepository(queryable) {
@@ -81,14 +104,14 @@ export function createKnowledgeJobRepository(queryable) {
            )
              AND j.attempts < j.max_attempts
              AND j.kind = ANY($1::text[])
-             AND (j.kind <> 'parse' OR a.status = 'active')
+             AND (j.kind NOT IN ('parse', 'ocr') OR a.status = 'active')
              AND (
-               j.kind <> 'parse'
+               j.kind NOT IN ('parse', 'ocr')
                OR (
                  SELECT COUNT(*)::integer
                  FROM kb_jobs active
                  WHERE active.account_id = j.account_id
-                   AND active.kind = 'parse'
+                   AND active.kind IN ('parse', 'ocr')
                    AND active.status = 'running'
                    AND active.lease_expires_at > CURRENT_TIMESTAMP
                    AND active.id <> j.id
@@ -106,6 +129,8 @@ export function createKnowledgeJobRepository(queryable) {
              lease_owner = $2,
              lease_expires_at = CURRENT_TIMESTAMP + make_interval(secs => $3::integer),
              error_code = NULL, error_detail = NULL,
+             started_at = COALESCE(j.started_at, CURRENT_TIMESTAMP),
+             completed_at = NULL,
              updated_at = CURRENT_TIMESTAMP
          FROM candidate
          WHERE j.id = candidate.id
@@ -113,7 +138,7 @@ export function createKnowledgeJobRepository(queryable) {
                    j.dedupe_key, j.kind, j.status, j.attempts, j.max_attempts,
                    j.lease_owner, j.lease_expires_at, j.progress_current,
                    j.progress_total, j.error_code, j.error_detail, j.run_after,
-                   j.created_at, j.updated_at`,
+                   j.started_at, j.completed_at, j.created_at, j.updated_at`,
         [kinds, workerId, leaseSeconds]
       );
       return normalizeJob(result.rows?.[0]);
@@ -136,14 +161,15 @@ export function createKnowledgeJobRepository(queryable) {
          UPDATE kb_jobs j
          SET status = 'failed', lease_owner = NULL, lease_expires_at = NULL,
              error_code = COALESCE(j.error_code, 'KB_JOB_LEASE_EXHAUSTED'),
-             error_detail = NULL, updated_at = CURRENT_TIMESTAMP
+             error_detail = NULL, completed_at = CURRENT_TIMESTAMP,
+             updated_at = CURRENT_TIMESTAMP
          FROM exhausted
          WHERE j.id = exhausted.id
          RETURNING j.id, j.account_id, j.knowledge_base_id, j.document_id,
                    j.dedupe_key, j.kind, j.status, j.attempts, j.max_attempts,
                    j.lease_owner, j.lease_expires_at, j.progress_current,
                    j.progress_total, j.error_code, j.error_detail, j.run_after,
-                   j.created_at, j.updated_at`,
+                   j.started_at, j.completed_at, j.created_at, j.updated_at`,
         [limit]
       );
       return (result.rows || []).map(normalizeJob);
@@ -160,7 +186,8 @@ export function createKnowledgeJobRepository(queryable) {
          RETURNING id, account_id, knowledge_base_id, document_id, dedupe_key,
                    kind, status, attempts, max_attempts, lease_owner,
                    lease_expires_at, progress_current, progress_total,
-                   error_code, error_detail, run_after, created_at, updated_at`,
+                   error_code, error_detail, run_after, started_at, completed_at,
+                   created_at, updated_at`,
         [jobId, workerId, leaseSeconds, progress.current ?? null, progress.total ?? null]
       );
       return normalizeJob(result.rows?.[0]);
@@ -173,12 +200,14 @@ export function createKnowledgeJobRepository(queryable) {
              progress_current = COALESCE($3, progress_current),
              progress_total = COALESCE($4, progress_total),
              error_code = NULL, error_detail = NULL,
+             completed_at = CURRENT_TIMESTAMP,
              updated_at = CURRENT_TIMESTAMP
          WHERE id = $1 AND status = 'running' AND lease_owner = $2
          RETURNING id, account_id, knowledge_base_id, document_id, dedupe_key,
                    kind, status, attempts, max_attempts, lease_owner,
                    lease_expires_at, progress_current, progress_total,
-                   error_code, error_detail, run_after, created_at, updated_at`,
+                   error_code, error_detail, run_after, started_at, completed_at,
+                   created_at, updated_at`,
         [jobId, workerId, progress.current ?? null, progress.total ?? null]
       );
       return normalizeJob(result.rows?.[0]);
@@ -205,12 +234,17 @@ export function createKnowledgeJobRepository(queryable) {
                  THEN CURRENT_TIMESTAMP + make_interval(secs => $6::integer)
                ELSE run_after
              END,
+             completed_at = CASE
+               WHEN $5::boolean AND attempts < max_attempts THEN NULL
+               ELSE CURRENT_TIMESTAMP
+             END,
              updated_at = CURRENT_TIMESTAMP
          WHERE id = $1 AND status = 'running' AND lease_owner = $2
          RETURNING id, account_id, knowledge_base_id, document_id, dedupe_key,
                    kind, status, attempts, max_attempts, lease_owner,
                    lease_expires_at, progress_current, progress_total,
-                   error_code, error_detail, run_after, created_at, updated_at`,
+                   error_code, error_detail, run_after, started_at, completed_at,
+                   created_at, updated_at`,
         [jobId, workerId, errorCode, errorDetail || null, retryable, retryDelaySeconds]
       );
       return normalizeJob(result.rows?.[0]);
@@ -229,12 +263,14 @@ export function createKnowledgeJobRepository(queryable) {
         `UPDATE kb_jobs
          SET status = 'cancelled', lease_owner = NULL, lease_expires_at = NULL,
              error_code = 'KB_JOB_CANCELLED', error_detail = NULL,
+             completed_at = CURRENT_TIMESTAMP,
              updated_at = CURRENT_TIMESTAMP
          WHERE id = $1 AND status IN ('queued', 'running', 'retry')
          RETURNING id, account_id, knowledge_base_id, document_id, dedupe_key,
                    kind, status, attempts, max_attempts, lease_owner,
                    lease_expires_at, progress_current, progress_total,
-                   error_code, error_detail, run_after, created_at, updated_at`,
+                   error_code, error_detail, run_after, started_at, completed_at,
+                   created_at, updated_at`,
         [jobId]
       );
       return normalizeJob(result.rows?.[0]);
@@ -246,12 +282,14 @@ export function createKnowledgeJobRepository(queryable) {
          SET status = 'queued', attempts = 0, lease_owner = NULL,
              lease_expires_at = NULL, progress_current = 0,
              error_code = NULL, error_detail = NULL,
-             run_after = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+             run_after = CURRENT_TIMESTAMP, started_at = NULL, completed_at = NULL,
+             updated_at = CURRENT_TIMESTAMP
          WHERE id = $1 AND status IN ('failed', 'cancelled')
          RETURNING id, account_id, knowledge_base_id, document_id, dedupe_key,
                    kind, status, attempts, max_attempts, lease_owner,
                    lease_expires_at, progress_current, progress_total,
-                   error_code, error_detail, run_after, created_at, updated_at`,
+                   error_code, error_detail, run_after, started_at, completed_at,
+                   created_at, updated_at`,
         [jobId]
       );
       return normalizeJob(result.rows?.[0]);
@@ -259,10 +297,24 @@ export function createKnowledgeJobRepository(queryable) {
 
     async findParseContext(job) {
       const result = await queryable.query(
-        `SELECT d.id, d.account_id, d.knowledge_base_id, d.display_name,
-                d.declared_mime_type, d.verified_mime_type, d.verified_bytes,
-                d.checksum_sha256,
-                d.object_key, d.object_version_id, d.status, d.version,
+        `SELECT d.id, d.account_id, d.knowledge_base_id,
+                CASE WHEN d.ocr_status = 'ready' THEN d.display_name || '.ocr.txt' ELSE d.display_name END
+                  AS display_name,
+                CASE WHEN d.ocr_status = 'ready' THEN 'text/plain' ELSE d.declared_mime_type END
+                  AS declared_mime_type,
+                CASE WHEN d.ocr_status = 'ready' THEN 'text/plain' ELSE d.verified_mime_type END
+                  AS verified_mime_type,
+                d.verified_mime_type AS original_verified_mime_type,
+                CASE WHEN d.ocr_status = 'ready' THEN d.ocr_bytes ELSE d.verified_bytes END
+                  AS verified_bytes,
+                CASE WHEN d.ocr_status = 'ready' THEN d.ocr_checksum_sha256 ELSE d.checksum_sha256 END
+                  AS checksum_sha256,
+                CASE WHEN d.ocr_status = 'ready' THEN d.ocr_object_key ELSE d.object_key END
+                  AS source_object_key,
+                CASE WHEN d.ocr_status = 'ready' THEN NULL ELSE d.object_version_id END
+                  AS object_version_id,
+                (d.ocr_status = 'ready') AS source_is_ocr,
+                d.status, d.version,
                 b.status AS base_status, b.chunk_version,
                 i.id AS index_version_id, i.version AS index_version
          FROM kb_documents d
@@ -277,12 +329,33 @@ export function createKnowledgeJobRepository(queryable) {
       return normalizeParseContext(result.rows?.[0]);
     },
 
+    async findOcrContext(job) {
+      const result = await queryable.query(
+        `SELECT d.id, d.account_id, d.knowledge_base_id, d.display_name,
+                d.declared_mime_type, d.verified_mime_type, d.verified_bytes,
+                d.checksum_sha256, d.object_key, d.object_version_id,
+                d.status, d.ocr_status, b.status AS base_status
+         FROM kb_documents d
+         JOIN kb_accounts a ON a.id = d.account_id
+         JOIN kb_knowledge_bases b
+           ON b.id = d.knowledge_base_id AND b.account_id = d.account_id
+         WHERE d.id = $1 AND d.account_id = $2 AND d.knowledge_base_id = $3
+           AND a.status = 'active' AND b.status = 'active'`,
+        [job.documentId, job.accountId, job.knowledgeBaseId]
+      );
+      return normalizeOcrContext(result.rows?.[0]);
+    },
+
     async markDocumentParsing(accountId, documentId) {
       const result = await queryable.query(
         `UPDATE kb_documents
          SET status = 'parsing', error_code = NULL, error_detail = NULL,
              updated_at = CURRENT_TIMESTAMP, version = version + 1
-         WHERE account_id = $1 AND id = $2 AND status IN ('uploaded', 'parsing')
+         WHERE account_id = $1 AND id = $2
+           AND (
+             status IN ('uploaded', 'parsing')
+             OR (status = 'needs_ocr' AND ocr_status = 'ready')
+           )
          RETURNING id`,
         [accountId, documentId]
       );
@@ -326,18 +399,128 @@ export function createKnowledgeJobRepository(queryable) {
       return result.rows?.[0]?.id || null;
     },
 
-    async markDocumentNeedsOcr(accountId, documentId, parserVersion, verifiedMimeType) {
+    async markDocumentNeedsOcr(accountId, documentId, parserVersion, verifiedMimeType, ocrEnabled = false) {
       const result = await queryable.query(
         `UPDATE kb_documents
          SET status = 'needs_ocr', parser_version = $3,
              verified_mime_type = $4, normalized_object_key = NULL,
              normalized_bytes = NULL, error_code = NULL, error_detail = NULL,
+             ocr_status = CASE WHEN $5::boolean THEN 'queued' ELSE 'needed' END,
              updated_at = CURRENT_TIMESTAMP, version = version + 1
          WHERE account_id = $1 AND id = $2 AND status = 'parsing'
          RETURNING id`,
-        [accountId, documentId, parserVersion, verifiedMimeType]
+        [accountId, documentId, parserVersion, verifiedMimeType, ocrEnabled]
       );
       return result.rows?.[0]?.id || null;
+    },
+
+    async markDocumentOcrRunning(accountId, documentId) {
+      const result = await queryable.query(
+        `UPDATE kb_documents
+         SET ocr_status = 'running', ocr_started_at = CURRENT_TIMESTAMP,
+             ocr_completed_at = NULL, error_code = NULL, error_detail = NULL,
+             updated_at = CURRENT_TIMESTAMP, version = version + 1
+         WHERE account_id = $1 AND id = $2 AND status = 'needs_ocr'
+           AND ocr_status IN ('queued', 'retry', 'running')
+         RETURNING id`,
+        [accountId, documentId]
+      );
+      return result.rows?.[0]?.id || null;
+    },
+
+    async markDocumentOcrFailure(accountId, documentId, nextStatus, errorCode) {
+      const terminal = nextStatus === "failed";
+      const result = await queryable.query(
+        `UPDATE kb_documents
+         SET status = CASE WHEN $3::boolean THEN 'failed' ELSE status END,
+             ocr_status = CASE WHEN $3::boolean THEN 'failed' ELSE 'retry' END,
+             error_code = $4, error_detail = NULL,
+             ocr_completed_at = CASE WHEN $3::boolean THEN CURRENT_TIMESTAMP ELSE NULL END,
+             updated_at = CURRENT_TIMESTAMP, version = version + 1
+         WHERE account_id = $1 AND id = $2 AND status = 'needs_ocr'
+           AND ocr_status IN ('queued', 'running', 'retry')
+         RETURNING id`,
+        [accountId, documentId, terminal, errorCode]
+      );
+      return result.rows?.[0]?.id || null;
+    },
+
+    async markDocumentOcrReady({
+      accountId,
+      documentId,
+      provider,
+      objectKey,
+      bytes,
+      checksumSha256,
+      durationMs
+    }) {
+      const result = await queryable.query(
+        `UPDATE kb_documents
+         SET ocr_status = 'ready', ocr_provider = $3, ocr_object_key = $4,
+             ocr_bytes = $5, ocr_checksum_sha256 = $6, ocr_duration_ms = $7,
+             ocr_completed_at = CURRENT_TIMESTAMP, error_code = NULL, error_detail = NULL,
+             updated_at = CURRENT_TIMESTAMP, version = version + 1
+         WHERE account_id = $1 AND id = $2 AND status = 'needs_ocr'
+           AND ocr_status = 'running'
+         RETURNING id`,
+        [accountId, documentId, provider, objectKey, bytes, checksumSha256, durationMs]
+      );
+      return result.rows?.[0]?.id || null;
+    },
+
+    async resetOcrDocumentForRetry(accountId, documentId) {
+      const result = await queryable.query(
+        `UPDATE kb_documents
+         SET status = 'needs_ocr', ocr_status = 'queued', error_code = NULL,
+             error_detail = NULL, ocr_started_at = NULL, ocr_completed_at = NULL,
+             updated_at = CURRENT_TIMESTAMP, version = version + 1
+         WHERE account_id = $1 AND id = $2 AND status = 'failed'
+           AND ocr_status = 'failed'
+         RETURNING id`,
+        [accountId, documentId]
+      );
+      return result.rows?.[0]?.id || null;
+    },
+
+    async markOcrDocumentCancelled(accountId, documentId) {
+      const result = await queryable.query(
+        `UPDATE kb_documents
+         SET status = 'failed', ocr_status = 'failed', error_code = 'KB_JOB_CANCELLED',
+             error_detail = NULL, ocr_completed_at = CURRENT_TIMESTAMP,
+             updated_at = CURRENT_TIMESTAMP, version = version + 1
+         WHERE account_id = $1 AND id = $2 AND status = 'needs_ocr'
+           AND ocr_status IN ('queued', 'running', 'retry')
+         RETURNING id`,
+        [accountId, documentId]
+      );
+      return result.rows?.[0]?.id || null;
+    },
+
+    async enqueueJob(job) {
+      const result = await queryable.query(
+        `INSERT INTO kb_jobs (
+           id, account_id, knowledge_base_id, document_id, dedupe_key, kind, status, run_after
+         ) VALUES ($1, $2, $3, $4, $5, $6, 'queued', COALESCE($7, CURRENT_TIMESTAMP))
+         ON CONFLICT (account_id, kind, dedupe_key)
+           WHERE dedupe_key IS NOT NULL AND status IN ('queued', 'running', 'retry')
+         DO UPDATE SET run_after = LEAST(kb_jobs.run_after, EXCLUDED.run_after),
+                       updated_at = CURRENT_TIMESTAMP
+         RETURNING id, account_id, knowledge_base_id, document_id, dedupe_key,
+                   kind, status, attempts, max_attempts, lease_owner,
+                   lease_expires_at, progress_current, progress_total,
+                   error_code, error_detail, run_after, started_at, completed_at,
+                   created_at, updated_at`,
+        [
+          job.id,
+          job.accountId,
+          job.knowledgeBaseId || null,
+          job.documentId || null,
+          job.dedupeKey || null,
+          job.kind,
+          job.runAfter || null
+        ]
+      );
+      return normalizeJob(result.rows?.[0]);
     },
 
     async deleteDocumentChunks(accountId, documentId, indexVersionId) {

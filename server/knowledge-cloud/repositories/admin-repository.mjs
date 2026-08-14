@@ -35,6 +35,8 @@ function normalizeSettings(row) {
     maxConcurrentEmbeddingsPerAccount: asInteger(row.max_concurrent_embeddings_per_account),
     retrievalRequestsPerMinutePerAccount: asInteger(row.retrieval_requests_per_minute_per_account),
     maxRetrievalTopK: asInteger(row.max_retrieval_top_k),
+    queryRewriteEnabled: row.query_rewrite_enabled === true,
+    rerankEnabled: row.rerank_enabled === true,
     updatedBy: row.updated_by,
     updatedAt: asIso(row.updated_at)
   };
@@ -122,6 +124,7 @@ function settingsSelect({ forUpdate = false } = {}) {
                  max_concurrent_ingestions_per_account,
                  max_concurrent_embeddings_per_account,
                  retrieval_requests_per_minute_per_account, max_retrieval_top_k,
+                 query_rewrite_enabled, rerank_enabled,
                  updated_by, updated_at
           FROM kb_runtime_settings
           WHERE singleton_id = 1${forUpdate ? " FOR UPDATE" : ""}`;
@@ -186,10 +189,12 @@ export function createKnowledgeAdminRepository(queryable) {
              max_concurrent_embeddings_per_account = $10,
              retrieval_requests_per_minute_per_account = $11,
              max_retrieval_top_k = $12,
-             updated_by = $13,
+             query_rewrite_enabled = $13,
+             rerank_enabled = $14,
+             updated_by = $15,
              updated_at = CURRENT_TIMESTAMP,
              version = version + 1
-         WHERE singleton_id = 1 AND version = $14
+         WHERE singleton_id = 1 AND version = $16
          RETURNING version, registration_mode, default_quota_bytes,
                    max_knowledge_bases_per_account, max_documents_per_account,
                    max_documents_per_knowledge_base, max_file_bytes,
@@ -197,6 +202,7 @@ export function createKnowledgeAdminRepository(queryable) {
                    max_concurrent_ingestions_per_account,
                    max_concurrent_embeddings_per_account,
                    retrieval_requests_per_minute_per_account, max_retrieval_top_k,
+                   query_rewrite_enabled, rerank_enabled,
                    updated_by, updated_at`,
         [
           settings.registrationMode,
@@ -211,6 +217,8 @@ export function createKnowledgeAdminRepository(queryable) {
           settings.maxConcurrentEmbeddingsPerAccount,
           settings.retrievalRequestsPerMinutePerAccount,
           settings.maxRetrievalTopK,
+          settings.queryRewriteEnabled,
+          settings.rerankEnabled,
           actor,
           expectedVersion
         ]

@@ -68,15 +68,29 @@ function hit({ baseId, documentId, chunkId, ordinal, similarity, text = "source"
   };
 }
 
-function createHarness({ bases = [base(baseOneId), base(baseTwoId)], providerFailure } = {}) {
-  const state = { providerCalls: [], searchCalls: [], rateCalls: [] };
+function createHarness({
+  bases = [base(baseOneId), base(baseTwoId)],
+  providerFailure,
+  enhancementFailure,
+  settings = {}
+} = {}) {
+  const state = {
+    providerCalls: [],
+    enhancementCalls: [],
+    searchCalls: [],
+    fullTextCalls: [],
+    rateCalls: []
+  };
   const retrievalRepository = {
     async findRetrievalContext(ownerId) {
       return {
         account: { id: ownerId, status: "active", limitOverrides: {} },
         settings: {
           maxRetrievalTopK: 2,
-          retrievalRequestsPerMinutePerAccount: 7
+          retrievalRequestsPerMinutePerAccount: 7,
+          queryRewriteEnabled: false,
+          rerankEnabled: false,
+          ...settings
         }
       };
     },
@@ -93,6 +107,16 @@ function createHarness({ bases = [base(baseOneId), base(baseTwoId)], providerFai
         hit({ baseId: input.knowledgeBaseId, documentId, chunkId: `${documentId.slice(0, -1)}1`, ordinal: 1, similarity: 0.9 }),
         hit({ baseId: input.knowledgeBaseId, documentId, chunkId: `${documentId.slice(0, -1)}2`, ordinal: 2, similarity: 0.89 }),
         hit({ baseId: input.knowledgeBaseId, documentId, chunkId: `${documentId.slice(0, -1)}3`, ordinal: 5, similarity: 0.7 })
+      ];
+    },
+    async searchFullText(input) {
+      state.fullTextCalls.push(input);
+      const documentId = input.knowledgeBaseId === baseOneId
+        ? "00000000-0000-4000-8000-000000000301"
+        : "00000000-0000-4000-8000-000000000302";
+      return [
+        { ...hit({ baseId: input.knowledgeBaseId, documentId, chunkId: `${documentId.slice(0, -1)}1`, ordinal: 1, similarity: 0.1 }), fullTextRank: 0.8 },
+        { ...hit({ baseId: input.knowledgeBaseId, documentId, chunkId: `${documentId.slice(0, -1)}3`, ordinal: 5, similarity: 0.1 }), fullTextRank: 0.6 }
       ];
     }
   };
@@ -117,23 +141,44 @@ function createHarness({ bases = [base(baseOneId), base(baseTwoId)], providerFai
       };
     }
   };
+  const enhancementProvider = {
+    async rewrite(input) {
+      state.enhancementCalls.push({ operation: "rewrite", input });
+      if (enhancementFailure?.operation === "rewrite") throw enhancementFailure.error;
+      return "rewritten product configuration";
+    },
+    async rerank(input) {
+      state.enhancementCalls.push({ operation: "rerank", input });
+      if (enhancementFailure?.operation === "rerank") throw enhancementFailure.error;
+      return [...input.candidates].reverse().map((candidate, index) => ({
+        ...candidate,
+        rerankRank: index + 1
+      }));
+    }
+  };
   return {
     state,
     service: createKnowledgeRetrievalService({
       repositories,
       rateLimiter,
       provider,
+      enhancementProvider,
       maximumContextBytes: 4096
     })
   };
 }
 
 test("retrieval embeds once per exact profile group, enforces server limits and emits one citation per context chunk", async () => {
-  const { service, state } = createHarness();
+  const secondBase = base(baseTwoId, openai, {
+    activeIndexVersion: 2,
+    activeIndex: { ...base(baseTwoId).activeIndex, version: 2 }
+  });
+  const { service, state } = createHarness({ bases: [base(baseOneId), secondBase] });
   const result = await service.retrieve(accountId, {
     query: "How do I configure the product?",
     knowledgeBaseIds: [baseOneId, baseTwoId],
     topK: 999,
+    trace: true,
     connections: {
       openai: { baseUrl: openai.defaultBaseUrl, apiKey: "request-only-openai-key" }
     }
@@ -141,6 +186,8 @@ test("retrieval embeds once per exact profile group, enforces server limits and 
   assert.equal(state.providerCalls.length, 1);
   assert.deepEqual(state.providerCalls[0].input, ["How do I configure the product?"]);
   assert.equal(state.searchCalls.length, 2);
+  assert.deepEqual(result.profileGroups[0].indexVersions, [1, 2]);
+  assert.deepEqual(result.trace?.profiles[0].indexVersions, [1, 2]);
   assert.deepEqual(state.rateCalls, [{ ownerId: accountId, limit: 7 }]);
   assert.equal(result.topK, 2);
   assert.equal(result.maxTopK, 2);
@@ -189,7 +236,7 @@ test("cross-account, stale-index and missing-key preflight failures occur before
   assert.equal(missingKey.state.searchCalls.length, 0);
 });
 
-test("duplicate selections and partially indexed bases fail before provider access", async () => {
+test("duplicate selections fail while partially indexed bases keep their active index readable", async () => {
   const duplicate = createHarness({ bases: [base(baseOneId)] });
   await assert.rejects(
     duplicate.service.retrieve(accountId, {
@@ -205,16 +252,28 @@ test("duplicate selections and partially indexed bases fail before provider acce
     documentCount: 2,
     readyDocumentCount: 1
   })] });
+  const result = await partial.service.retrieve(accountId, {
+    query: "query",
+    knowledgeBaseIds: [baseOneId],
+    connection: { baseUrl: openai.defaultBaseUrl, apiKey: "key" }
+  });
+  assert(result.chunks.length > 0);
+  assert.equal(partial.state.providerCalls.length, 1);
+  assert.equal(partial.state.searchCalls.length, 1);
+
+  const empty = createHarness({ bases: [base(baseOneId, openai, {
+    documentCount: 1,
+    readyDocumentCount: 0
+  })] });
   await assert.rejects(
-    partial.service.retrieve(accountId, {
+    empty.service.retrieve(accountId, {
       query: "query",
       knowledgeBaseIds: [baseOneId],
-      connection: { baseUrl: openai.defaultBaseUrl, apiKey: "key" }
+      connection: { apiKey: "key" }
     }),
     (error) => error.code === KNOWLEDGE_ERROR_CODES.INDEX_NOT_READY
   );
-  assert.equal(partial.state.providerCalls.length, 0);
-  assert.equal(partial.state.searchCalls.length, 0);
+  assert.equal(empty.state.providerCalls.length, 0);
 });
 
 test("a partial embedding-provider failure aborts all searches and redacts request credentials", async () => {
@@ -281,4 +340,159 @@ test("query and query-context bytes are bounded before repository or provider wo
   );
   assert.equal(state.providerCalls.length, 0);
   assert.equal(state.searchCalls.length, 0);
+});
+
+test("fulltext mode skips embedding while hybrid mode applies standard RRF", async () => {
+  const fulltext = createHarness({ bases: [base(baseOneId)] });
+  const fulltextResult = await fulltext.service.retrieve(accountId, {
+    query: "configure product",
+    knowledgeBaseIds: [baseOneId],
+    mode: "fulltext"
+  });
+  assert.equal(fulltextResult.mode, "fulltext");
+  assert.equal(fulltext.state.providerCalls.length, 0);
+  assert.equal(fulltext.state.searchCalls.length, 0);
+  assert.equal(fulltext.state.fullTextCalls.length, 1);
+
+  const hybrid = createHarness({ bases: [base(baseOneId)] });
+  const hybridResult = await hybrid.service.retrieve(accountId, {
+    query: "configure product",
+    knowledgeBaseIds: [baseOneId],
+    mode: "hybrid",
+    trace: true,
+    connection: { apiKey: "request-only-key" }
+  });
+  assert.equal(hybridResult.mode, "hybrid");
+  assert.equal(hybrid.state.searchCalls.length, 1);
+  assert.equal(hybrid.state.fullTextCalls.length, 1);
+  assert.equal(hybridResult.trace.candidates[0].scores.rrf, Number((2 / 61).toFixed(8)));
+});
+
+test("minimum relevance, token budgets and disabled enhancements are request scoped", async () => {
+  const { service, state } = createHarness({ bases: [base(baseOneId)] });
+  const result = await service.retrieve(accountId, {
+    query: "query",
+    knowledgeBaseIds: [baseOneId],
+    minimumRelevance: 0.99,
+    contextTokenBudget: 64,
+    trace: true,
+    connection: { apiKey: "request-only-key" }
+  });
+  assert.equal(result.chunks.length, 0);
+  assert(result.contextTokens <= result.contextTokenBudget);
+  assert.equal(result.trace.stages.filter.belowMinimumRelevance, 3);
+  await assert.rejects(
+    service.retrieve(accountId, {
+      query: "query",
+      knowledgeBaseIds: [baseOneId],
+      queryRewrite: { enabled: true }
+    }),
+    (error) => error.code === KNOWLEDGE_ERROR_CODES.RETRIEVAL_ENHANCEMENT_DISABLED
+  );
+  assert.equal(state.providerCalls.length, 1);
+  assert.equal(state.enhancementCalls.length, 0);
+});
+
+test("query rewrite is admin gated, uses a transient connection and drives both recall paths", async () => {
+  const { service, state } = createHarness({
+    bases: [base(baseOneId)],
+    settings: { queryRewriteEnabled: true }
+  });
+  const secret = "request-only-enhancement-secret";
+  const result = await service.retrieve(accountId, {
+    query: "configure it",
+    queryContext: "The user means the product deployment guide.",
+    knowledgeBaseIds: [baseOneId],
+    mode: "hybrid",
+    connection: { apiKey: "embedding-key" },
+    queryRewrite: { enabled: true },
+    enhancementConnection: { apiKey: secret, modelId: "rewrite-model" },
+    trace: true
+  });
+
+  assert.equal(state.enhancementCalls.length, 1);
+  assert.equal(state.enhancementCalls[0].operation, "rewrite");
+  assert.equal(state.providerCalls[0].input[0], "rewritten product configuration\n\nThe user means the product deployment guide.");
+  assert.equal(state.fullTextCalls[0].query, "rewritten product configuration");
+  assert.equal(result.trace.effectiveQuery, "rewritten product configuration");
+  assert.equal(result.trace.stages.rewrite.status, "applied");
+  assert.equal(JSON.stringify(result).includes(secret), false);
+});
+
+test("missing embedding credentials fail before query enhancement incurs provider work", async () => {
+  const { service, state } = createHarness({
+    bases: [base(baseOneId)],
+    settings: { queryRewriteEnabled: true }
+  });
+  await assert.rejects(
+    service.retrieve(accountId, {
+      query: "query",
+      knowledgeBaseIds: [baseOneId],
+      queryRewrite: { enabled: true },
+      enhancementConnection: { apiKey: "temporary-key", modelId: "rewrite-model" }
+    }),
+    (error) => error.code === KNOWLEDGE_ERROR_CODES.EMBEDDING_CONNECTION_REQUIRED
+  );
+  assert.equal(state.enhancementCalls.length, 0);
+  assert.equal(state.providerCalls.length, 0);
+});
+
+test("rerank failure falls back only when explicitly requested", async () => {
+  const failure = knowledgeError(
+    KNOWLEDGE_ERROR_CODES.RETRIEVAL_ENHANCEMENT_PROVIDER_ERROR,
+    "provider failed",
+    { status: 502 }
+  );
+  const strict = createHarness({
+    bases: [base(baseOneId)],
+    settings: { rerankEnabled: true },
+    enhancementFailure: { operation: "rerank", error: failure }
+  });
+  await assert.rejects(
+    strict.service.retrieve(accountId, {
+      query: "query",
+      knowledgeBaseIds: [baseOneId],
+      mode: "fulltext",
+      rerank: { enabled: true, allowFallback: false },
+      enhancementConnection: { apiKey: "temporary-key", modelId: "rerank-model" }
+    }),
+    (error) => error.code === KNOWLEDGE_ERROR_CODES.RETRIEVAL_ENHANCEMENT_PROVIDER_ERROR
+  );
+  assert.equal(strict.state.enhancementCalls.length, 1);
+
+  const fallback = createHarness({
+    bases: [base(baseOneId)],
+    settings: { rerankEnabled: true },
+    enhancementFailure: { operation: "rerank", error: failure }
+  });
+  const result = await fallback.service.retrieve(accountId, {
+    query: "query",
+    knowledgeBaseIds: [baseOneId],
+    mode: "fulltext",
+    rerank: { enabled: true, allowFallback: true },
+    enhancementConnection: { apiKey: "temporary-key", modelId: "rerank-model" },
+    trace: true
+  });
+  assert.equal(result.trace.stages.rerank.status, "fallback");
+  assert(result.chunks.length > 0);
+});
+
+test("cross-account enhancement requests fail before model, embedding or recall access", async () => {
+  const { service, state } = createHarness({
+    settings: { queryRewriteEnabled: true, rerankEnabled: true }
+  });
+  await assert.rejects(
+    service.retrieve(otherAccountId, {
+      query: "query",
+      knowledgeBaseIds: [baseOneId],
+      queryRewrite: { enabled: true },
+      rerank: { enabled: true, allowFallback: true },
+      enhancementConnection: { apiKey: "temporary-key", modelId: "chat-model" }
+    }),
+    (error) => error.code === KNOWLEDGE_ERROR_CODES.KNOWLEDGE_BASE_NOT_FOUND
+  );
+  assert.equal(state.enhancementCalls.length, 0);
+  assert.equal(state.providerCalls.length, 0);
+  assert.equal(state.searchCalls.length, 0);
+  assert.equal(state.fullTextCalls.length, 0);
 });

@@ -62,6 +62,9 @@ function fixtures() {
     embeddingProfiles() {
       return { items: [{ id: "qwen-text-embedding-v4", vendor: "qwen", dimensions: 1024 }] };
     },
+    chunkStrategyPresets() {
+      return { items: [{ id: "balanced", label: "均衡", maxCharacters: 1400, overlapCharacters: 160 }] };
+    },
     async listBases(accountId) {
       calls.push({ operation: "list", accountId });
       return { items: [{ id: "base-1", name: "产品资料" }] };
@@ -89,6 +92,25 @@ function fixtures() {
           requiredHeaders: { "Content-Type": input.declaredMimeType }
         }
       };
+    },
+    async listDocumentChunks(accountId, documentId, input) {
+      calls.push({ operation: "chunks", accountId, documentId, input });
+      return {
+        items: [{ id: "chunk-1", documentId, ordinal: 0, text: "owner text", revision: 1, enabled: true }],
+        nextCursor: null,
+        capacity: { sourceBytes: "20", normalizedBytes: "18", activeChunkBytes: "10", activeVectorBytes: "4096", draftChunkBytes: "0" }
+      };
+    },
+    async previewDocumentChunks(accountId, documentId, input) {
+      calls.push({ operation: "preview", accountId, documentId, input });
+      return { strategy: { id: input.chunkStrategyId }, totalChunks: 1, items: [] };
+    },
+    async reviseChunk(accountId, chunkId, input) {
+      calls.push({ operation: "revise", accountId, chunkId, input });
+      return { chunk: { id: chunkId, revision: 2, enabled: false }, activeIndexUnchanged: true, shadowReindexRequired: true };
+    },
+    async assertChunkDraftReindexAllowed(accountId, baseId) {
+      calls.push({ operation: "reindex-guard", accountId, baseId });
     }
   };
   const embeddings = {
@@ -239,5 +261,41 @@ test("embedding batches require the knowledge session, CSRF and request-only con
     });
     assert.equal(reindex.status, 202);
     assert.equal((await reindex.json()).reindex.pendingIndexVersion, 2);
+  });
+});
+
+test("chunk list, preview and revision routes preserve owner auth and mutation guards", async () => {
+  const fixture = fixtures();
+  await withServer(fixture, async (baseUrl) => {
+    const listed = await fetch(`${baseUrl}/api/kb/documents/document-1/chunks?limit=25`, {
+      headers: { Cookie: "xi_kb_session=session-token" }
+    });
+    assert.equal(listed.status, 200);
+    assert.equal((await listed.json()).items[0].id, "chunk-1");
+
+    const mutationHeaders = {
+      "Content-Type": "application/json",
+      Origin: "https://ai.example.com",
+      Cookie: "xi_kb_session=session-token",
+      "X-Knowledge-CSRF": "csrf-token"
+    };
+    const preview = await fetch(`${baseUrl}/api/kb/documents/document-1/chunks/preview`, {
+      method: "POST",
+      headers: mutationHeaders,
+      body: JSON.stringify({ chunkStrategyId: "balanced" })
+    });
+    assert.equal(preview.status, 200);
+
+    const revised = await fetch(`${baseUrl}/api/kb/chunks/chunk-1`, {
+      method: "PATCH",
+      headers: mutationHeaders,
+      body: JSON.stringify({ expectedRevision: 1, enabled: false })
+    });
+    assert.equal(revised.status, 200);
+    assert.equal((await revised.json()).activeIndexUnchanged, true);
+    assert.deepEqual(
+      fixture.calls.filter((call) => ["chunks", "preview", "revise"].includes(call.operation)).map((call) => call.accountId),
+      ["account-1", "account-1", "account-1"]
+    );
   });
 });

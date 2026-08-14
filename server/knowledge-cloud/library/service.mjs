@@ -18,6 +18,14 @@ const UPLOADED_DOCUMENT_STATUSES = new Set([
   "ready",
   "needs_ocr"
 ]);
+const MAX_CHUNK_TEXT_BYTES = 16_384;
+const MAX_CHUNK_REVISIONS = 20;
+const CHUNK_PREVIEW_SOURCE_CHARACTERS = 200_000;
+const CHUNK_STRATEGY_PRESETS = Object.freeze([
+  Object.freeze({ id: "compact", label: "紧凑", maxCharacters: 900, overlapCharacters: 80 }),
+  Object.freeze({ id: "balanced", label: "均衡", maxCharacters: 1400, overlapCharacters: 160 }),
+  Object.freeze({ id: "context_rich", label: "长上下文", maxCharacters: 2200, overlapCharacters: 240 })
+]);
 
 function nowDate(clock) {
   const value = clock();
@@ -112,6 +120,87 @@ function validateChecksum(value) {
   return checksum;
 }
 
+function requireChunkStrategy(value) {
+  const id = String(value || "").trim();
+  const strategy = CHUNK_STRATEGY_PRESETS.find((entry) => entry.id === id);
+  if (!strategy) {
+    throw knowledgeError(KNOWLEDGE_ERROR_CODES.INVALID_REQUEST, "chunkStrategyId 无效", {
+      status: 400,
+      details: { field: "chunkStrategyId" }
+    });
+  }
+  return strategy;
+}
+
+function normalizeChunkText(value) {
+  const text = String(value ?? "").normalize("NFKC").trim();
+  const textBytes = Buffer.byteLength(text, "utf8");
+  if (!text || textBytes > MAX_CHUNK_TEXT_BYTES || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(text)) {
+    throw knowledgeError(KNOWLEDGE_ERROR_CODES.INVALID_REQUEST, "分块文本无效", {
+      status: 400,
+      details: { field: "text", maxBytes: MAX_CHUNK_TEXT_BYTES }
+    });
+  }
+  return { text, textBytes, tokenEstimate: Math.max(1, Math.ceil([...text].length / 4)) };
+}
+
+function publicChunk(chunk) {
+  return {
+    id: chunk.id,
+    documentId: chunk.documentId,
+    documentName: chunk.documentName,
+    ordinal: chunk.ordinal,
+    text: chunk.text,
+    textBytes: chunk.textBytes,
+    tokenEstimate: chunk.tokenEstimate,
+    locator: chunk.locator,
+    enabled: chunk.enabled,
+    revision: chunk.revision,
+    draft: chunk.draft,
+    embeddingStatus: chunk.embeddingStatus,
+    strategyId: chunk.strategyId,
+    capacity: {
+      activeChunkBytes: chunk.activeChunkBytes,
+      activeVectorBytes: chunk.activeVectorBytes,
+      draftChunkBytes: chunk.draftChunkBytes
+    },
+    createdAt: chunk.createdAt,
+    updatedAt: chunk.updatedAt
+  };
+}
+
+function previewText(text, strategy) {
+  const characters = [...text];
+  const items = [];
+  let start = 0;
+  while (start < characters.length) {
+    let end = Math.min(characters.length, start + strategy.maxCharacters);
+    if (end < characters.length) {
+      const minimum = start + Math.floor(strategy.maxCharacters * 0.65);
+      for (let cursor = end; cursor > minimum; cursor -= 1) {
+        if (characters[cursor - 1] === "\n") {
+          end = cursor;
+          break;
+        }
+      }
+    }
+    const chunkText = characters.slice(start, end).join("").trim();
+    if (chunkText) {
+      items.push({
+        ordinal: items.length,
+        text: chunkText,
+        textBytes: String(Buffer.byteLength(chunkText, "utf8")),
+        tokenEstimate: Math.max(1, Math.ceil([...chunkText].length / 4)),
+        locator: { type: "strategy_preview", characterStart: start, characterEnd: end }
+      });
+    }
+    if (end >= characters.length) break;
+    const next = Math.max(start + 1, end - strategy.overlapCharacters);
+    start = next;
+  }
+  return items;
+}
+
 function publicBase(base) {
   return {
     id: base.id,
@@ -156,6 +245,16 @@ function publicDocument(document) {
     objectEtag: document.objectEtag,
     uploadExpiresAt: document.uploadExpiresAt,
     status: document.status,
+    ocr: document.ocrStatus
+      ? {
+          status: document.ocrStatus,
+          provider: document.ocrProvider,
+          bytes: document.ocrBytes,
+          durationMs: document.ocrDurationMs,
+          startedAt: document.ocrStartedAt,
+          completedAt: document.ocrCompletedAt
+        }
+      : null,
     parserVersion: document.parserVersion,
     errorCode: document.errorCode,
     version: document.version,
@@ -230,6 +329,10 @@ export function createKnowledgeLibraryService({
   const service = {
     embeddingProfiles() {
       return { items: publicKnowledgeEmbeddingProfiles() };
+    },
+
+    chunkStrategyPresets() {
+      return { items: CHUNK_STRATEGY_PRESETS };
     },
 
     async listBases(accountId) {
@@ -412,6 +515,130 @@ export function createKnowledgeLibraryService({
       return {
         items: (await repositories.library.listDocuments(accountId, id)).map(publicDocument)
       };
+    },
+
+    async listDocumentChunks(accountId, documentId, input = {}) {
+      const id = validateUuid(documentId, "documentId");
+      requireDocument(await repositories.library.findDocument(accountId, id));
+      const limit = Math.min(100, Math.max(1, Number(input.limit) || 50));
+      const afterOrdinal = input.cursor === undefined || input.cursor === ""
+        ? null
+        : Number(input.cursor);
+      if (afterOrdinal !== null && (!Number.isSafeInteger(afterOrdinal) || afterOrdinal < 0)) {
+        throw knowledgeError(KNOWLEDGE_ERROR_CODES.INVALID_REQUEST, "cursor 无效", {
+          status: 400,
+          details: { field: "cursor" }
+        });
+      }
+      const rows = await repositories.library.listDocumentChunks(accountId, id, {
+        afterOrdinal,
+        limit: limit + 1
+      });
+      const hasMore = rows.length > limit;
+      const visible = rows.slice(0, limit);
+      return {
+        items: visible.map(publicChunk),
+        nextCursor: hasMore ? String(visible.at(-1)?.ordinal ?? "") : null,
+        capacity: await repositories.library.documentChunkCapacity(accountId, id)
+      };
+    },
+
+    async previewDocumentChunks(accountId, documentId, input) {
+      const id = validateUuid(documentId, "documentId");
+      const payload = assertObject(input);
+      rejectUnknownKeys(payload, new Set(["chunkStrategyId"]));
+      const strategy = requireChunkStrategy(payload.chunkStrategyId);
+      requireDocument(await repositories.library.findDocument(accountId, id));
+      const sourceChunks = await repositories.library.listActiveChunkText(accountId, id, 501);
+      const enabledText = sourceChunks.filter((chunk) => chunk.enabled).map((chunk) => chunk.text).join("\n\n");
+      const sourceCharacters = [...enabledText];
+      const sourceTruncated = sourceChunks.length > 500 || sourceCharacters.length > CHUNK_PREVIEW_SOURCE_CHARACTERS;
+      const boundedText = sourceCharacters.slice(0, CHUNK_PREVIEW_SOURCE_CHARACTERS).join("");
+      const chunks = previewText(boundedText, strategy);
+      return {
+        strategy,
+        sourceCharacters: sourceCharacters.length,
+        sourceBytes: String(Buffer.byteLength(boundedText, "utf8")),
+        sourceTruncated,
+        totalChunks: chunks.length,
+        items: chunks.slice(0, 12),
+        previewTruncated: chunks.length > 12
+      };
+    },
+
+    async reviseChunk(accountId, chunkId, input) {
+      const id = validateUuid(chunkId, "chunkId");
+      const payload = assertObject(input);
+      rejectUnknownKeys(payload, new Set(["expectedRevision", "text", "enabled"]));
+      const expectedRevision = validateExpectedVersion(payload.expectedRevision);
+      if (!("text" in payload) && !("enabled" in payload)) {
+        throw knowledgeError(KNOWLEDGE_ERROR_CODES.INVALID_REQUEST, "需要提供 text 或 enabled", {
+          status: 400
+        });
+      }
+      if ("enabled" in payload && typeof payload.enabled !== "boolean") {
+        throw knowledgeError(KNOWLEDGE_ERROR_CODES.INVALID_REQUEST, "enabled 必须是布尔值", {
+          status: 400,
+          details: { field: "enabled" }
+        });
+      }
+      return repositories.transaction(async (transaction) => {
+        await quotaService.lockContext(transaction, accountId);
+        const current = await transaction.library.findActiveChunk(accountId, id, { forUpdate: true });
+        if (!current) {
+          throw knowledgeError(KNOWLEDGE_ERROR_CODES.DOCUMENT_NOT_FOUND, "分块不存在", { status: 404 });
+        }
+        if (current.revision !== expectedRevision) {
+          throw knowledgeError(KNOWLEDGE_ERROR_CODES.VERSION_CONFLICT, "分块已更新，请刷新后重试", {
+            status: 409
+          });
+        }
+        if (current.pendingIndexVersion !== null) {
+          throw knowledgeError(
+            KNOWLEDGE_ERROR_CODES.REINDEX_IN_PROGRESS,
+            "Chunk edits are blocked while a shadow index is building",
+            { status: 409 }
+          );
+        }
+        if (current.revision >= MAX_CHUNK_REVISIONS) {
+          throw knowledgeError(KNOWLEDGE_ERROR_CODES.INVALID_REQUEST, "分块草稿修订次数已达上限", {
+            status: 409,
+            details: { maxRevisions: MAX_CHUNK_REVISIONS }
+          });
+        }
+        const normalized = "text" in payload
+          ? normalizeChunkText(payload.text)
+          : { text: current.text, textBytes: Number(current.textBytes), tokenEstimate: current.tokenEstimate };
+        const enabled = "enabled" in payload ? Boolean(payload.enabled) : current.enabled;
+        await transaction.library.insertChunkRevision({
+          id: cryptoModule.randomUUID(),
+          accountId,
+          knowledgeBaseId: current.knowledgeBaseId,
+          documentId: current.documentId,
+          sourceChunkId: current.id,
+          sourceIndexVersionId: current.sourceIndexVersionId,
+          revision: current.revision + 1,
+          text: normalized.text,
+          textBytes: normalized.textBytes,
+          tokenEstimate: normalized.tokenEstimate,
+          locator: current.locator,
+          enabled,
+          strategyId: current.strategyId || "balanced"
+        });
+        const revised = await transaction.library.findActiveChunk(accountId, id);
+        return {
+          chunk: publicChunk(revised),
+          activeIndexUnchanged: true,
+          shadowReindexRequired: true
+        };
+      });
+    },
+
+    async assertChunkDraftReindexAllowed(accountId, baseId) {
+      const id = validateUuid(baseId, "baseId");
+      requireBase(await repositories.library.findBase(accountId, id));
+      const chunkDraftsPending = await repositories.library.hasChunkDrafts(accountId, id);
+      return { allowed: true, chunkDraftsPending };
     },
 
     async createUploadGrant(accountId, baseId, input) {
@@ -699,6 +926,9 @@ export function createKnowledgeLibraryService({
       });
       if (initial.normalizedObjectKey) {
         await objectStore.deleteObject({ objectKey: initial.normalizedObjectKey });
+      }
+      if (initial.ocrObjectKey) {
+        await objectStore.deleteObject({ objectKey: initial.ocrObjectKey });
       }
       return repositories.transaction(async (transaction) => {
         const context = await quotaService.lockContext(transaction, accountId, {

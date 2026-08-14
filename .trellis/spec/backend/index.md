@@ -20,6 +20,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Quality Guidelines](./quality-guidelines.md) | Code standards, auth boundaries, forbidden patterns | Active |
 | [Public AI Production Boundary](./public-ai-production-boundary.md) | BYOK Chat/image trust boundary, request contracts, readiness, and deployment | Active |
 | [Remote MCP Secure Foundation](./remote-mcp-foundation.md) | Admin-only MCP profile, SSRF-safe discovery, and execution boundary | Active |
+| [Knowledge Production RAG](./knowledge-production-rag.md) | Private owner storage, shadow indexes, retrieval quality, OCR, operations, and production gates | Active |
 | [Logging Guidelines](./logging-guidelines.md) | Structured logging, log levels | To fill |
 
 ---

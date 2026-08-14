@@ -28,6 +28,18 @@
   outline-offset: 2px;
 }
 
+.cloud-knowledge-trigger:disabled {
+  cursor: not-allowed;
+}
+
+.cloud-knowledge-spinner {
+  animation: cloud-knowledge-spin 850ms linear infinite;
+}
+
+@keyframes cloud-knowledge-spin {
+  to { transform: rotate(360deg); }
+}
+
 .cloud-knowledge-popover {
   position: absolute;
   z-index: 90;
@@ -84,6 +96,48 @@
   color: var(--xhs-red);
 }
 
+.cloud-knowledge-popover > footer a {
+  min-height: 36px;
+  justify-content: center;
+}
+
+.cloud-knowledge-popover-state {
+  display: grid;
+  min-height: 148px;
+  place-items: center;
+  align-content: center;
+  gap: 7px;
+  padding: 22px;
+  color: var(--xhs-muted);
+  text-align: center;
+}
+
+.cloud-knowledge-popover-state strong {
+  color: var(--xhs-ink);
+  font-size: 12px;
+}
+
+.cloud-knowledge-popover-state span,
+.cloud-knowledge-status {
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.cloud-knowledge-status {
+  margin: 0;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--xhs-line);
+  color: var(--xhs-muted);
+}
+
+.cloud-knowledge-status.partial {
+  color: var(--xhs-ink);
+}
+
+.cloud-knowledge-status.missing-key {
+  color: var(--xhs-danger);
+}
+
 .cloud-knowledge-options {
   display: grid;
   gap: 4px;
@@ -111,6 +165,14 @@
 
 .cloud-knowledge-options label.not-ready {
   color: var(--xhs-muted);
+}
+
+.cloud-knowledge-options label.partial small {
+  color: var(--xhs-ink);
+}
+
+.cloud-knowledge-options label.missing-key small {
+  color: var(--xhs-danger);
 }
 
 .cloud-knowledge-options label > span {
@@ -198,6 +260,11 @@
   text-align: left;
 }
 
+.knowledge-citation-list button:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
 .knowledge-citation-list article strong,
 .knowledge-citation-list article small {
   overflow: hidden;
@@ -232,9 +299,44 @@
 }
 
 .knowledge-citation-list > p {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin: 0;
   color: var(--xhs-danger);
   font-size: 10px;
+}
+
+.knowledge-citation-list > p a {
+  color: var(--xhs-red);
+  font-weight: 700;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cloud-knowledge-spinner {
+    animation: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .figma-session-tools:has(.cloud-knowledge-selector[data-open="true"]) {
+    overflow: visible;
+  }
+
+  .cloud-knowledge-trigger,
+  .cloud-knowledge-popover > footer a {
+    min-height: 44px;
+  }
+
+  .knowledge-citation-list article {
+    grid-template-columns: 18px minmax(0, 1fr) 44px 44px;
+    min-height: 54px;
+  }
+
+  .knowledge-citation-list button.icon {
+    width: 44px;
+    height: 44px;
+  }
 }
 
 @media (max-width: 640px) {
@@ -244,5 +346,6 @@
     bottom: 96px;
     left: 12px;
     width: auto;
+    max-height: min(420px, calc(100dvh - 128px - env(safe-area-inset-bottom)));
   }
 }

@@ -27,7 +27,13 @@ function snapshot(profile) {
   };
 }
 
-function createHarness({ active = false, providerFailure = null, loseLease = false, activeBatches = 0 } = {}) {
+function createHarness({
+  active = false,
+  providerFailure = null,
+  loseLease = false,
+  activeBatches = 0,
+  drafts = []
+} = {}) {
   const initialProfile = requireKnowledgeEmbeddingProfile("openai-text-embedding-3-small");
   const state = {
     inTransaction: false,
@@ -66,17 +72,41 @@ function createHarness({ active = false, providerFailure = null, loseLease = fal
       indexVersionId: initialIndexId,
       ordinal,
       text: `chunk-${ordinal}`,
+      textBytes: Buffer.byteLength(`chunk-${ordinal}`),
+      tokenEstimate: 2,
+      locator: { type: "text_lines", startLine: ordinal + 1, endLine: ordinal + 1 },
       contentHash: String(ordinal).repeat(64),
       embeddingState: active ? "ready" : "pending",
+      enabled: true,
+      revision: 1,
+      strategyId: "balanced",
       leaseId: null
     })),
+    drafts: new Map(),
+    materializations: [],
     batches: new Map(),
     expiredBatchIds: new Set(),
     vectors: new Map(),
     quotaEvents: [],
+    lifecycleEvents: [],
     deletedIndexes: [],
     uuidCounter: 500
   };
+  for (const draft of drafts) {
+    const source = state.chunks.find((chunk) => chunk.ordinal === draft.ordinal);
+    if (!source) throw new Error(`Unknown draft ordinal: ${draft.ordinal}`);
+    const text = draft.text ?? source.text;
+    state.drafts.set(source.id, {
+      sourceChunkId: source.id,
+      revision: draft.revision ?? 2,
+      text,
+      textBytes: Buffer.byteLength(text),
+      tokenEstimate: draft.tokenEstimate ?? source.tokenEstimate,
+      locator: draft.locator ?? source.locator,
+      enabled: draft.enabled ?? source.enabled,
+      strategyId: draft.strategyId ?? source.strategyId
+    });
+  }
 
   const targetIndex = () => state.indexes.get(state.base.pendingIndexVersion ?? state.base.activeIndexVersion);
   const progress = (indexVersionId, targetDocumentId = null) => {
@@ -237,11 +267,18 @@ function createHarness({ active = false, providerFailure = null, loseLease = fal
       return documentId;
     },
     async findIndex(_accountId, _baseId, version) { return state.indexes.get(version) || null; },
-    async indexFootprint(_accountId, _baseId, indexVersionId) {
+    async prepareShadowMaterialization(_accountId, _baseId, indexVersionId) {
       const chunks = state.chunks.filter((chunk) => chunk.indexVersionId === indexVersionId);
+      const effective = chunks.map((chunk) => state.drafts.get(chunk.id) || chunk);
       return {
-        chunkCount: chunks.length,
-        chunkBytes: String(chunks.reduce((sum, chunk) => sum + Buffer.byteLength(chunk.text), 0)),
+        lockedChunkCount: chunks.length,
+        sourceChunkCount: chunks.length,
+        targetChunkCount: effective.filter((chunk) => chunk.enabled).length,
+        chunkBytes: String(effective
+          .filter((chunk) => chunk.enabled)
+          .reduce((sum, chunk) => sum + chunk.textBytes, 0)),
+        draftChunkCount: chunks.filter((chunk) => state.drafts.has(chunk.id)).length,
+        disabledChunkCount: effective.filter((chunk) => !chunk.enabled).length,
         incompleteChunks: chunks.filter((chunk) => chunk.embeddingState !== "ready").length
       };
     },
@@ -259,17 +296,42 @@ function createHarness({ active = false, providerFailure = null, loseLease = fal
       const source = state.chunks.filter((chunk) =>
         chunk.indexVersionId === sourceIndexVersionId && chunk.embeddingState === "ready");
       for (const chunk of source) {
+        const draft = state.drafts.get(chunk.id);
+        const effective = draft || chunk;
+        if (!effective.enabled) continue;
         state.chunks.push({
           ...chunk,
+          ...effective,
           id: `00000000-0000-4000-8000-${String(state.uuidCounter++).padStart(12, "0")}`,
+          sourceChunkId: chunk.id,
           indexVersionId: targetIndexVersionId,
           embeddingState: "pending",
+          enabled: true,
           leaseId: null
         });
       }
-      return source.length;
+      return source.filter((chunk) => (state.drafts.get(chunk.id) || chunk).enabled).length;
+    },
+    async recordShadowDraftMaterializations({ sourceIndexVersionId, targetIndexVersionId }) {
+      const source = state.chunks.filter((chunk) => chunk.indexVersionId === sourceIndexVersionId);
+      for (const chunk of source) {
+        const draft = state.drafts.get(chunk.id);
+        if (!draft) continue;
+        const target = state.chunks.find((candidate) =>
+          candidate.indexVersionId === targetIndexVersionId && candidate.sourceChunkId === chunk.id);
+        state.materializations.push({
+          sourceChunkId: chunk.id,
+          targetChunkId: target?.id || null,
+          targetIndexVersionId,
+          revision: draft.revision,
+          enabled: draft.enabled,
+          textBytes: draft.textBytes
+        });
+      }
+      return source.filter((chunk) => state.drafts.has(chunk.id)).length;
     },
     async cutoverReindex({ oldIndex, nextIndex }) {
+      state.lifecycleEvents.push("cutover");
       oldIndex.status = "retired";
       nextIndex.status = "active";
       state.base.activeIndexVersion = nextIndex.version;
@@ -332,6 +394,7 @@ function createHarness({ active = false, providerFailure = null, loseLease = fal
       return { releasedBytes: "1" };
     },
     async releaseIndexUsage(_transaction, input) {
+      state.lifecycleEvents.push("release-old");
       state.quotaEvents.push({ action: "release-index", ...input });
       return { releasedBytes: "1" };
     },
@@ -559,18 +622,53 @@ test("cross-account document and base identifiers fail before provider access", 
 });
 
 test("shadow reindex reserves capacity, embeds the pending version and atomically cleans the old index", async () => {
-  const { service, state } = createHarness({ active: true });
+  const editedText = "edited owner text for the next index";
+  const { service, state } = createHarness({
+    active: true,
+    drafts: [
+      { ordinal: 0, text: editedText, enabled: true },
+      { ordinal: 1, enabled: false }
+    ]
+  });
   const qwen = requireKnowledgeEmbeddingProfile("qwen-text-embedding-v4");
+  const activeChunks = structuredClone(state.chunks);
+  const expectedChunkBytes = Buffer.byteLength(editedText);
+  const expectedVectorBytes = qwen.dimensions * qwen.bytesPerComponent;
   const accepted = await service.reindex(accountId, baseId, {
     expectedVersion: 1,
     embeddingProfileId: qwen.id
   });
   assert.equal(accepted.reindex.sourceIndexVersion, 1);
   assert.equal(accepted.reindex.pendingIndexVersion, 2);
+  assert.equal(accepted.reindex.sourceChunks, 2);
+  assert.equal(accepted.reindex.totalChunks, 1);
+  assert.equal(accepted.reindex.materializedDrafts, 2);
+  assert.equal(accepted.reindex.disabledChunks, 1);
+  assert.equal(accepted.reindex.reservedBytes, String(expectedChunkBytes + expectedVectorBytes));
   assert.equal(state.base.activeIndexVersion, 1);
   assert.equal(state.base.pendingIndexVersion, 2);
-  assert.equal(state.chunks.filter((chunk) => chunk.indexVersionId !== initialIndexId).length, 2);
+  assert.deepEqual(
+    state.chunks.filter((chunk) => chunk.indexVersionId === initialIndexId),
+    activeChunks,
+    "materialization must not mutate active chunks"
+  );
+  assert.equal(state.chunks.filter((chunk) => chunk.indexVersionId !== initialIndexId).length, 1);
+  assert.deepEqual(state.materializations.map(({ enabled, targetChunkId }) => ({
+    enabled,
+    hasTarget: targetChunkId !== null
+  })), [
+    { enabled: true, hasTarget: true },
+    { enabled: false, hasTarget: false }
+  ]);
   assert.deepEqual(state.quotaEvents.map((event) => event.action), ["reserve", "reserve", "settle"]);
+  assert.equal(state.quotaEvents[0].component, "chunk_text");
+  assert.equal(state.quotaEvents[0].bytes, String(expectedChunkBytes));
+  assert.equal(state.quotaEvents[0].context, undefined);
+  assert.equal(state.quotaEvents[1].component, "vector");
+  assert.equal(state.quotaEvents[1].bytes, String(expectedVectorBytes));
+  assert.equal(state.quotaEvents[1].context, undefined);
+  assert.equal(state.quotaEvents[2].actualBytes, String(expectedChunkBytes));
+  assert.deepEqual(state.lifecycleEvents, []);
 
   const result = await service.nextBatch(accountId, sessionId, documentId, {
     embeddingProfileId: qwen.id,
@@ -580,6 +678,7 @@ test("shadow reindex reserves capacity, embeds the pending version and atomicall
   assert.equal(result.done, true);
   assert.equal(result.cutover, true);
   assert.equal(result.cleanedIndexVersion, 1);
+  assert.deepEqual(state.providerInputs[0].input, [editedText]);
   assert.equal(state.base.activeIndexVersion, 2);
   assert.equal(state.base.pendingIndexVersion, null);
   assert.deepEqual(state.deletedIndexes, [initialIndexId]);
@@ -604,4 +703,72 @@ test("shadow reindex reserves capacity, embeds the pending version and atomicall
     ]
   );
   assert.deepEqual(state.quotaEvents.at(-1).components, ["chunk_text", "vector"]);
+  assert.deepEqual(state.lifecycleEvents, ["cutover", "release-old"]);
+});
+
+test("failed shadow embedding keeps the active index and old capacity intact", async () => {
+  const failure = knowledgeError(
+    KNOWLEDGE_ERROR_CODES.EMBEDDING_PROVIDER_ERROR,
+    "temporary shadow failure",
+    { status: 502, details: { upstreamStatus: 503, retryable: true } }
+  );
+  const { service, state } = createHarness({
+    active: true,
+    providerFailure: failure,
+    drafts: [{ ordinal: 0, text: "edited but not active", enabled: true }]
+  });
+  const qwen = requireKnowledgeEmbeddingProfile("qwen-text-embedding-v4");
+  const activeChunks = structuredClone(state.chunks);
+  await service.reindex(accountId, baseId, {
+    expectedVersion: 1,
+    embeddingProfileId: qwen.id
+  });
+
+  await assert.rejects(
+    service.nextBatch(accountId, sessionId, documentId, {
+      embeddingProfileId: qwen.id,
+      idempotencyKey: "batch-shadow-failure-01",
+      connection: { baseUrl: qwen.defaultBaseUrl, apiKey: "qwen-session-key" }
+    }),
+    (error) => error === failure
+  );
+
+  assert.equal(state.base.activeIndexVersion, 1);
+  assert.equal(state.base.pendingIndexVersion, 2);
+  assert.equal(state.indexes.get(1).status, "active");
+  assert.equal(state.indexes.get(2).status, "building");
+  assert.deepEqual(
+    state.chunks.filter((chunk) => chunk.indexVersionId === initialIndexId),
+    activeChunks
+  );
+  assert.deepEqual(state.deletedIndexes, []);
+  assert.deepEqual(state.lifecycleEvents, []);
+  assert.equal(state.quotaEvents.some((event) => event.action === "release-index"), false);
+});
+
+test("a fully disabled draft set cuts over without embedding or shadow reservation", async () => {
+  const { service, state } = createHarness({
+    active: true,
+    drafts: [
+      { ordinal: 0, enabled: false },
+      { ordinal: 1, enabled: false }
+    ]
+  });
+  const qwen = requireKnowledgeEmbeddingProfile("qwen-text-embedding-v4");
+  const accepted = await service.reindex(accountId, baseId, {
+    expectedVersion: 1,
+    embeddingProfileId: qwen.id
+  });
+
+  assert.equal(accepted.reindex.totalChunks, 0);
+  assert.equal(accepted.reindex.materializedDrafts, 2);
+  assert.equal(accepted.reindex.disabledChunks, 2);
+  assert.equal(accepted.reindex.reservedBytes, "0");
+  assert.equal(accepted.reindex.cutover, true);
+  assert.equal(state.providerCalls, 0);
+  assert.equal(state.base.activeIndexVersion, 2);
+  assert.equal(state.base.pendingIndexVersion, null);
+  assert(state.materializations.every((item) => item.targetChunkId === null));
+  assert.deepEqual(state.quotaEvents.map((event) => event.action), ["release-index"]);
+  assert.deepEqual(state.lifecycleEvents, ["cutover", "release-old"]);
 });

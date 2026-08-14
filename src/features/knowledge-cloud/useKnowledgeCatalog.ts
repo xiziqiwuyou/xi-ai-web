@@ -1,14 +1,25 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../../api";
 import type { KnowledgeAccount, KnowledgeBase } from "../../types";
-import { knowledgeSessionChangedEvent } from "./integrationState";
+import {
+  knowledgeChatIssue,
+  knowledgeSessionChangedEvent,
+  type KnowledgeSessionChangeReason
+} from "./integrationState";
+
+export type KnowledgeCatalogStatus =
+  | "loading"
+  | "authenticated"
+  | "anonymous"
+  | "unavailable";
 
 export type KnowledgeCatalogState = {
-  status: "loading" | "authenticated" | "anonymous" | "unavailable";
+  status: KnowledgeCatalogStatus;
   account: KnowledgeAccount | null;
   csrfToken: string;
   bases: KnowledgeBase[];
   error: string;
+  sessionExpired: boolean;
 };
 
 const initialState: KnowledgeCatalogState = {
@@ -16,7 +27,8 @@ const initialState: KnowledgeCatalogState = {
   account: null,
   csrfToken: "",
   bases: [],
-  error: ""
+  error: "",
+  sessionExpired: false
 };
 
 export function useKnowledgeCatalog() {
@@ -35,13 +47,16 @@ export function useKnowledgeCatalog() {
         account: session.account,
         csrfToken: session.csrfToken || "",
         bases: response.items,
-        error: ""
+        error: "",
+        sessionExpired: false
       });
     } catch (error) {
+      const issue = knowledgeChatIssue(error);
       setState({
         ...initialState,
-        status: "unavailable",
-        error: error instanceof Error ? error.message : "知识库服务暂时不可用"
+        status: issue.kind === "session-expired" ? "anonymous" : "unavailable",
+        error: issue.message,
+        sessionExpired: issue.kind === "session-expired"
       });
     }
   }, []);
@@ -49,9 +64,17 @@ export function useKnowledgeCatalog() {
   useEffect(() => {
     void refresh();
     const onSessionChanged = (event: Event) => {
-      const authenticated = (event as CustomEvent<{ authenticated?: boolean }>).detail?.authenticated;
+      const detail = (event as CustomEvent<{
+        authenticated?: boolean;
+        reason?: KnowledgeSessionChangeReason;
+      }>).detail;
+      const authenticated = detail?.authenticated;
       if (authenticated === false) {
-        setState({ ...initialState, status: "anonymous" });
+        setState({
+          ...initialState,
+          status: "anonymous",
+          sessionExpired: detail?.reason === "expired"
+        });
         return;
       }
       void refresh();

@@ -590,8 +590,40 @@ function dataDirectoryWritable() {
   }
 }
 
-function buildReadinessPayload() {
+async function buildReadinessPayload() {
   const enabledModels = db.modelCatalog.filter((entry) => entry.enabled !== false);
+  const knowledgeStatus = publicKnowledgeRuntimeStatus(knowledgeRuntime);
+  let knowledgeReadiness = null;
+  if (knowledgeStatus.enabled && knowledgeStatus.available && knowledgeRuntime.readiness) {
+    try {
+      const state = await knowledgeRuntime.readiness();
+      knowledgeReadiness = {
+        ready: state.ready === true,
+        status: state.status,
+        generatedAt: state.generatedAt,
+        reasonCodes: state.reasonCodes,
+        checks: state.checks,
+        worker: state.runtime?.worker || null,
+        objectStore: state.runtime?.objectStore || null
+      };
+    } catch {
+      knowledgeReadiness = {
+        ready: false,
+        status: "unavailable",
+        generatedAt: new Date().toISOString(),
+        reasonCodes: [KNOWLEDGE_ERROR_CODES.DATABASE_UNAVAILABLE],
+        checks: {
+          database: "failed",
+          migrations: "unknown",
+          vectorExtension: "unknown",
+          worker: "unknown",
+          objectStore: "unknown"
+        },
+        worker: null,
+        objectStore: null
+      };
+    }
+  }
   const checks = {
     adminConfigured:
       !isProduction ||
@@ -600,7 +632,10 @@ function buildReadinessPayload() {
     upstream: upstreamState.state === "ready",
     dataWritable: dataDirectoryWritable(),
     chatModel: enabledModels.some((entry) => entry.capabilities.includes("chat")),
-    imageModel: enabledModels.some((entry) => entry.capabilities.includes("image"))
+    imageModel: enabledModels.some((entry) => entry.capabilities.includes("image")),
+    knowledge: !knowledgeStatus.enabled || (
+      knowledgeStatus.available && knowledgeReadiness?.ready === true
+    )
   };
   const ready = Object.values(checks).every(Boolean);
   return {
@@ -608,7 +643,11 @@ function buildReadinessPayload() {
     ready,
     checks,
     metadata: metadataState,
-    upstream: upstreamState
+    upstream: upstreamState,
+    knowledge: {
+      ...knowledgeStatus,
+      readiness: knowledgeReadiness
+    }
   };
 }
 
@@ -790,6 +829,9 @@ try {
 
 if (knowledgeRuntime?.upstreamRef) {
   knowledgeRuntime.upstreamRef.current = db.settings.upstreamBaseUrl;
+}
+if (knowledgeRuntime?.modelCatalogRef) {
+  knowledgeRuntime.modelCatalogRef.current = db.modelCatalog;
 }
 
 const requestGuards = {
@@ -2508,10 +2550,10 @@ app.get("/api/health", (req, res) => {
 
 app.get("/api/diagnostics/sse", handleSseDiagnostic);
 
-app.get("/api/ready", (req, res) => {
-  const readiness = buildReadinessPayload();
+app.get("/api/ready", asyncRoute(async (req, res) => {
+  const readiness = await buildReadinessPayload();
   res.status(readiness.ready ? 200 : 503).json(readiness);
-});
+}));
 
 function publicBootstrapPayload() {
   return {
@@ -2848,6 +2890,7 @@ adminRouter.patch("/model-catalog/order", (req, res) => {
   }
 
   db.modelCatalog = modelIds.map((id, order) => ({ ...catalogById.get(id), order }));
+  if (knowledgeRuntime?.modelCatalogRef) knowledgeRuntime.modelCatalogRef.current = db.modelCatalog;
   saveData();
   appendAudit("model-reorder", {
     count: db.modelCatalog.length,
@@ -3148,6 +3191,7 @@ adminRouter.patch("/metadata-import", asyncRoute(async (req, res) => {
   db.menuItems = nextData.menuItems;
   db.modelVendors = nextData.modelVendors;
   db.modelCatalog = nextData.modelCatalog;
+  if (knowledgeRuntime?.modelCatalogRef) knowledgeRuntime.modelCatalogRef.current = db.modelCatalog;
   db.assistants = nextData.assistants;
   db.appPresets = nextData.appPresets;
   db.promptPresets = nextData.promptPresets;

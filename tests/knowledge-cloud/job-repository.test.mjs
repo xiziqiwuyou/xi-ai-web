@@ -45,7 +45,8 @@ test("job claims use skip-locked leases, reclaim expired work and enforce per-ac
   assert.equal(job.leaseOwner, "worker:test");
   assert.match(calls[0].sql, /FOR UPDATE OF j SKIP LOCKED/);
   assert.match(calls[0].sql, /j\.status = 'running' AND j\.lease_expires_at <= CURRENT_TIMESTAMP/);
-  assert.match(calls[0].sql, /j\.kind <> 'parse' OR a\.status = 'active'/);
+  assert.match(calls[0].sql, /j\.kind NOT IN \('parse', 'ocr'\) OR a\.status = 'active'/);
+  assert.match(calls[0].sql, /active\.kind IN \('parse', 'ocr'\)/);
   assert.match(calls[0].sql, /maxConcurrentIngestionsPerAccount/);
   assert.match(calls[0].sql, /attempts = j\.attempts \+ 1/);
   assert.deepEqual(calls[0].params, [["parse", "cleanup", "reconcile"], "worker:test", 60]);

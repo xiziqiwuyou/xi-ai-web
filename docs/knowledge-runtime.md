@@ -11,6 +11,10 @@ Cloud knowledge is an optional subsystem. The public BYOK workspace remains acco
 
 `KNOWLEDGE_ENABLED` defaults to `false`. When it is `true`, the application validates Node Argon2id support, PostgreSQL connectivity, migration checksums, the `vector` extension, the `KNOWLEDGE_TOKEN_SECRET`, `PUBLIC_ORIGIN`, and required COS environment variables. A failed check closes only `/api/kb/*`; `/api/health` and non-knowledge modules remain available.
 
+Production knowledge sessions require an HTTPS `PUBLIC_ORIGIN`. Plain HTTP is accepted only for `localhost`, `127.0.0.0/8`, or `::1` in development/test; production rejects loopback HTTP as well. Put TLS termination in front of the loopback-bound Web container and preserve the original `Origin` header.
+
+`DATABASE_SSL_MODE` is `disable`, `require`, or `verify-full`. Both TLS-enabled values use Node certificate-chain and hostname verification; the runtime never sets `rejectUnauthorized: false`. TLS query parameters in `DATABASE_URL` are rejected so they cannot override `DATABASE_SSL_*`. Production rejects `disable` unless the operator explicitly sets `KNOWLEDGE_ALLOW_INSECURE_DATABASE=true`; that escape hatch is for isolated local diagnostics, not a production recommendation. `DATABASE_SSL_CA` may contain the trusted PEM chain when the server certificate is not rooted in the platform trust store.
+
 ## Locked Runtime Dependencies
 
 | Package | Version | License | Purpose |
@@ -47,11 +51,15 @@ The migration runner:
 - rejects changed checksums and databases newer than the application;
 - never runs automatic down migrations.
 
-Migration `0001` enables pgvector. Migration `0002` creates the knowledge identity, tenancy, document, chunk, job, quota, and index-version foundation. Migration `0003` adds shared authentication rate-limit storage and fixed-size secret-hash constraints. Migrations `0004` and `0005` add the Admin control plane and direct-upload lifecycle. Migration `0006` adds expired-lease and document-chunk indexes for the durable parser Worker. Migration `0007` adds resumable embedding-batch state, per-account embedding concurrency, and fixed 1024/1536/3072-dimensional pgvector tables with cosine HNSW indexes. The 3072-dimensional table uses `halfvec(3072)` because pgvector HNSW supports at most 2000 dimensions for `vector` and 4000 for `halfvec`.
+Migration `0001` enables pgvector. Migration `0002` creates the knowledge identity, tenancy, document, chunk, job, quota, and index-version foundation. Migration `0003` adds shared authentication rate-limit storage and fixed-size secret-hash constraints. Migrations `0004` and `0005` add the Admin control plane and direct-upload lifecycle. Migration `0006` adds expired-lease and document-chunk indexes for the durable parser Worker. Migration `0007` adds resumable embedding-batch state, per-account embedding concurrency, and fixed 1024/1536/3072-dimensional pgvector tables with cosine HNSW indexes. Migration `0011` adds process-level Worker heartbeats. The 3072-dimensional table uses `halfvec(3072)` because pgvector HNSW supports at most 2000 dimensions for `vector` and 4000 for `halfvec`.
+
+Use separate PostgreSQL login roles in production. The migration role owns schema changes and pgvector extension setup and is supplied only to `npm run knowledge:migrate`. The Web and Worker share a restricted runtime role with `CONNECT`, schema `USAGE`, table `SELECT/INSERT/UPDATE/DELETE`, and required sequence `USAGE/SELECT`, but no database/schema creation or migration-table mutation grants. Configure default privileges from the migration owner so future tables and sequences receive the same runtime grants. Never put the migration-role URL in the Web or Worker environment.
 
 ## Durable Parsing Worker
 
 Run `npm run knowledge:worker` as a process separate from Web/API. Worker concurrency and lease duration are controlled by `KNOWLEDGE_WORKER_CONCURRENCY` and `KNOWLEDGE_WORKER_LEASE_SECONDS`. Jobs are claimed with `FOR UPDATE SKIP LOCKED`; active jobs heartbeat, expired leases are reclaimable, retryable failures use bounded exponential delay, and exhausted jobs remain visible as failed jobs for Admin retry or cancellation.
+
+The Worker also records a process heartbeat while idle. `KNOWLEDGE_WORKER_HEARTBEAT_SECONDS` defaults to `10`; `KNOWLEDGE_WORKER_STALE_SECONDS` defaults to `45` and must be larger. Readiness reports only fresh/stale counts and the latest timestamp, never the Worker ID or lease owner. Graceful shutdown removes the row; a crashed Worker becomes stale after the configured threshold.
 
 Every parse runs in an ephemeral OS directory and a resource-limited Node worker thread. The implementation caps source bytes, ZIP entries, decompressed bytes, compression ratio, XML depth/nodes, PDF pages, slides, spreadsheet rows/cells, normalized bytes, chunks, and wall-clock duration. The temp directory is removed in `finally` on success, retry, cancellation, timeout, and parser failure.
 
@@ -79,6 +87,8 @@ Each batch uses two short transactions around one external provider call:
 3. Re-lock and verify the exact batch/session lease, validate count/order/dimensions, insert into the fixed physical table, settle quota, and mark chunks/documents ready atomically.
 
 `KNOWLEDGE_EMBEDDING_LEASE_SECONDS` defaults to `120`; `KNOWLEDGE_EMBEDDING_REQUEST_TIMEOUT_MS` defaults to `60000` and must remain shorter than the lease. The Admin runtime limit `maxConcurrentEmbeddingsPerAccount` defaults to `2` and supports per-account overrides.
+
+Query rewrite and candidate reranking are separate retrieval enhancements. Both Admin feature flags default to off. A request must explicitly enable an enhancement and supply only a transient `apiKey` plus an enabled Chat `modelId`; the server ignores no caller URL because no URL field is accepted and always uses the administrator-managed upstream. `KNOWLEDGE_RETRIEVAL_ENHANCEMENT_TIMEOUT_MS` defaults to `15000` and is bounded to `1000..60000`. Rerank failures fall back to RRF only when that request explicitly sets `allowFallback: true`. No enhancement credential, query, candidate text, or model output is written to PostgreSQL, COS, audit data, or operations metrics.
 
 Model changes on non-empty knowledge bases use a shadow index. Reindex creation reserves the complete cloned chunk and target vector footprint before copying any chunk. The active version remains readable until every shadow vector is committed; cutover, target reservation settlement, old-version quota release, and old vector/chunk deletion occur in one PostgreSQL transaction.
 
@@ -117,6 +127,28 @@ Operational endpoints:
 - `DELETE /api/admin/knowledge/accounts/:accountId`: marks an account `deleting`, revokes sessions/resets, marks owned bases/documents `deleting`, and queues an account-level `cleanup` job. The worker delegates that job to operations, which cleans deleting bases through the existing base cleanup flow. Maintenance finalizes the account only after no bases, documents, or active jobs remain.
 
 Every mutation requires a non-empty Admin reason and writes `kb_admin_audit`. Audit metadata is bounded and redacted.
+
+`GET /api/ready` includes knowledge only when `KNOWLEDGE_ENABLED=true`. Enabled knowledge is ready only when the runtime, migrations, pgvector, a fresh Worker, and the COS canary are ready. The canary writes 32 random bytes below a server-generated reserved prefix, verifies the exact size with HEAD, and deletes the exact version immediately. Results are cached for `KNOWLEDGE_COS_PROBE_INTERVAL_SECONDS` (default `60`) and each SDK request is bounded by `KNOWLEDGE_COS_PROBE_TIMEOUT_MS` (default `5000`). `KNOWLEDGE_COS_PROBE_ENABLED=false` is an explicit rollback switch and is projected as `disabled`; readiness never exposes the object key, bucket credentials, or raw COS error.
+
+## Staging Acceptance
+
+Run the real-infrastructure gate only against an isolated HTTPS staging deployment:
+
+```powershell
+$env:KNOWLEDGE_ACCEPTANCE_ORIGIN = "https://staging.example.com"
+$env:KNOWLEDGE_ACCEPTANCE_INVITE_CODE = "<one-time staging invite>"
+$env:KNOWLEDGE_ACCEPTANCE_OPENAI_API_KEY = "<disposable key>"
+$env:KNOWLEDGE_ACCEPTANCE_QWEN_API_KEY = "<disposable key>"
+npm run knowledge:acceptance
+```
+
+The runner emits newline-delimited records containing only `PASS`, `FAIL`, or `SKIP`, check names, and fixed error codes. It verifies application readiness, real PostgreSQL migrations/pgvector, the COS canary plus direct upload, Worker parsing, each configured OpenAI/Qwen embedding path, vector retrieval, signed citation opening, asynchronous base cleanup, and account recovery. Missing origin, invite, or provider credentials produce `SKIP`, never `PASS`; exit code `2` means at least one skipped gate, `1` means failure, and `0` means every gate passed. It never prints credentials, signed URLs, document text, cookies, recovery codes, usernames, or object keys.
+
+## Logical Billable Capacity
+
+The default `5 GiB` (`5,368,709,120` bytes) is a logical billable limit, not physical disk usage. It includes the current source object, the current normalized artifact, persisted chunk text, and active plus shadow vector bytes. Shadow rebuild capacity is reserved before work and counts until cutover cleanup releases the retired index.
+
+PostgreSQL row/page overhead, physical B-tree/GIN/HNSW indexes, WAL, replicas, database backups, COS historical versions/delete markers, multipart-upload residue, provider traffic, and operational canary objects are excluded. Operators must budget those separately; a `5 GiB` account can consume more than `5 GiB` of physical PostgreSQL/COS/backup capacity.
 
 ## Backup, Restore And Rebuild
 
@@ -159,4 +191,4 @@ Rollback:
 
 ## Deployment
 
-See [`deploy/knowledge/compose.yaml`](../deploy/knowledge/compose.yaml). The example pins Node 24.15.0 and pgvector 0.8.1/PostgreSQL 17, then runs a migration job, Web/API process, independent worker process, and pgvector PostgreSQL. The migration container receives only database configuration; the worker does not receive Admin credentials. COS remains an external managed service, and permanent COS credentials stay in deployment secrets.
+See [`deploy/knowledge/compose.yaml`](../deploy/knowledge/compose.yaml). The production example pins Node 24.15.0, requires an external PostgreSQL/pgvector service with verified TLS, runs a one-shot migration role, then starts Web/API and independent Worker processes with the restricted runtime role. The Web port binds only to loopback for an HTTPS reverse proxy. The migration container receives only its database configuration; the Worker does not receive Admin credentials. COS remains an external managed service, and permanent COS credentials stay in deployment secrets.

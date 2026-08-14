@@ -24,7 +24,9 @@ function requireParseContext(context) {
       status: 404
     });
   }
-  if (context.baseStatus === "deleting" || !["uploaded", "parsing"].includes(context.documentStatus)) {
+  const canParse = ["uploaded", "parsing"].includes(context.documentStatus) ||
+    (context.documentStatus === "needs_ocr" && context.sourceIsOcr);
+  if (context.baseStatus === "deleting" || !canParse) {
     throw knowledgeError(KNOWLEDGE_ERROR_CODES.JOB_STATE_INVALID, "文档当前状态不能继续解析", {
       status: 409,
       details: { documentStatus: context.documentStatus, baseStatus: context.baseStatus }
@@ -46,6 +48,7 @@ async function requireOwnedJob(transaction, jobId, workerId) {
 export function createKnowledgeIngestionService({
   repositories,
   objectStore,
+  ocrEnabled = false,
   parser = runKnowledgeParserIsolated,
   parserLimits,
   quotaService = createKnowledgeQuotaService({ repositories }),
@@ -138,11 +141,22 @@ export function createKnowledgeIngestionService({
               context.accountId,
               context.documentId,
               parsed.parserVersion,
-              parsed.mimeType
+              parsed.mimeType,
+              ocrEnabled
             );
             if (!marked) {
               throw knowledgeError(KNOWLEDGE_ERROR_CODES.JOB_STATE_INVALID, "文档无法进入待 OCR 状态", {
                 status: 409
+              });
+            }
+            if (ocrEnabled) {
+              await transaction.jobs.enqueueJob({
+                id: cryptoModule.randomUUID(),
+                accountId: context.accountId,
+                knowledgeBaseId: context.knowledgeBaseId,
+                documentId: context.documentId,
+                dedupeKey: `document-ocr:${context.documentId}`,
+                kind: "ocr"
               });
             }
             const completed = await transaction.jobs.completeOwnedJob(job.id, workerId, {
@@ -260,7 +274,9 @@ export function createKnowledgeIngestionService({
             accountId: context.accountId,
             documentId: context.documentId,
             parserVersion: parsed.parserVersion,
-            verifiedMimeType: parsed.mimeType,
+            verifiedMimeType: context.sourceIsOcr
+              ? context.originalVerifiedMimeType
+              : parsed.mimeType,
             normalizedObjectKey,
             normalizedBytes: String(normalized.byteLength)
           });

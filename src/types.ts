@@ -402,6 +402,14 @@ export type KnowledgeEmbeddingConnection = {
   apiKey: string;
 };
 
+export type KnowledgeRetrievalMode = "vector" | "fulltext" | "hybrid";
+
+export type KnowledgeRetrievalFilterReason =
+  | "minimum_relevance"
+  | "adjacent_chunk"
+  | "top_k"
+  | "token_budget";
+
 export type KnowledgeCitation = {
   id: string;
   knowledgeBaseId: string;
@@ -412,7 +420,8 @@ export type KnowledgeCitation = {
   chunkOrdinal: number;
   locator: Record<string, unknown>;
   score: number;
-  mode: "vector";
+  relevance?: number;
+  mode: KnowledgeRetrievalMode;
   source: {
     method: "GET";
     openPath: string;
@@ -425,7 +434,87 @@ export type KnowledgeRetrievalRequest = {
   embeddingConnections?: Partial<
     Record<KnowledgeEmbeddingConnection["vendor"], Pick<KnowledgeEmbeddingConnection, "apiKey">>
   >;
+  queryContext?: string;
   topK?: number;
+  mode?: KnowledgeRetrievalMode;
+  candidateCount?: number;
+  minimumRelevance?: number;
+  contextTokenBudget?: number;
+  queryRewrite?: { enabled: boolean };
+  rerank?: { enabled: boolean; allowFallback?: boolean };
+  enhancementConnection?: { apiKey: string; modelId: string };
+  trace?: boolean;
+};
+
+export type KnowledgeRetrievalTrace = {
+  originalQuery: string;
+  effectiveQuery: string;
+  mode: KnowledgeRetrievalMode;
+  options: {
+    candidateCount: number;
+    minimumRelevance: number;
+    contextTokenBudget: number;
+    queryRewrite: { enabled: boolean };
+    rerank: { enabled: boolean; allowFallback: boolean };
+  };
+  stages: {
+    preflight: { durationMs: number; baseCount: number };
+    rewrite: { durationMs: number; status: "disabled" | "applied" };
+    embedding: { durationMs: number; groupCount: number };
+    recall: {
+      durationMs: number;
+      vectorCandidates: number;
+      fullTextCandidates: number;
+    };
+    rerank: { durationMs: number; status: "disabled" | "applied" | "fallback" };
+    filter: {
+      fusedCandidates: number;
+      belowMinimumRelevance: number;
+      adjacentSuppressed: number;
+    };
+    context: {
+      selectedCandidates: number;
+      contextTokens: number;
+      tokenBudget: number;
+      truncated: boolean;
+    };
+  };
+  candidates: Array<{
+    knowledgeBaseId: string;
+    documentId: string;
+    chunkId: string;
+    ranks: { vector: number | null; fulltext: number | null };
+    rerankRank: number | null;
+    scores: {
+      vector: number | null;
+      fulltext: number | null;
+      relevance: number | null;
+      rrf: number | null;
+    };
+    selected: boolean;
+    filteredReason: KnowledgeRetrievalFilterReason | null;
+    citationId: string | null;
+  }>;
+  profiles: Array<{
+    fingerprint: string;
+    dimensions: number;
+    indexVersions: number[];
+    knowledgeBaseIds: string[];
+  }>;
+  timing: { totalMs: number };
+};
+
+export type KnowledgeRetrievalLabRequest = Omit<
+  KnowledgeRetrievalRequest,
+  "topK" | "mode" | "candidateCount" | "minimumRelevance" | "contextTokenBudget" | "trace"
+> & {
+  query: string;
+  topK: number;
+  mode: KnowledgeRetrievalMode;
+  candidateCount: number;
+  minimumRelevance: number;
+  contextTokenBudget: number;
+  trace: true;
 };
 
 export type KnowledgeSourceResponse = {
@@ -445,13 +534,17 @@ export type KnowledgeSourceResponse = {
 };
 
 export type KnowledgeRetrievalResult = {
-  mode: "vector";
+  mode: KnowledgeRetrievalMode;
   knowledgeBaseIds: string[];
   topK: number;
+  candidateCount: number;
+  minimumRelevance: number;
   maxTopK: number;
   queryBytes: number;
   context: string;
   contextBytes: number;
+  contextTokens: number;
+  contextTokenBudget: number;
   contextTruncated: boolean;
   chunks: Array<{
     citationId: string;
@@ -460,11 +553,26 @@ export type KnowledgeRetrievalResult = {
     chunkId: string;
     ordinal: number;
     text: string;
+    tokenEstimate: number;
     score: number;
-    mode: "vector";
+    relevance: number;
+    mode: KnowledgeRetrievalMode;
   }>;
   citations: KnowledgeCitation[];
+  profileGroups: Array<{
+    embeddingProfileId: string;
+    vendor: KnowledgeEmbeddingConnection["vendor"];
+    actualModel: string;
+    dimensions: number;
+    indexVersions: number[];
+    knowledgeBaseIds: string[];
+  }>;
+  trace?: KnowledgeRetrievalTrace;
   requestId?: string;
+};
+
+export type KnowledgeRetrievalLabResult = KnowledgeRetrievalResult & {
+  trace: KnowledgeRetrievalTrace;
 };
 
 export type KnowledgeEmbeddingBatchResult = {
@@ -496,6 +604,75 @@ export type KnowledgeReindexResult = {
     reservedBytes: string;
     cutover: boolean;
   };
+  requestId?: string;
+};
+
+export type KnowledgeChunkStrategyId = "compact" | "balanced" | "context_rich";
+
+export type KnowledgeChunkStrategyPreset = {
+  id: KnowledgeChunkStrategyId;
+  label: string;
+  maxCharacters: number;
+  overlapCharacters: number;
+};
+
+export type KnowledgeCloudChunk = {
+  id: string;
+  documentId: string;
+  documentName: string;
+  ordinal: number;
+  text: string;
+  textBytes: string;
+  tokenEstimate: number;
+  locator: Record<string, unknown>;
+  enabled: boolean;
+  revision: number;
+  draft: boolean;
+  embeddingStatus: "pending" | "leased" | "ready" | "failed";
+  strategyId: KnowledgeChunkStrategyId;
+  capacity: {
+    activeChunkBytes: string;
+    activeVectorBytes: string;
+    draftChunkBytes: string;
+  };
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
+export type KnowledgeCloudChunkPage = {
+  items: KnowledgeCloudChunk[];
+  nextCursor: string | null;
+  capacity: {
+    sourceBytes: string;
+    normalizedBytes: string;
+    activeChunkBytes: string;
+    activeVectorBytes: string;
+    draftChunkBytes: string;
+  };
+  requestId?: string;
+};
+
+export type KnowledgeChunkPreview = {
+  strategy: KnowledgeChunkStrategyPreset;
+  sourceCharacters: number;
+  sourceBytes: string;
+  sourceTruncated: boolean;
+  totalChunks: number;
+  items: Array<{
+    ordinal: number;
+    text: string;
+    textBytes: string;
+    tokenEstimate: number;
+    locator: Record<string, unknown>;
+  }>;
+  previewTruncated: boolean;
+  requestId?: string;
+};
+
+export type KnowledgeChunkRevisionResult = {
+  chunk: KnowledgeCloudChunk;
+  activeIndexUnchanged: true;
+  shadowReindexRequired: true;
   requestId?: string;
 };
 
@@ -599,6 +776,10 @@ export type KnowledgeAdminLimits = {
 export type KnowledgeAdminSettings = {
   version: number;
   registrationMode: KnowledgeRegistrationMode;
+  retrievalEnhancements: {
+    queryRewriteEnabled: boolean;
+    rerankEnabled: boolean;
+  };
   limits: KnowledgeAdminLimits;
   updatedBy: string;
   updatedAt: string | null;

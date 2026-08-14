@@ -50,6 +50,36 @@ function metrics(overrides = {}) {
       failedChunks: 0,
       ...(overrides.vectors || {})
     },
+    embeddings: {
+      completedBatches: 0,
+      averageLatencyMs: 0,
+      p95LatencyMs: 0,
+      ...(overrides.embeddings || {})
+    },
+    indexes: {
+      pending: 0,
+      oldestPendingAgeSeconds: 0,
+      ...(overrides.indexes || {})
+    },
+    quota: {
+      driftAccounts: 0,
+      usedDriftBytes: "0",
+      reservedDriftBytes: "0",
+      ...(overrides.quota || {})
+    },
+    reconciliation: {
+      state: "ready",
+      accounts: 1,
+      running: 0,
+      queued: 0,
+      failed: 0,
+      partial: 0,
+      databaseObjects: 0,
+      checkedObjects: 0,
+      missingObjects: 0,
+      lastCompletedAt: null,
+      ...(overrides.reconciliation || {})
+    },
     cleanup: {
       deletingAccounts: 0,
       deletingKnowledgeBases: 0,
@@ -100,7 +130,8 @@ function operationsHarness(overrides = {}) {
     ],
     calls: [],
     audits: [],
-    jobs: []
+    jobs: [],
+    reconciliation: null
   };
 
   let nextUuid = 0;
@@ -112,6 +143,15 @@ function operationsHarness(overrides = {}) {
   };
 
   const operations = {
+    async workerFreshness(staleAfterSeconds) {
+      return overrides.worker || {
+        state: "fresh",
+        freshWorkers: 1,
+        staleWorkers: 0,
+        lastHeartbeatAt: "2026-01-01T00:00:00.000Z",
+        staleAfterSeconds
+      };
+    },
     async healthMetrics() {
       return overrides.metrics || metrics();
     },
@@ -128,6 +168,34 @@ function operationsHarness(overrides = {}) {
       const next = job(input);
       state.jobs.push(next);
       return next;
+    },
+    async markReconciliationQueued(id) {
+      state.calls.push(`reconciliationQueued:${id}`);
+      return id;
+    },
+    async beginReconciliation(id) {
+      state.calls.push(`reconciliationRunning:${id}`);
+      return id;
+    },
+    async listAccountObjectReferences(id, limit) {
+      state.calls.push(`reconciliationObjects:${id}:${limit}`);
+      return overrides.objectReferences || {
+        items: [
+          { objectKey: "knowledge/account/source", versionId: "v1" },
+          { objectKey: "knowledge/account/normalized", versionId: null }
+        ],
+        total: 2,
+        truncated: false
+      };
+    },
+    async completeReconciliation(input) {
+      state.calls.push(`reconciliationComplete:${input.missingObjectCount}`);
+      state.reconciliation = structuredClone(input);
+      return input.missingObjectCount || input.quotaChanged ? "drift_detected" : "ready";
+    },
+    async failReconciliation(id, errorCode) {
+      state.calls.push(`reconciliationFailed:${id}:${errorCode}`);
+      return "failed";
     },
     async markAccountDeleting(id, expectedVersion) {
       state.calls.push(`markAccountDeleting:${expectedVersion}`);
@@ -209,6 +277,10 @@ function operationsHarness(overrides = {}) {
     async release(_transaction, reservation) {
       state.calls.push(`release:${reservation.reservationKey}`);
       return { releasedBytes: "128" };
+    },
+    async reconcileAccountCounters() {
+      state.calls.push("reconcileAccountCounters");
+      return overrides.quotaReconciliation || { changed: false, usedBytes: "1024", reservedBytes: "0" };
     }
   };
 
@@ -219,6 +291,25 @@ function operationsHarness(overrides = {}) {
     schemaVersion: 10,
     vectorVersion: "pgvector",
     objectStoreConfigured: true,
+    objectStore: {
+      async readinessProbe() {
+        return overrides.objectStoreProbe || {
+          state: "ok",
+          checkedAt: "2026-01-01T00:00:00.000Z",
+          latencyMs: 10,
+          errorCode: null
+        };
+      },
+      async headObject(reference) {
+        state.calls.push(`head:${reference.objectKey}`);
+        if (overrides.missingObjectKey === reference.objectKey) {
+          const error = new Error("missing");
+          error.code = "KB_UPLOAD_NOT_FOUND";
+          throw error;
+        }
+        return { bytes: 1 };
+      }
+    },
     clock: () => new Date("2026-01-01T00:00:00.000Z"),
     cryptoModule,
     quotaService,
@@ -239,8 +330,36 @@ test("readiness reports degraded and maintenance-required states from safe metri
   });
   const readiness = await maintenanceRequired.service.readiness();
   assert.equal(readiness.status, "maintenance_required");
-  assert.equal(readiness.checks.objectStore, "configured");
+  assert.equal(readiness.checks.objectStore, "ok");
+  assert.equal(readiness.ready, true);
   assert(!JSON.stringify(readiness).includes("apiKey"));
+});
+
+test("readiness fails closed for a stale worker or failed COS canary", async () => {
+  const stale = operationsHarness({
+    worker: {
+      state: "stale",
+      freshWorkers: 0,
+      staleWorkers: 1,
+      lastHeartbeatAt: "2025-12-31T23:00:00.000Z",
+      staleAfterSeconds: 45
+    }
+  });
+  const staleReadiness = await stale.service.readiness();
+  assert.equal(staleReadiness.ready, false);
+  assert(staleReadiness.reasonCodes.includes("KB_WORKER_STALE"));
+
+  const failedProbe = operationsHarness({
+    objectStoreProbe: {
+      state: "failed",
+      checkedAt: "2026-01-01T00:00:00.000Z",
+      latencyMs: 25,
+      errorCode: "KB_OBJECT_STORE_UNAVAILABLE"
+    }
+  });
+  const failedReadiness = await failedProbe.service.readiness();
+  assert.equal(failedReadiness.ready, false);
+  assert(failedReadiness.reasonCodes.includes("KB_OBJECT_STORE_UNAVAILABLE"));
 });
 
 test("scheduleReconciliation queues deduplicated jobs and writes a bounded audit", async () => {
@@ -322,4 +441,18 @@ test("executeAccountCleanup delegates each deleting base without finalizing acco
     `listDeletingBaseIds:${accountId}:100`,
     `executeBaseCleanup:${accountId}:${baseId}`
   ]);
+});
+
+test("executeReconciliation reports bounded database-to-COS drift without exposing keys", async () => {
+  const { service, state } = operationsHarness({
+    missingObjectKey: "knowledge/account/normalized"
+  });
+  const result = await service.executeReconciliation(accountId);
+  assert.equal(result.state, "drift_detected");
+  assert.equal(result.databaseObjectCount, 2);
+  assert.equal(result.checkedObjectCount, 2);
+  assert.equal(result.missingObjectCount, 1);
+  assert.equal("items" in result, false);
+  assert.equal(JSON.stringify(result).includes("knowledge/account"), false);
+  assert.equal(state.reconciliation.missingObjectCount, 1);
 });

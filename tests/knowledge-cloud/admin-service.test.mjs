@@ -21,6 +21,8 @@ function runtimeSettings(overrides = {}) {
     maxConcurrentEmbeddingsPerAccount: 2,
     retrievalRequestsPerMinutePerAccount: 60,
     maxRetrievalTopK: 20,
+    queryRewriteEnabled: false,
+    rerankEnabled: false,
     updatedBy: "migration",
     updatedAt: "2026-01-01T00:00:00.000Z",
     ...overrides
@@ -152,6 +154,35 @@ test("lowering runtime limits updates inherited quota without touching usage or 
   );
   assert.deepEqual(state.calls, ["updateRuntimeSettings", "applyInheritedQuota", "audit:succeeded"]);
   assert.equal(state.audits[0].operation, "settings.update");
+});
+
+test("retrieval enhancement flags default off and update atomically with runtime settings", async () => {
+  const { service, state } = serviceHarness();
+  const current = await service.settings();
+  assert.deepEqual(current.retrievalEnhancements, {
+    queryRewriteEnabled: false,
+    rerankEnabled: false
+  });
+  const limits = Object.fromEntries(
+    Object.entries(runtimeSettings()).filter(([key]) =>
+      key.startsWith("max") || key === "defaultQuotaBytes" ||
+      key === "retrievalRequestsPerMinutePerAccount"
+    )
+  );
+  const updated = await service.updateSettings({
+    expectedVersion: 1,
+    registrationMode: "invite_only",
+    retrievalEnhancements: { queryRewriteEnabled: true, rerankEnabled: true },
+    limits,
+    reason: "enable bounded retrieval enhancements"
+  }, { actor: "admin", requestId: "request-settings-enhancements" });
+
+  assert.deepEqual(updated.retrievalEnhancements, {
+    queryRewriteEnabled: true,
+    rerankEnabled: true
+  });
+  assert.equal(state.settings.queryRewriteEnabled, true);
+  assert.equal(state.settings.rerankEnabled, true);
 });
 
 test("account list is a safe projection with effective limits", async () => {

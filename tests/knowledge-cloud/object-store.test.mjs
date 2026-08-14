@@ -224,3 +224,34 @@ test("COS failures are typed and omit permanent credentials", async () => {
     }
   );
 });
+
+test("COS readiness canary is bounded, cached, cleaned up and key-free", async () => {
+  const calls = [];
+  class FakeCos {
+    async putObject(input) {
+      calls.push({ operation: "put", input });
+      return { VersionId: "canary-version" };
+    }
+    async headObject(input) {
+      calls.push({ operation: "head", input });
+      return { headers: { "content-length": "32" } };
+    }
+    async deleteObject(input) {
+      calls.push({ operation: "delete", input });
+      return {};
+    }
+  }
+  const store = createTencentCosObjectStore(
+    { ...config, probeIntervalSeconds: 60, probeTimeoutMs: 1000 },
+    { sts: {}, CosClient: FakeCos }
+  );
+  const first = await store.readinessProbe({ force: true });
+  const second = await store.readinessProbe();
+  assert.equal(first.state, "ok");
+  assert.deepEqual(second, first);
+  assert.deepEqual(calls.map((call) => call.operation), ["put", "head", "delete"]);
+  assert.equal(calls[0].input.ContentLength, 32);
+  assert.equal(calls[2].input.VersionId, "canary-version");
+  assert.equal(JSON.stringify(first).includes("__xi_ai_knowledge_canary"), false);
+  assert.equal(JSON.stringify(first).includes(config.secretKey), false);
+});

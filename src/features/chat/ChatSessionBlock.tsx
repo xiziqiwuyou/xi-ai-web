@@ -55,6 +55,7 @@ import { activeChatCommand, chatCommandMatches, removeChatCommand } from "./chat
 import { skillCompatibility } from "../automation/toolCompatibility";
 import CloudKnowledgeSelector from "../knowledge-cloud/CloudKnowledgeSelector";
 import KnowledgeCitationList from "../knowledge-cloud/KnowledgeCitationList";
+import type { KnowledgeCatalogStatus } from "../knowledge-cloud/useKnowledgeCatalog";
 import UserMcpConnectionsMenu, { type ActiveUserMcpConnection } from "./UserMcpConnectionsMenu";
 import type { ScopedUserMcpProfile, UserMcpProfileScope } from "./userMcpProfiles";
 import { normalizeKnowledgeBaseIds } from "../knowledge-cloud/integrationState";
@@ -87,7 +88,7 @@ export type SessionUiState = {
   pendingMcpApproval?: McpApprovalRequest;
   knowledgeBaseIds: string[];
   reasoningEffort: ReasoningEffort;
-  requestPhase: "idle" | "searching" | "generating" | "buffering" | "awaiting-approval" | "failed" | "cancelled";
+  requestPhase: "idle" | "retrieving" | "searching" | "generating" | "buffering" | "awaiting-approval" | "failed" | "cancelled";
   notice: string;
 };
 
@@ -212,7 +213,9 @@ export type ChatSessionBlockProps = {
   userMcpProfiles: ScopedUserMcpProfile[];
   userMcpConnections: ActiveUserMcpConnection[];
   searchConfigured: boolean;
-  knowledgeAuthenticated: boolean;
+  knowledgeStatus: KnowledgeCatalogStatus;
+  knowledgeError: string;
+  knowledgeSessionExpired: boolean;
   knowledgeBases: KnowledgeBase[];
   apps: AppPreset[];
   assistant?: Assistant;
@@ -267,7 +270,9 @@ export function ChatSessionBlock({
   userMcpProfiles,
   userMcpConnections,
   searchConfigured,
-  knowledgeAuthenticated,
+  knowledgeStatus,
+  knowledgeError,
+  knowledgeSessionExpired,
   knowledgeBases,
   apps,
   assistant,
@@ -1103,15 +1108,17 @@ export function ChatSessionBlock({
                   triggerIcon={<Globe2 size={14} aria-hidden="true" />}
                   triggerText={searchTriggerText}
                 />
-                {knowledgeAuthenticated ? (
-                  <CloudKnowledgeSelector
-                    compact
-                    bases={knowledgeBases}
-                    selectedIds={ui.knowledgeBaseIds}
-                    onChange={onKnowledgeChange}
-                    disabled={streaming}
-                  />
-                ) : null}
+                <CloudKnowledgeSelector
+                  compact
+                  bases={knowledgeBases}
+                  selectedIds={ui.knowledgeBaseIds}
+                  onChange={onKnowledgeChange}
+                  disabled={streaming}
+                  availability={knowledgeStatus}
+                  unavailableMessage={knowledgeError}
+                  retrieving={ui.requestPhase === "retrieving"}
+                  sessionExpired={knowledgeSessionExpired}
+                />
                 {mcpTools.length ? (
                   <FigmaMenu
                     className={`figma-mcp-tool-menu${ui.mcpToolIds.length ? " active" : ""}`}

@@ -38,8 +38,8 @@ function runtimeFixture() {
     }
   };
   const retrieval = {
-    async retrieve(ownerId, input) {
-      calls.push({ operation: "retrieve", ownerId, input });
+    async retrieve(ownerId, input, options = {}) {
+      calls.push({ operation: "retrieve", ownerId, input, signal: options.signal });
       if (input.query === "fail") {
         throw knowledgeError(KNOWLEDGE_ERROR_CODES.EMBEDDING_PROVIDER_ERROR, "provider failed", {
           status: 502,
@@ -130,6 +130,8 @@ test("retrieval route requires knowledge auth, exact Origin and CSRF", async () 
     assert.equal(response.headers.get("cache-control"), "no-store");
     assert.equal((await response.json()).context, "bounded");
     assert.equal(fixture.calls[0].ownerId, "account-1");
+    assert(fixture.calls[0].signal instanceof AbortSignal);
+    assert.equal(fixture.calls[0].signal.aborted, false);
 
     const missingCsrf = await fetch(`${baseUrl}/api/kb/retrieve`, {
       method: "POST",
@@ -142,6 +144,46 @@ test("retrieval route requires knowledge auth, exact Origin and CSRF", async () 
     });
     assert.equal(missingCsrf.status, 403);
     assert.equal((await missingCsrf.json()).error.code, KNOWLEDGE_ERROR_CODES.CSRF_INVALID);
+  });
+});
+
+test("retrieval route aborts provider work when the client disconnects", async () => {
+  const fixture = runtimeFixture();
+  let observedSignal;
+  let resolveStarted;
+  const started = new Promise((resolve) => { resolveStarted = resolve; });
+  let resolveAborted;
+  const aborted = new Promise((resolve) => { resolveAborted = resolve; });
+  fixture.runtime.retrieval.retrieve = async (_ownerId, _input, { signal } = {}) => {
+    observedSignal = signal;
+    resolveStarted();
+    return new Promise((_resolve, reject) => {
+      signal.addEventListener("abort", () => {
+        resolveAborted();
+        reject(signal.reason || new Error("aborted"));
+      }, { once: true });
+    });
+  };
+
+  await withServer(fixture.runtime, async (baseUrl) => {
+    const controller = new AbortController();
+    const request = fetch(`${baseUrl}/api/kb/retrieval`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Origin: "https://ai.example.com",
+        Cookie: "xi_kb_session=session-token",
+        "X-Knowledge-CSRF": "csrf-token"
+      },
+      body: JSON.stringify({ query: "cancel me", knowledgeBaseIds: ["base-1"] }),
+      signal: controller.signal
+    });
+    await started;
+    controller.abort();
+    await assert.rejects(request, (error) => error.name === "AbortError");
+    await aborted;
+    assert(observedSignal instanceof AbortSignal);
+    assert.equal(observedSignal.aborted, true);
   });
 });
 

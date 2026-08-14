@@ -955,7 +955,10 @@ assert(chatModule.includes("supportsChatImageInput"), "Chat image entry and send
 assert(chatModule.includes('disabled={streaming || !imageInputEnabled}'), "the hidden Chat image input must be disabled for non-vision models");
 assert(chatModule.includes("setPendingModelChange"), "switching away from a vision model with pending images must require confirmation");
 assert(chatModule.includes("启用联网搜索时，请先输入要搜索的问题"), "attachment-only messages must not trigger independent search");
-assert(chatModule.includes('setRequestPhase(conversation.id, ui.searchProvider ? "searching" : "generating")'), "Chat must distinguish independent search from model generation");
+assert(
+  chatModule.includes('knowledgeBaseIds.length ? "retrieving" : ui.searchProvider ? "searching" : "generating"'),
+  "Chat must distinguish knowledge retrieval, independent search, and model generation"
+);
 assert(!chatModule.includes("inferredSearchProvider"), "Chat must not infer an independent search provider from the selected model");
 assert(chatModule.includes("当前 Skill 需要联网搜索，请先选择智谱 GLM 或 Kimi"), "Skills must not bypass explicit independent-search provider selection");
 assert(chatModule.includes("consumeAssistantLaunch"), "Chat must consume the versioned assistant launch contract");

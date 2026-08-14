@@ -450,15 +450,99 @@ function PlusIcon() { return <span className="knowledge-admin-section-icon" aria
 function LimitsSection({ onNotice, onError }: Omit<Props, "section">) {
   const [settings, setSettings] = useState<KnowledgeAdminSettings | null>(null);
   const [limits, setLimits] = useState<KnowledgeAdminLimits | null>(null);
+  const [retrievalEnhancements, setRetrievalEnhancements] = useState<KnowledgeAdminSettings["retrievalEnhancements"]>({
+    queryRewriteEnabled: false,
+    rerankEnabled: false
+  });
   const [reason, setReason] = useState("");
   const { loading, run } = useSectionRequest("knowledge-limits", onError);
-  const load = () => void run(api.knowledgeAdminSettings, (next) => { setSettings(next); setLimits(next.limits); });
+  const load = () => void run(api.knowledgeAdminSettings, (next) => {
+    setSettings(next);
+    setLimits(next.limits);
+    setRetrievalEnhancements(next.retrievalEnhancements || {
+      queryRewriteEnabled: false,
+      rerankEnabled: false
+    });
+  });
   useEffect(load, []);
   const save = () => {
     if (!settings || !limits || !reason.trim()) { onError("请填写限额变更原因"); return; }
-    void run(() => api.updateKnowledgeAdminSettings({ expectedVersion: settings.version, registrationMode: settings.registrationMode, limits, reason: reason.trim() }), (next) => { setSettings(next); setLimits(next.limits); setReason(""); onNotice("全局运行限额已保存"); });
+    void run(() => api.updateKnowledgeAdminSettings({
+      expectedVersion: settings.version,
+      registrationMode: settings.registrationMode,
+      retrievalEnhancements,
+      limits,
+      reason: reason.trim()
+    }), (next) => {
+      setSettings(next);
+      setLimits(next.limits);
+      setRetrievalEnhancements(next.retrievalEnhancements || {
+        queryRewriteEnabled: false,
+        rerankEnabled: false
+      });
+      setReason("");
+      onNotice("全局运行限额已保存");
+    });
   };
-  return <section id="admin-section-knowledge-limits" className="admin-section knowledge-admin-section"><div className="section-title"><HardDrive size={17} /><h2>运行限额</h2></div><p className="admin-mini-copy">全局默认值只影响新账号和后续新增操作。降低限额不会删除已有数据或停止运行中的任务。</p>{limits ? <div className="knowledge-admin-limit-grid global">{limitLabels.map((item) => <label key={item.key}>{item.label}{item.unit === "bytes" ? <small>字节</small> : null}<input type="number" min={0} value={limits[item.key]} onChange={(event) => setLimits((current) => current ? ({ ...current, [item.key]: Number(event.target.value) }) : current)} /></label>)}</div> : <p className="admin-loading">正在读取运行限额。</p>}<ReasonField value={reason} onChange={setReason} id="knowledge-limits-reason" /><button type="button" className="primary-action" onClick={save} disabled={loading || !limits}><Save size={15} />保存运行限额</button></section>;
+  return (
+    <section id="admin-section-knowledge-limits" className="admin-section knowledge-admin-section">
+      <div className="section-title"><HardDrive size={17} /><h2>运行限额</h2></div>
+      <p className="admin-mini-copy">全局默认值只影响新账号和后续新增操作。降低限额不会删除已有数据或停止运行中的任务。</p>
+      {limits ? (
+        <div className="knowledge-admin-limit-grid global">
+          {limitLabels.map((item) => (
+            <label key={item.key}>
+              {item.label}{item.unit === "bytes" ? <small>字节</small> : null}
+              <input
+                type="number"
+                min={0}
+                value={limits[item.key]}
+                onChange={(event) => setLimits((current) => current
+                  ? ({ ...current, [item.key]: Number(event.target.value) })
+                  : current)}
+              />
+            </label>
+          ))}
+        </div>
+      ) : <p className="admin-loading">正在读取运行限额。</p>}
+      <div className="knowledge-admin-settings-block">
+        <div className="knowledge-admin-subheading">
+          <div><h3>检索增强</h3><span>默认关闭。启用后仍需用户在单次请求中明确选择并提供临时 Key。</span></div>
+          <ShieldCheck size={16} />
+        </div>
+        <div className="knowledge-admin-mode-grid" aria-label="检索增强功能开关">
+          <label className={retrievalEnhancements.queryRewriteEnabled ? "is-selected" : ""}>
+            <input
+              type="checkbox"
+              checked={retrievalEnhancements.queryRewriteEnabled}
+              onChange={(event) => setRetrievalEnhancements((current) => ({
+                ...current,
+                queryRewriteEnabled: event.target.checked
+              }))}
+            />
+            <strong>查询改写</strong>
+            <span>在召回前优化检索表达，不保存查询或 Key。</span>
+          </label>
+          <label className={retrievalEnhancements.rerankEnabled ? "is-selected" : ""}>
+            <input
+              type="checkbox"
+              checked={retrievalEnhancements.rerankEnabled}
+              onChange={(event) => setRetrievalEnhancements((current) => ({
+                ...current,
+                rerankEnabled: event.target.checked
+              }))}
+            />
+            <strong>候选重排</strong>
+            <span>对有限候选进行模型重排，失败仅按请求策略回退。</span>
+          </label>
+        </div>
+      </div>
+      <ReasonField value={reason} onChange={setReason} id="knowledge-limits-reason" />
+      <button type="button" className="primary-action" onClick={save} disabled={loading || !limits}>
+        <Save size={15} />保存运行限额
+      </button>
+    </section>
+  );
 }
 
 function JobsSection({ onNotice, onError, requestConfirmation }: Omit<Props, "section">) {

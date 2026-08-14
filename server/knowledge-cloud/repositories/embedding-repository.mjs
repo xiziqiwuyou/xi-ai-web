@@ -109,6 +109,18 @@ function normalizeProgress(row) {
   };
 }
 
+function normalizeMaterializationFootprint(row, lockedChunkCount) {
+  return {
+    lockedChunkCount,
+    sourceChunkCount: asNumber(row?.source_chunk_count),
+    targetChunkCount: asNumber(row?.target_chunk_count),
+    chunkBytes: asByteString(row?.chunk_bytes),
+    draftChunkCount: asNumber(row?.draft_chunk_count),
+    disabledChunkCount: asNumber(row?.disabled_chunk_count),
+    incompleteChunks: asNumber(row?.incomplete_chunks)
+  };
+}
+
 function vectorTable(dimensions) {
   const storage = VECTOR_TABLES[Number(dimensions)];
   if (!storage) {
@@ -526,21 +538,124 @@ export function createKnowledgeEmbeddingRepository(queryable) {
       }));
     },
 
+    async prepareShadowMaterialization(accountId, knowledgeBaseId, indexVersionId) {
+      const locked = await queryable.query(
+        `SELECT id
+         FROM kb_chunks
+         WHERE account_id = $1 AND knowledge_base_id = $2 AND index_version_id = $3
+         ORDER BY id
+         FOR UPDATE`,
+        [accountId, knowledgeBaseId, indexVersionId]
+      );
+      const result = await queryable.query(
+        `SELECT COUNT(*)::integer AS source_chunk_count,
+                COUNT(*) FILTER (WHERE effective.enabled)::integer AS target_chunk_count,
+                COALESCE(SUM(CASE WHEN effective.enabled THEN effective.text_bytes ELSE 0 END), 0)::text
+                  AS chunk_bytes,
+                COUNT(*) FILTER (WHERE effective.draft_revision IS NOT NULL)::integer
+                  AS draft_chunk_count,
+                COUNT(*) FILTER (WHERE NOT effective.enabled)::integer AS disabled_chunk_count,
+                COUNT(*) FILTER (WHERE effective.embedding_state <> 'ready')::integer
+                  AS incomplete_chunks
+         FROM (
+           SELECT c.embedding_state,
+                  COALESCE(draft.enabled, c.enabled) AS enabled,
+                  COALESCE(draft.text_bytes, c.text_bytes) AS text_bytes,
+                  draft.revision AS draft_revision
+           FROM kb_chunks c
+           LEFT JOIN LATERAL (
+             SELECT r.revision, r.text_bytes, r.enabled
+             FROM kb_chunk_revisions r
+             WHERE r.account_id = c.account_id
+               AND r.knowledge_base_id = c.knowledge_base_id
+               AND r.document_id = c.document_id
+               AND r.source_chunk_id = c.id
+               AND r.source_index_version_id = c.index_version_id
+             ORDER BY r.revision DESC
+             LIMIT 1
+           ) draft ON TRUE
+           WHERE c.account_id = $1 AND c.knowledge_base_id = $2
+             AND c.index_version_id = $3
+         ) effective`,
+        [accountId, knowledgeBaseId, indexVersionId]
+      );
+      return normalizeMaterializationFootprint(result.rows?.[0], locked.rows?.length || 0);
+    },
+
     async cloneIndexChunks({ accountId, knowledgeBaseId, sourceIndexVersionId, targetIndexVersionId }) {
       const result = await queryable.query(
         `INSERT INTO kb_chunks (
            id, account_id, knowledge_base_id, document_id, index_version_id,
            ordinal, text_content, text_bytes, token_estimate, source_locator,
-           content_hash, embedding_state
+           content_hash, embedding_state, enabled, revision, chunk_strategy_id
          )
          SELECT md5(c.id::text || ':' || $4::text)::uuid,
                 c.account_id, c.knowledge_base_id, c.document_id, $4,
-                c.ordinal, c.text_content, c.text_bytes, c.token_estimate,
-                c.source_locator, c.content_hash, 'pending'
+                c.ordinal,
+                COALESCE(draft.text_content, c.text_content),
+                COALESCE(draft.text_bytes, c.text_bytes),
+                COALESCE(draft.token_estimate, c.token_estimate),
+                COALESCE(draft.source_locator, c.source_locator),
+                CASE WHEN draft.revision IS NULL THEN c.content_hash
+                     ELSE md5(draft.text_content) || md5('kb:' || draft.text_content) END,
+                'pending', true,
+                COALESCE(draft.revision, c.revision),
+                COALESCE(draft.chunk_strategy_id, c.chunk_strategy_id)
          FROM kb_chunks c
+         LEFT JOIN LATERAL (
+           SELECT r.revision, r.text_content, r.text_bytes, r.token_estimate,
+                  r.source_locator, r.enabled, r.chunk_strategy_id
+           FROM kb_chunk_revisions r
+           WHERE r.account_id = c.account_id
+             AND r.knowledge_base_id = c.knowledge_base_id
+             AND r.document_id = c.document_id
+             AND r.source_chunk_id = c.id
+             AND r.source_index_version_id = c.index_version_id
+           ORDER BY r.revision DESC
+           LIMIT 1
+         ) draft ON TRUE
          WHERE c.account_id = $1 AND c.knowledge_base_id = $2
            AND c.index_version_id = $3 AND c.embedding_state = 'ready'
+           AND COALESCE(draft.enabled, c.enabled)
          ORDER BY c.document_id, c.ordinal`,
+        [accountId, knowledgeBaseId, sourceIndexVersionId, targetIndexVersionId]
+      );
+      return result.rowCount || 0;
+    },
+
+    async recordShadowDraftMaterializations({
+      accountId,
+      knowledgeBaseId,
+      sourceIndexVersionId,
+      targetIndexVersionId
+    }) {
+      const result = await queryable.query(
+        `INSERT INTO kb_chunk_revision_materializations (
+           id, account_id, knowledge_base_id, document_id, source_chunk_id,
+           revision_id, source_index_version_id, target_index_version_id,
+           target_chunk_id, revision, enabled, text_bytes
+         )
+         SELECT md5(r.id::text || ':' || $4::text)::uuid,
+                c.account_id, c.knowledge_base_id, c.document_id, c.id,
+                r.id, c.index_version_id, $4,
+                CASE WHEN r.enabled THEN md5(c.id::text || ':' || $4::text)::uuid ELSE NULL END,
+                r.revision, r.enabled, r.text_bytes
+         FROM kb_chunks c
+         JOIN LATERAL (
+           SELECT r.id, r.revision, r.enabled, r.text_bytes
+           FROM kb_chunk_revisions r
+           WHERE r.account_id = c.account_id
+             AND r.knowledge_base_id = c.knowledge_base_id
+             AND r.document_id = c.document_id
+             AND r.source_chunk_id = c.id
+             AND r.source_index_version_id = c.index_version_id
+           ORDER BY r.revision DESC
+           LIMIT 1
+         ) r ON TRUE
+         WHERE c.account_id = $1 AND c.knowledge_base_id = $2
+           AND c.index_version_id = $3
+         ON CONFLICT (target_index_version_id, source_chunk_id) DO NOTHING
+         RETURNING id`,
         [accountId, knowledgeBaseId, sourceIndexVersionId, targetIndexVersionId]
       );
       return result.rowCount || 0;

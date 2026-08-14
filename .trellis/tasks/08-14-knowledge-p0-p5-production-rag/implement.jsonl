@@ -1,0 +1,8 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend knowledge runtime, database, security, and production-readiness guidance."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Backend authorization, redaction, validation, and test quality rules."}
+{"file":".trellis/spec/backend/public-ai-production-boundary.md","reason":"BYOK upstream, readiness, and production trust-boundary requirements."}
+{"file":".trellis/spec/frontend/index.md","reason":"Frontend knowledge workspace and Chat integration guidance."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Accessible dialogs, overlays, controls, responsive layout, and component structure."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Session-only credentials and knowledge UI state ownership."}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"Cross-layer API and shared type contracts."}
+{"file":".trellis/tasks/08-14-knowledge-p0-p5-production-rag/research/knowledge-audit-2026-08-14.md","reason":"Verified current implementation, gaps, and product-reference findings."}

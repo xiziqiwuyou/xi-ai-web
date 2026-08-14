@@ -103,6 +103,9 @@ import { isUserProviderReady, userConnectionPayload } from "../settings/userProv
 import { searchServiceForUserProvider } from "../settings/searchServiceConfig";
 import {
   knowledgeEmbeddingConnectionsForBases,
+  emitKnowledgeSessionChanged,
+  isKnowledgeBaseReady,
+  knowledgeChatIssue,
   knowledgeLogoutEvent,
   loadChatKnowledgeSelections,
   missingKnowledgeEmbeddingVendors,
@@ -745,6 +748,7 @@ function ChatModule({
       conversationId: string,
       selectedModel: ModelCatalogEntry,
       messageAttachments: ChatAttachment[],
+      knowledgeBaseIds: string[],
       event: ChatStreamEvent
     ) => {
       if (event.type === "meta") {
@@ -813,7 +817,12 @@ function ChatModule({
       }
 
       setRequestPhase(conversationId, "idle");
-      patchSessionUi(conversationId, { pendingMcpApproval: undefined });
+      patchSessionUi(conversationId, {
+        pendingMcpApproval: undefined,
+        notice: knowledgeBaseIds.length && !event.message.knowledgeCitations?.length
+          ? "未检索到可靠匹配，未使用知识库内容生成回答。"
+          : ""
+      });
       const finalMessageId = streamingMessageIdRef.current;
       clearStreamingSchedules();
       streamingRenderRef.current = null;
@@ -883,7 +892,11 @@ function ChatModule({
     let embeddingConnections;
     if (knowledgeBaseIds.length) {
       if (knowledgeCatalog.status !== "authenticated" || !knowledgeCatalog.csrfToken) {
-        patchSessionUi(conversation.id, { notice: "知识库账号已退出，请重新登录后再引用云知识库。" });
+        patchSessionUi(conversation.id, {
+          notice: knowledgeCatalog.sessionExpired
+            ? "知识库会话已过期，请重新登录后再引用云知识库。"
+            : "知识库账号已退出，请重新登录后再引用云知识库。"
+        });
         return;
       }
       const visibleIds = new Set(knowledgeCatalog.bases.map((base) => base.id));
@@ -892,6 +905,13 @@ function ChatModule({
         patchSessionUi(conversation.id, {
           knowledgeBaseIds: knowledgeBaseIds.filter((id) => visibleIds.has(id)),
           notice: "部分知识库已不存在或无权访问，请重新选择。"
+        });
+        return;
+      }
+      const selectedBases = knowledgeCatalog.bases.filter((base) => knowledgeBaseIds.includes(base.id));
+      if (selectedBases.some((base) => !isKnowledgeBaseReady(base))) {
+        patchSessionUi(conversation.id, {
+          notice: "所选知识库还没有可检索的已就绪文档。"
         });
         return;
       }
@@ -990,7 +1010,10 @@ function ChatModule({
 
     requestInFlightConversationIdRef.current = conversation.id;
     patchSessionUi(conversation.id, { draft: "", appId: "", notice: "" });
-    setRequestPhase(conversation.id, ui.searchProvider ? "searching" : "generating");
+    setRequestPhase(
+      conversation.id,
+      knowledgeBaseIds.length ? "retrieving" : ui.searchProvider ? "searching" : "generating"
+    );
     setStreamingConversationId(conversation.id);
     const controller = new AbortController();
     abortRef.current = controller;
@@ -1030,7 +1053,13 @@ function ChatModule({
           ...(knowledgeBaseIds.length ? { knowledgeBaseIds, embeddingConnections } : {}),
           connection: userConnectionPayload(userProvider)
         },
-        (event) => handleStreamEvent(conversation.id, selectedModel, messageAttachments, event),
+        (event) => handleStreamEvent(
+          conversation.id,
+          selectedModel,
+          messageAttachments,
+          knowledgeBaseIds,
+          event
+        ),
         controller.signal,
         knowledgeBaseIds.length ? knowledgeCatalog.csrfToken : ""
       );
@@ -1053,7 +1082,9 @@ function ChatModule({
         ));
       }
       if (!aborted) {
-        const message = error instanceof ApiError || error instanceof Error ? error.message : "发送失败";
+        const issue = knowledgeBaseIds.length ? knowledgeChatIssue(error) : null;
+        if (issue?.kind === "session-expired") emitKnowledgeSessionChanged(false, "expired");
+        const message = issue?.message || (error instanceof ApiError || error instanceof Error ? error.message : "发送失败");
         patchSessionUi(conversation.id, { notice: message, draft: rawContent, appId: selectedApp?.id || "" });
       }
     } finally {
@@ -1519,7 +1550,9 @@ function ChatModule({
               userMcpProfiles={userMcpProfiles}
               userMcpConnections={userMcpConnections}
               searchConfigured={searchConfigured}
-              knowledgeAuthenticated={knowledgeCatalog.status === "authenticated"}
+              knowledgeStatus={knowledgeCatalog.status}
+              knowledgeError={knowledgeCatalog.error}
+              knowledgeSessionExpired={knowledgeCatalog.sessionExpired}
               knowledgeBases={knowledgeCatalog.bases}
               apps={appPresets.filter((app) => app.enabled)}
               assistant={boundAssistant}

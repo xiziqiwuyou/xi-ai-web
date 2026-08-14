@@ -24,7 +24,12 @@ import type {
   KnowledgeAuthResponse,
   KnowledgeBase,
   KnowledgeCleanupJob,
+  KnowledgeCloudChunkPage,
   KnowledgeCloudDocument,
+  KnowledgeChunkPreview,
+  KnowledgeChunkRevisionResult,
+  KnowledgeChunkStrategyId,
+  KnowledgeChunkStrategyPreset,
   KnowledgeEmbeddingBatchResult,
   KnowledgeEmbeddingConnection,
   KnowledgeEmbeddingProfile,
@@ -43,6 +48,8 @@ import type {
   KnowledgeAdminSettings,
   KnowledgePublicConfig,
   KnowledgeReindexResult,
+  KnowledgeRetrievalLabRequest,
+  KnowledgeRetrievalLabResult,
   KnowledgeRetrievalRequest,
   KnowledgeRetrievalResult,
   KnowledgeUploadGrant,
@@ -360,6 +367,17 @@ export const api = {
     headers: { "X-Knowledge-CSRF": csrfToken },
     body: JSON.stringify(payload)
   }),
+  runKnowledgeRetrievalLab: (
+    csrfToken: string,
+    payload: KnowledgeRetrievalLabRequest,
+    signal?: AbortSignal
+  ) => apiJson<KnowledgeRetrievalLabResult>("/api/kb/retrieval", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "X-Knowledge-CSRF": csrfToken },
+    body: JSON.stringify(payload),
+    signal
+  }),
   knowledgeRegenerateRecoveryCode: (csrfToken: string) =>
     apiJson<{ account: KnowledgeAuthResponse["account"]; recoveryCode: string; requestId?: string }>(
       "/api/kb/auth/recovery-code",
@@ -434,6 +452,47 @@ export const api = {
       `/api/kb/bases/${encodeURIComponent(baseId)}/documents`,
       { credentials: "same-origin" }
     ),
+  knowledgeChunkStrategyPresets: () =>
+    apiJson<{ items: KnowledgeChunkStrategyPreset[]; requestId?: string }>(
+      "/api/kb/chunk-strategy-presets",
+      { credentials: "same-origin" }
+    ),
+  knowledgeDocumentChunks: (
+    documentId: string,
+    params: { cursor?: string; limit?: number } = {}
+  ) => {
+    const search = new URLSearchParams();
+    if (params.cursor) search.set("cursor", params.cursor);
+    if (params.limit) search.set("limit", String(params.limit));
+    const query = search.toString();
+    return apiJson<KnowledgeCloudChunkPage>(
+      `/api/kb/documents/${encodeURIComponent(documentId)}/chunks${query ? `?${query}` : ""}`,
+      { credentials: "same-origin" }
+    );
+  },
+  previewKnowledgeDocumentChunks: (
+    csrfToken: string,
+    documentId: string,
+    chunkStrategyId: KnowledgeChunkStrategyId
+  ) => apiJson<KnowledgeChunkPreview>(
+    `/api/kb/documents/${encodeURIComponent(documentId)}/chunks/preview`,
+    {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "X-Knowledge-CSRF": csrfToken },
+      body: JSON.stringify({ chunkStrategyId })
+    }
+  ),
+  reviseKnowledgeChunk: (
+    csrfToken: string,
+    chunkId: string,
+    payload: { expectedRevision: number; text?: string; enabled?: boolean }
+  ) => apiJson<KnowledgeChunkRevisionResult>(`/api/kb/chunks/${encodeURIComponent(chunkId)}`, {
+    method: "PATCH",
+    credentials: "same-origin",
+    headers: { "X-Knowledge-CSRF": csrfToken },
+    body: JSON.stringify(payload)
+  }),
   createKnowledgeUploadGrant: (
     csrfToken: string,
     baseId: string,
@@ -525,6 +584,7 @@ export const api = {
   updateKnowledgeAdminSettings: (payload: {
     expectedVersion: number;
     registrationMode: KnowledgeAdminSettings["registrationMode"];
+    retrievalEnhancements?: KnowledgeAdminSettings["retrievalEnhancements"];
     limits: KnowledgeAdminLimits;
     reason: string;
   }) =>

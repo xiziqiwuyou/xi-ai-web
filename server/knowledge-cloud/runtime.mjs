@@ -15,7 +15,9 @@ import { createKnowledgeOperationsService } from "./operations/service.mjs";
 import { createKnowledgeEmbeddingProvider } from "./embeddings/provider.mjs";
 import { createKnowledgeEmbeddingService } from "./embeddings/service.mjs";
 import { createKnowledgeRetrievalService } from "./retrieval/service.mjs";
+import { createKnowledgeRetrievalEnhancementProvider } from "./retrieval/enhancement-provider.mjs";
 import { createKnowledgeCitationService } from "./citations/service.mjs";
+import { createKnowledgeOcrProvider } from "./ocr/provider.mjs";
 import { createTencentCosObjectStore } from "./object-store/tencent-cos.mjs";
 import { verifyKnowledgeMigrations } from "./migrations/runner.mjs";
 import { createKnowledgeRepositories } from "./repositories/index.mjs";
@@ -64,10 +66,13 @@ export async function initializeKnowledgeRuntime({
   embeddingProviderFactory = createKnowledgeEmbeddingProvider,
   embeddingServiceFactory = createKnowledgeEmbeddingService,
   retrievalServiceFactory = createKnowledgeRetrievalService,
+  retrievalEnhancementProviderFactory = createKnowledgeRetrievalEnhancementProvider,
   citationServiceFactory = createKnowledgeCitationService,
+  ocrProviderFactory = createKnowledgeOcrProvider,
   objectStoreFactory = createTencentCosObjectStore
 } = {}) {
   const upstreamRef = { current: DEFAULT_UPSTREAM_BASE_URL };
+  const modelCatalogRef = { current: [] };
   let config;
   try {
     config = configLoader(env);
@@ -130,6 +135,7 @@ export async function initializeKnowledgeRuntime({
           schemaVersion: migrationState.applied.at(-1)?.version || 0,
           vectorVersion,
           objectStoreConfigured: Boolean(config.cos?.bucket && config.cos?.region),
+          objectStore,
           logger
         })
       : null;
@@ -150,6 +156,11 @@ export async function initializeKnowledgeRuntime({
       ? retrievalServiceFactory({
           repositories,
           provider: embeddingProvider,
+          enhancementProvider: retrievalEnhancementProviderFactory({
+            upstreamRef,
+            modelCatalogRef,
+            requestTimeoutMs: config.retrieval?.enhancementTimeoutMs
+          }),
           tokenSecret: config.auth.tokenSecret
         })
       : null;
@@ -160,6 +171,7 @@ export async function initializeKnowledgeRuntime({
           sourceUrlTtlSeconds: config.cos?.sourceUrlTtlSeconds
         })
       : null;
+    const ocrProvider = ocrProviderFactory(config.ocr);
 
     logger.info?.(
       JSON.stringify({
@@ -183,10 +195,13 @@ export async function initializeKnowledgeRuntime({
       retrieval,
       citations,
       objectStore,
+      ocrProvider,
       pool,
       schemaVersion: migrationState.applied.at(-1)?.version || 0,
       vectorVersion,
       upstreamRef,
+      modelCatalogRef,
+      readiness: () => operations.readiness(),
       close: () => closeKnowledgePool(pool)
     });
   } catch (error) {

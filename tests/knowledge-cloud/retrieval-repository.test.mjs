@@ -102,6 +102,43 @@ test("pgvector search carries mandatory account, base, active-index and ready-do
   assert.equal(calls[0].params[4], 20);
 });
 
+test("full-text search uses bound web search and mandatory retrieval scope", async () => {
+  const { calls, repository } = captureRepository(() => ({ rows: [{
+    chunk_id: "chunk-1",
+    document_id: "document-1",
+    knowledge_base_id: "base-1",
+    knowledge_base_name: "Product",
+    document_name: "guide.txt",
+    ordinal: 1,
+    text_content: "configure product",
+    token_estimate: 4,
+    source_locator: {},
+    index_version_id: "index-1",
+    index_version: 1,
+    full_text_rank: 0.7
+  }] }));
+  const hits = await repository.searchFullText({
+    accountId: "account-1",
+    knowledgeBaseId: "base-1",
+    indexVersionId: "index-1",
+    query: "configure product",
+    limit: 20
+  });
+  assert.equal(hits[0].fullTextRank, 0.7);
+  assert.equal(hits[0].tokenEstimate, 4);
+  assert.match(calls[0].sql, /websearch_to_tsquery\('simple'::regconfig, \$4\)/);
+  assert.match(calls[0].sql, /c\.search_vector @@ q\.value/);
+  assert.match(calls[0].sql, /c\.account_id = \$1/);
+  assert.match(calls[0].sql, /c\.knowledge_base_id = \$2/);
+  assert.match(calls[0].sql, /c\.index_version_id = \$3/);
+  assert.match(calls[0].sql, /b\.active_index_version = i\.version/);
+  assert.match(calls[0].sql, /d\.status = 'ready'/);
+  assert.match(calls[0].sql, /i\.status = 'active'/);
+  assert.deepEqual(calls[0].params, [
+    "account-1", "base-1", "index-1", "configure product", 20
+  ]);
+});
+
 test("source lookup reauthorizes the document and citation chunk without a client object key", async () => {
   const { calls, repository } = captureRepository(() => ({ rows: [] }));
   await repository.findAuthorizedSource("account-1", "document-1", "chunk-1");

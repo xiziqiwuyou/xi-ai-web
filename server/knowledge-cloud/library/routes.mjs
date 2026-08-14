@@ -55,6 +55,14 @@ export function createKnowledgeLibraryRouter(runtime) {
   );
 
   router.get(
+    "/chunk-strategy-presets",
+    asyncRoute(async (req, res) => {
+      const { library } = await authenticatedRequest(req, runtime);
+      res.json({ ...library.chunkStrategyPresets(), requestId: req.knowledgeRequestId });
+    })
+  );
+
+  router.get(
     "/bases",
     asyncRoute(async (req, res) => {
       const { session, library } = await authenticatedRequest(req, runtime);
@@ -115,6 +123,41 @@ export function createKnowledgeLibraryRouter(runtime) {
       const { session, library } = await authenticatedRequest(req, runtime);
       res.json({
         ...(await library.listDocuments(session.account.id, req.params.baseId)),
+        requestId: req.knowledgeRequestId
+      });
+    })
+  );
+
+  router.get(
+    "/documents/:documentId/chunks",
+    asyncRoute(async (req, res) => {
+      const { session, library } = await authenticatedRequest(req, runtime);
+      res.json({
+        ...(await library.listDocumentChunks(session.account.id, req.params.documentId, req.query)),
+        requestId: req.knowledgeRequestId
+      });
+    })
+  );
+
+  router.post(
+    "/documents/:documentId/chunks/preview",
+    sameOrigin,
+    asyncRoute(async (req, res) => {
+      const { session, library } = await authenticatedRequest(req, runtime, { csrf: true });
+      res.json({
+        ...(await library.previewDocumentChunks(session.account.id, req.params.documentId, req.body)),
+        requestId: req.knowledgeRequestId
+      });
+    })
+  );
+
+  router.patch(
+    "/chunks/:chunkId",
+    sameOrigin,
+    asyncRoute(async (req, res) => {
+      const { session, library } = await authenticatedRequest(req, runtime, { csrf: true });
+      res.json({
+        ...(await library.reviseChunk(session.account.id, req.params.chunkId, req.body)),
         requestId: req.knowledgeRequestId
       });
     })
@@ -189,7 +232,8 @@ export function createKnowledgeLibraryRouter(runtime) {
     "/bases/:baseId/reindex",
     sameOrigin,
     asyncRoute(async (req, res) => {
-      const { session } = await authenticatedRequest(req, runtime, { csrf: true });
+      const { session, library } = await authenticatedRequest(req, runtime, { csrf: true });
+      await library.assertChunkDraftReindexAllowed(session.account.id, req.params.baseId);
       const embeddings = requireEmbeddingService(runtime);
       res.status(202).json({
         ...(await embeddings.reindex(session.account.id, req.params.baseId, req.body)),

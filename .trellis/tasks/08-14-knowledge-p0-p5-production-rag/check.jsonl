@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Verify backend security, redaction, migrations, and regression coverage."}
+{"file":".trellis/spec/backend/public-ai-production-boundary.md","reason":"Verify production readiness and BYOK boundaries."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Verify frontend behavior, browser tests, and accessibility."}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"Verify shared payload contracts and runtime guards."}
+{"file":".trellis/tasks/08-14-knowledge-p0-p5-production-rag/research/knowledge-audit-2026-08-14.md","reason":"Check implementation against the audited gaps and exclusions."}

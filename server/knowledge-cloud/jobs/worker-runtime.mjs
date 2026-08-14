@@ -3,8 +3,9 @@ import os from "node:os";
 import { KNOWLEDGE_ERROR_CODES, KnowledgeError } from "../errors.mjs";
 import { createKnowledgeIngestionService } from "./ingestion-service.mjs";
 import { createKnowledgeQuotaService } from "../quotas/service.mjs";
+import { createKnowledgeOcrService } from "../ocr/service.mjs";
 
-const SUPPORTED_JOB_KINDS = Object.freeze(["parse", "cleanup", "reconcile"]);
+const BASE_JOB_KINDS = Object.freeze(["parse", "cleanup", "reconcile"]);
 
 function retryDelaySeconds(attempts) {
   return Math.min(300, 5 * (2 ** Math.max(0, attempts - 1)));
@@ -54,10 +55,23 @@ export function createKnowledgeJobWorker({
   library,
   operations,
   objectStore,
+  ocrProvider,
   config,
   logger = console,
   workerId = `${os.hostname()}:${process.pid}:${crypto.randomUUID()}`,
-  ingestion = createKnowledgeIngestionService({ repositories, objectStore }),
+  ingestion = createKnowledgeIngestionService({
+    repositories,
+    objectStore,
+    ocrEnabled: Boolean(ocrProvider?.enabled)
+  }),
+  ocr = ocrProvider?.enabled
+    ? createKnowledgeOcrService({
+        repositories,
+        objectStore,
+        provider: ocrProvider,
+        maxOutputBytes: config?.ocrMaxOutputBytes
+      })
+    : null,
   quotaService = createKnowledgeQuotaService({ repositories }),
   pollIntervalMs = 1_000
 }) {
@@ -69,8 +83,11 @@ export function createKnowledgeJobWorker({
   }
   const concurrency = config?.concurrency || 2;
   const leaseSeconds = config?.leaseSeconds || 60;
+  const runtimeHeartbeatIntervalMs = (config?.heartbeatIntervalSeconds || 10) * 1000;
+  const supportedJobKinds = ocr ? [...BASE_JOB_KINDS, "ocr"] : BASE_JOB_KINDS;
   let stopping = false;
   let maintenanceAt = 0;
+  let runtimeHeartbeatTimer = null;
   const wakeController = new AbortController();
   const slots = new Set();
 
@@ -124,6 +141,9 @@ export function createKnowledgeJobWorker({
       if (job.kind === "parse") {
         return ingestion.executeParseJob(job, { workerId, signal, reportProgress });
       }
+      if (job.kind === "ocr" && ocr) {
+        return ocr.executeOcrJob(job, { workerId, signal, reportProgress });
+      }
       if (job.kind === "cleanup") {
         await reportProgress({ current: 1, total: 2 });
         const result = job.documentId
@@ -145,6 +165,13 @@ export function createKnowledgeJobWorker({
         return result;
       }
       if (job.kind === "reconcile") {
+        if (operations?.executeReconciliation) {
+          const result = await operations.executeReconciliation(job.accountId);
+          await repositories.transaction((transaction) =>
+            completeOwnedJob(transaction, job, { current: 1, total: 1 })
+          );
+          return result;
+        }
         return repositories.transaction(async (transaction) => {
           const result = await quotaService.reconcileAccountCounters(transaction, job.accountId);
           await completeOwnedJob(transaction, job, { current: 1, total: 1 });
@@ -179,6 +206,14 @@ export function createKnowledgeJobWorker({
           failed.errorDetail
         );
       }
+      if (failed && current.kind === "ocr" && current.documentId) {
+        await transaction.jobs.markDocumentOcrFailure(
+          current.accountId,
+          current.documentId,
+          failed.status,
+          failed.errorCode
+        );
+      }
       return failed;
     });
   }
@@ -190,14 +225,23 @@ export function createKnowledgeJobWorker({
     await repositories.transaction(async (transaction) => {
       const exhausted = await transaction.jobs.expireExhaustedLeases();
       for (const job of exhausted) {
-        if (job.kind !== "parse" || !job.documentId) continue;
-        await transaction.jobs.markDocumentParseFailed(
-          job.accountId,
-          job.documentId,
-          "knowledge-parser/1",
-          job.errorCode || "KB_JOB_LEASE_EXHAUSTED",
-          null
-        );
+        if (!job.documentId) continue;
+        if (job.kind === "parse") {
+          await transaction.jobs.markDocumentParseFailed(
+            job.accountId,
+            job.documentId,
+            "knowledge-parser/1",
+            job.errorCode || "KB_JOB_LEASE_EXHAUSTED",
+            null
+          );
+        } else if (job.kind === "ocr") {
+          await transaction.jobs.markDocumentOcrFailure(
+            job.accountId,
+            job.documentId,
+            "failed",
+            job.errorCode || "KB_JOB_LEASE_EXHAUSTED"
+          );
+        }
       }
     });
     const expired = await repositories.quota.findExpiredOutstandingReservations(50);
@@ -217,7 +261,7 @@ export function createKnowledgeJobWorker({
   async function runOnce() {
     await maintenance();
     const job = await repositories.transaction((transaction) =>
-      transaction.jobs.claimNext({ workerId, leaseSeconds, kinds: SUPPORTED_JOB_KINDS })
+      transaction.jobs.claimNext({ workerId, leaseSeconds, kinds: supportedJobKinds })
     );
     if (!job) return { claimed: false };
     try {
@@ -256,11 +300,30 @@ export function createKnowledgeJobWorker({
     }
   }
 
+  async function recordRuntimeHeartbeat() {
+    if (!repositories.operations?.recordWorkerHeartbeat) return null;
+    return repositories.operations.recordWorkerHeartbeat({
+      workerId,
+      concurrency,
+      leaseSeconds
+    });
+  }
+
   return Object.freeze({
     workerId,
     runOnce,
-    start() {
+    async start() {
       if (slots.size) return;
+      await recordRuntimeHeartbeat();
+      runtimeHeartbeatTimer = setInterval(() => {
+        void recordRuntimeHeartbeat().catch((error) => {
+          logger.error?.(JSON.stringify({
+            event: "knowledge_worker_heartbeat_failed",
+            errorCode: error?.code || KNOWLEDGE_ERROR_CODES.DATABASE_UNAVAILABLE
+          }));
+        });
+      }, runtimeHeartbeatIntervalMs);
+      runtimeHeartbeatTimer.unref?.();
       for (let index = 0; index < concurrency; index += 1) {
         const slot = runSlot().finally(() => slots.delete(slot));
         slots.add(slot);
@@ -268,8 +331,12 @@ export function createKnowledgeJobWorker({
     },
     async stop() {
       stopping = true;
+      clearInterval(runtimeHeartbeatTimer);
       wakeController.abort();
       await Promise.allSettled([...slots]);
+      if (repositories.operations?.removeWorkerHeartbeat) {
+        await repositories.operations.removeWorkerHeartbeat(workerId).catch(() => undefined);
+      }
     }
   });
 }

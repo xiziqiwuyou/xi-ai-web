@@ -103,18 +103,91 @@ export function createTencentCosObjectStore(
   }
   const secrets = [config.secretId, config.secretKey];
   const cos = new CosClient({ SecretId: config.secretId, SecretKey: config.secretKey });
+  const probeCos = new CosClient({
+    SecretId: config.secretId,
+    SecretKey: config.secretKey,
+    Timeout: Number.isSafeInteger(config.probeTimeoutMs) ? config.probeTimeoutMs : 5000
+  });
   const grantTtlSeconds = Number.isSafeInteger(config.uploadGrantTtlSeconds)
     ? config.uploadGrantTtlSeconds
     : 15 * 60;
   const sourceUrlTtlSeconds = Number.isSafeInteger(config.sourceUrlTtlSeconds)
     ? config.sourceUrlTtlSeconds
     : 5 * 60;
+  const probeEnabled = config.probeEnabled !== false;
+  const probeIntervalMs = (Number.isSafeInteger(config.probeIntervalSeconds)
+    ? config.probeIntervalSeconds
+    : 60) * 1000;
+  let cachedProbe = probeEnabled
+    ? { state: "unknown", checkedAt: null, latencyMs: null, errorCode: null }
+    : { state: "disabled", checkedAt: null, latencyMs: null, errorCode: null };
+  let probeInFlight = null;
+
+  async function performReadinessProbe() {
+    const startedAt = Date.now();
+    const checkedAt = new Date(startedAt).toISOString();
+    const objectKey = `__xi_ai_knowledge_canary/${crypto.randomUUID()}`;
+    const body = crypto.randomBytes(32);
+    let versionId = null;
+    let failure = null;
+    try {
+      const put = await probeCos.putObject({
+        Bucket: config.bucket,
+        Region: config.region,
+        Key: objectKey,
+        Body: body,
+        ContentLength: body.byteLength,
+        ContentType: "application/octet-stream"
+      });
+      versionId = put?.VersionId || headerValue(put?.headers, "x-cos-version-id") || null;
+      const head = await probeCos.headObject({
+        Bucket: config.bucket,
+        Region: config.region,
+        Key: objectKey,
+        ...(versionId ? { VersionId: versionId } : {})
+      });
+      const bytes = Number(headerValue(head?.headers, "content-length"));
+      if (bytes !== body.byteLength) throw new Error("COS canary HEAD size mismatch");
+    } catch (error) {
+      failure = error;
+    } finally {
+      try {
+        await probeCos.deleteObject({
+          Bucket: config.bucket,
+          Region: config.region,
+          Key: objectKey,
+          ...(versionId ? { VersionId: versionId } : {})
+        });
+      } catch (error) {
+        failure ||= error;
+      }
+    }
+    cachedProbe = {
+      state: failure ? "failed" : "ok",
+      checkedAt,
+      latencyMs: Math.max(0, Date.now() - startedAt),
+      errorCode: failure ? KNOWLEDGE_ERROR_CODES.OBJECT_STORE_UNAVAILABLE : null
+    };
+    return { ...cachedProbe };
+  }
 
   return Object.freeze({
     bucket: config.bucket,
     region: config.region,
     grantTtlSeconds,
     sourceUrlTtlSeconds,
+
+    async readinessProbe({ force = false } = {}) {
+      if (!probeEnabled) return { ...cachedProbe };
+      const checkedAtMs = cachedProbe.checkedAt ? new Date(cachedProbe.checkedAt).getTime() : 0;
+      if (!force && checkedAtMs && Date.now() - checkedAtMs < probeIntervalMs) {
+        return { ...cachedProbe };
+      }
+      if (!probeInFlight) {
+        probeInFlight = performReadinessProbe().finally(() => { probeInFlight = null; });
+      }
+      return probeInFlight;
+    },
 
     async createUploadGrant({ objectKey }) {
       try {

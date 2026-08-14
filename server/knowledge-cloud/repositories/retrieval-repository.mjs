@@ -64,7 +64,9 @@ function normalizeRetrievalContext(row) {
       retrievalRequestsPerMinutePerAccount: asNumber(
         row.retrieval_requests_per_minute_per_account
       ),
-      maxRetrievalTopK: asNumber(row.max_retrieval_top_k)
+      maxRetrievalTopK: asNumber(row.max_retrieval_top_k),
+      queryRewriteEnabled: row.query_rewrite_enabled === true,
+      rerankEnabled: row.rerank_enabled === true
     }
   };
 }
@@ -78,10 +80,18 @@ function normalizeHit(row) {
     documentName: row.document_name,
     ordinal: asNumber(row.ordinal),
     text: String(row.text_content || ""),
+    tokenEstimate: asNumber(row.token_estimate),
     locator: asObject(row.source_locator),
     similarity: Number(row.similarity),
     indexVersionId: row.index_version_id,
     indexVersion: asNumber(row.index_version)
+  };
+}
+
+function normalizeFullTextHit(row) {
+  return {
+    ...normalizeHit(row),
+    fullTextRank: Number(row.full_text_rank)
   };
 }
 
@@ -108,6 +118,17 @@ function boundedLimit(value) {
   return limit;
 }
 
+function boundedFullTextQuery(value) {
+  const query = String(value ?? "").normalize("NFKC").trim();
+  if (!query || /\u0000/u.test(query) || Buffer.byteLength(query, "utf8") > 8 * 1024) {
+    throw knowledgeError(KNOWLEDGE_ERROR_CODES.INVALID_REQUEST, "Full-text query is invalid", {
+      status: 400,
+      details: { field: "query" }
+    });
+  }
+  return query;
+}
+
 export function createKnowledgeRetrievalRepository(queryable) {
   if (!queryable || typeof queryable.query !== "function") {
     throw new TypeError("Knowledge retrieval repository requires a queryable database client");
@@ -118,7 +139,9 @@ export function createKnowledgeRetrievalRepository(queryable) {
       const result = await queryable.query(
         `SELECT a.id AS account_id, a.status AS account_status, a.limit_overrides,
                 s.retrieval_requests_per_minute_per_account,
-                s.max_retrieval_top_k
+                s.max_retrieval_top_k,
+                s.query_rewrite_enabled,
+                s.rerank_enabled
            FROM kb_accounts a
            JOIN kb_runtime_settings s ON s.singleton_id = 1
           WHERE a.id = $1`,
@@ -186,7 +209,7 @@ export function createKnowledgeRetrievalRepository(queryable) {
       const result = await queryable.query(
         `SELECT c.id AS chunk_id, c.document_id, c.knowledge_base_id,
                 b.name AS knowledge_base_name, d.display_name AS document_name,
-                c.ordinal, c.text_content, c.source_locator,
+                c.ordinal, c.text_content, c.token_estimate, c.source_locator,
                 i.id AS index_version_id, i.version AS index_version,
                 1 - (v.embedding <=> $4::${vectorType}) AS similarity
            FROM ${storage.table} v
@@ -227,6 +250,59 @@ export function createKnowledgeRetrievalRepository(queryable) {
         [accountId, knowledgeBaseId, indexVersionId, vectorSql, bounded]
       );
       return (result.rows || []).map(normalizeHit);
+    },
+
+    async searchFullText({
+      accountId,
+      knowledgeBaseId,
+      indexVersionId,
+      query,
+      limit
+    }) {
+      const bounded = boundedLimit(limit);
+      const searchQuery = boundedFullTextQuery(query);
+      const result = await queryable.query(
+        `WITH query_input AS (
+           SELECT websearch_to_tsquery('simple'::regconfig, $4) AS value
+         )
+         SELECT c.id AS chunk_id, c.document_id, c.knowledge_base_id,
+                b.name AS knowledge_base_name, d.display_name AS document_name,
+                c.ordinal, c.text_content, c.token_estimate, c.source_locator,
+                i.id AS index_version_id, i.version AS index_version,
+                ts_rank_cd(c.search_vector, q.value, 32) AS full_text_rank
+           FROM kb_chunks c
+           CROSS JOIN query_input q
+           JOIN kb_documents d
+             ON d.id = c.document_id
+            AND d.account_id = c.account_id
+            AND d.knowledge_base_id = c.knowledge_base_id
+           JOIN kb_knowledge_bases b
+             ON b.id = c.knowledge_base_id
+            AND b.account_id = c.account_id
+           JOIN kb_index_versions i
+             ON i.id = c.index_version_id
+            AND i.account_id = c.account_id
+            AND i.knowledge_base_id = c.knowledge_base_id
+          WHERE c.account_id = $1
+            AND c.knowledge_base_id = $2
+            AND c.index_version_id = $3
+            AND c.embedding_state = 'ready'
+            AND c.search_vector @@ q.value
+            AND d.account_id = $1
+            AND d.knowledge_base_id = $2
+            AND d.status = 'ready'
+            AND b.account_id = $1
+            AND b.id = $2
+            AND b.status = 'active'
+            AND b.active_index_version = i.version
+            AND i.id = $3
+            AND i.status = 'active'
+          ORDER BY full_text_rank DESC,
+                   c.document_id ASC, c.ordinal ASC, c.id ASC
+          LIMIT $5`,
+        [accountId, knowledgeBaseId, indexVersionId, searchQuery, bounded]
+      );
+      return (result.rows || []).map(normalizeFullTextHit);
     },
 
     async findAuthorizedSource(accountId, documentId, chunkId) {
