@@ -21,13 +21,31 @@ Evidence:
 
 ## P2 Publish
 
-- [ ] Commit the immutable release snapshot.
-- [ ] Push `master` and annotated `v0.0.15`.
-- [ ] Verify branch/tag Actions and the multi-architecture GHCR manifest.
+- [x] Commit the immutable release snapshot.
+- [x] Push `master` and annotated `v0.0.15`.
+- [x] Verify branch/tag Actions and the multi-architecture GHCR manifest.
+
+Evidence:
+
+- Release commit: `77b32d104b54847b8197841a3d9ecfa832346dfb`.
+- Annotated tag: `v0.0.15`, targeting the release commit above.
+- Master workflow: `31771743055` (`success`).
+- Tag workflow: `31771742886` (`success`).
+- GHCR tags `v0.0.15`,
+  `sha-77b32d104b54847b8197841a3d9ecfa832346dfb`, and `latest` resolve to
+  `sha256:77ca22df214dd12408dfce902d4d83ded1428b04d7d087f4c13c511e5b211d4a`.
+- Runtime manifests include `linux/amd64` and `linux/arm64`. The additional
+  `unknown/unknown` descriptors are Buildx provenance/SBOM attestations.
 
 ## P3 Close
 
-- [ ] Record release evidence, archive the task, and record the session.
+- [x] Record release evidence, archive the task, and record the session through
+  the Trellis finish flow.
+
+No code-spec update is required: P6 changes only release metadata and
+documentation, while the knowledge runtime contracts were captured during
+P0-P5. Real staging acceptance remains blocked on operator-provided origin,
+PostgreSQL/pgvector, COS, OpenAI/Qwen, and OCR credentials.
 
 ## Rollback
 
