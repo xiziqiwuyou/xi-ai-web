@@ -682,3 +682,36 @@ production site remains on v0.0.12 and real MCP acceptance is still deferred.
 - Upgrade `chat.xi-api.cn` to v0.0.13 and rerun the versioned online smoke.
 - Supply an approved public HTTPS no-auth MCP endpoint, run discovery plus one
   harmless call, then decide whether to enable the feature.
+
+
+## Session 20: Knowledge P0-P6 production closure
+
+**Date**: 2026-08-14
+**Task**: Knowledge P0-P6 production closure
+**Branch**: `master`
+
+### Summary
+
+Completed and verified private knowledge production readiness, chunk drafts and shadow rebuilds, Retrieval Lab, hybrid RAG, Chat citations, OCR/operations/evaluation, plus P6 release-readiness review. Full QA and 76 Playwright cases passed; real staging acceptance remains explicitly skipped without staging origin and credentials.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4c48664` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
