@@ -1,3 +1,70 @@
+# xi-ai-web v0.0.15
+
+## Release status
+
+This release publishes the production-gated private knowledge and RAG work
+completed after v0.0.14. The artifact is ready for controlled staging, while
+real PostgreSQL/pgvector, Tencent COS, OpenAI/Qwen, cleanup, and recovery
+acceptance remains an explicit operator gate before production enablement.
+
+## Included
+
+- Owner-private knowledge accounts, multiple knowledge bases, a 5 GiB logical
+  quota contract, document/chunk inspection, draft edits, and quota-safe shadow
+  reindex with atomic cutover.
+- Vector, PostgreSQL full-text, and hybrid RRF retrieval; bounded token-budget
+  packing; owner-only Retrieval Lab diagnostics; and authorized Chat citations
+  for up to three knowledge bases.
+- Optional query rewrite and rerank through transient BYOK credentials and the
+  Admin-managed upstream. Both remain disabled by default, and strict rerank
+  requests fall back only when explicitly allowed.
+- Disabled-by-default OCR provider/job boundaries, worker heartbeat, COS
+  canary/readiness state, operations metrics, reconciliation and recovery drill
+  tooling, plus deterministic RAG evaluation.
+- Forward-only knowledge migrations `0009` through `0014`, verified database
+  TLS requirements, and deployment guidance separating migration and runtime
+  database roles.
+
+## Operating classification
+
+- `KNOWLEDGE_ENABLED` remains `false` in the standard deployment templates.
+- Vector-only retrieval is the compatibility default. Hybrid retrieval,
+  rewrite, rerank, and OCR require explicit Admin/operator enablement.
+- Publishing this image does not claim that production PostgreSQL, COS, or
+  provider credentials have passed the real acceptance command.
+
+## Verification
+
+- The complete `npm run qa` gate, privacy scan, build, server tests, UI runtime,
+  release check, and diff hygiene passed on the release candidate.
+- Knowledge owner, workspace, Admin, and Chat Playwright coverage passed
+  `76/76` across `1440x900`, `1280x800`, `390x844`, and `375x812`.
+- Exact-profile query embeddings are deduplicated across different active index
+  versions; the focused retrieval/enhancement suite passed `15/15`.
+- `npm run knowledge:acceptance` correctly emitted seven `SKIP` results when no
+  staging origin or external credentials were supplied. Those are production
+  enablement gaps, not passing evidence.
+
+## Upgrade
+
+```bash
+docker compose pull
+docker compose up -d
+docker compose ps
+```
+
+Keep knowledge disabled until the separate migration role has applied all
+forward migrations and `/api/ready` reports healthy database, worker, and COS
+probe state.
+
+## Rollback
+
+Pin `ghcr.io/xiziqiwuyou/xi-ai-web:v0.0.14` and restart Compose. Do not reverse
+the additive knowledge migrations; disable knowledge and restore the previous
+application image while retaining the database state.
+
+---
+
 # xi-ai-web v0.0.14
 
 ## Release status
