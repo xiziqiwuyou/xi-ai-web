@@ -2,8 +2,9 @@
 
 更新日期：2026-10-11
 
-当前本地基线为 `v0.0.16` 发布候选之后的 `master`，远端 `master` 仍停留在
-`v0.0.15`。本计划按“先可发布、再协议正确、最后运营增强”的顺序执行。
+当前本地基线为 `v0.0.16` 发布候选之后的 `master`。远端 `master` 已同步并通过
+GitHub Actions Verify 与 GHCR 多架构发布；远端 `v0.0.16` 标签仍待补建。本计划按
+“先可发布、再协议正确、最后运营增强”的顺序执行。
 
 ## 已完成
 
@@ -19,12 +20,13 @@
 - OpenAI 兼容响应的 `content` 数组只提取文本/output-text 片段，图片片段不会污染可读文本；工具调用的 `content: null` 保持原样。
 - 统一投影 OpenAI `error` envelope，过滤未知字段和上游密钥，HTML、未知 JSON 与超长文本均保持有界。
 - `provider-contracts`、TypeScript、服务端、安全、前端、隐私、UI 契约与发布构建检查已通过。
+- 远端 `master` 已完成同步，Actions 的 Verify 和 Build and publish 均成功；当前 GitHub 写入接口只提供分支 ref 更新，`v0.0.16` 标签仍需后续用标签写入能力补建。
 
 ## P0：发布与门禁
 
-1. 将本地已验证提交同步到远端 `master`，再同步 `v0.0.16` 标签。
-2. 检查 GitHub Actions 的完整 verify 任务，确认发布任务只在 `master` 或 `v*` 标签执行。
-3. 保存 Actions 运行结果；失败时先修复门禁，不直接推送镜像。
+1. **已完成**：将已验证提交同步到远端 `master`，并发布 GHCR 多架构镜像。
+2. **已完成**：检查 GitHub Actions 的完整 Verify，确认发布任务只在 `master` 或 `v*` 标签执行。
+3. **待补齐**：用可写标签 ref 的接口创建 `v0.0.16`，并保存该标签触发的 Actions 运行结果；失败时先修复门禁，不直接推送镜像。
 
 验收：远端提交与本地 HEAD 一致，verify 全部通过，GHCR 发布只发生在受控引用。
 

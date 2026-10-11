@@ -137,3 +137,36 @@ Reproduced the failed GitHub Verify release job, aligned the Image Studio featur
 ### Next Steps
 
 - None - task complete
+
+
+## Session 5: Record remote release status
+
+**Date**: 2026-10-11
+**Task**: Record remote release status
+**Branch**: `master`
+
+### Summary
+
+Updated the follow-up plan with the successful remote master sync, GitHub Actions Verify and GHCR publish results, and the remaining v0.0.16 tag creation gap because the active write connector exposes branch refs only.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d6a69be` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
