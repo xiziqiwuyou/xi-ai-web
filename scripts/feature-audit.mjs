@@ -412,7 +412,7 @@ for (const imageContract of [
   "size: imageRequestSize(selectedSizePreset.aspectRatio, selectedSizePreset.resolution)",
   'inputImage: mode === "edit"',
   'inputImages: mode === "edit"',
-  'referenceImageUrls: mode === "edit" && usesBotcf',
+  'referenceImageUrls: mode === "edit" && usesNativeBotcf',
   'maskImage: mode === "edit" && supportsMask',
   "quality: imageCapabilities.supportsQuality ? quality : undefined",
   "outputFormat: fixedImageOutputFormat",

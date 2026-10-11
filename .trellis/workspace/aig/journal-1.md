@@ -104,3 +104,36 @@ Closed Relay Chat SSE usage duplication, structured content extraction, null too
 ### Next Steps
 
 - None - task complete
+
+
+## Session 4: Repair feature audit gate
+
+**Date**: 2026-10-11
+**Task**: Repair feature audit gate
+**Branch**: `master`
+
+### Summary
+
+Reproduced the failed GitHub Verify release job, aligned the Image Studio feature audit with the native BotCF reference URL path used by the implementation, and confirmed npm run feature-audit passes locally.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `cd6b391` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

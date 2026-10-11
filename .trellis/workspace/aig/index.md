@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 3
+- **Total Sessions**: 4
 - **Last Active**: 2026-10-11
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~106 | Active |
+| `journal-1.md` | ~139 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 4 | 2026-10-11 | Repair feature audit gate | `cd6b391` | `master` |
 | 3 | 2026-10-11 | Relay compatibility hardening and follow-up plan | `863ae4c` | `master` |
 | 2 | 2026-10-11 | Relay release and image capability hardening | `66871df` | `master` |
 | 1 | 2026-10-11 | OpenAI relay compatibility for text and images | `5fd85aa` | `master` |
