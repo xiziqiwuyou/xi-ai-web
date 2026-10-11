@@ -10,7 +10,7 @@ import {
   createQwenChatAdapter,
   createQwenResponsesAdapter
 } from "./qwen.mjs";
-import { normalizeEndpointProtocol, normalizeProviderKind } from "./types.mjs";
+import { normalizeEndpointProtocol, normalizeProviderKind, normalizeRequestProfile } from "./types.mjs";
 
 function createVendorAdapter(provider) {
   const kind = normalizeProviderKind(provider?.kind);
@@ -42,6 +42,12 @@ function createChatProtocolAdapter(provider) {
 }
 
 export function createProviderAdapter(provider) {
+  if (normalizeRequestProfile(provider?.requestProfile) === "openai-relay") {
+    return createOpenAICompatibleAdapter(
+      { ...provider, endpointProtocol: "openai-chat" },
+      { kind: "openai-relay" }
+    );
+  }
   const vendorAdapter = createVendorAdapter(provider);
   const chatAdapter = createChatProtocolAdapter(provider);
   return {
@@ -56,5 +62,6 @@ export {
   defaultEndpointProtocol,
   modelForCapability,
   normalizeEndpointProtocol,
-  normalizeProviderKind
+  normalizeProviderKind,
+  normalizeRequestProfile
 } from "./types.mjs";

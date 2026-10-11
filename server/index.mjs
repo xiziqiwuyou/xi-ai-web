@@ -993,6 +993,28 @@ function httpError(status, message) {
   return error;
 }
 
+async function validateManagedUpstreamMutation(value, currentValue, message) {
+  const requested = String(value || currentValue || DEFAULT_UPSTREAM_BASE_URL).trim();
+  // Settings, imports, and restores commonly carry the complete current
+  // settings object. Reusing an unchanged, already normalized origin keeps
+  // unrelated mutations independent from transient DNS availability.
+  if (requested === currentValue) return currentValue;
+  try {
+    const parsed = await assertManagedUpstreamBaseUrl(requested, {
+      production: isProduction,
+      allowLocal: String(process.env.ALLOW_LOCAL_UPSTREAM || "").toLowerCase() === "true",
+      rejectOverride: true
+    });
+    const upstreamUrl = new URL(parsed);
+    if (isProduction && upstreamUrl.protocol !== "https:") {
+      throw new Error("production upstream must use HTTPS");
+    }
+    return parsed;
+  } catch {
+    throw httpError(400, message);
+  }
+}
+
 const asyncRoute = (handler) => (req, res, next) =>
   Promise.resolve(handler(req, res, next)).catch(next);
 
@@ -1634,6 +1656,29 @@ function resultPayload(module, title, patch = {}) {
   };
 }
 
+function detectInlineImageMimeType(base64) {
+  let bytes;
+  try {
+    bytes = Buffer.from(String(base64 || ""), "base64");
+  } catch {
+    return "";
+  }
+  if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from("89504e470d0a1a0a", "hex"))) {
+    return "image/png";
+  }
+  if (bytes.length >= 3 && bytes.subarray(0, 3).equals(Buffer.from("ffd8ff", "hex"))) {
+    return "image/jpeg";
+  }
+  if (
+    bytes.length >= 12
+    && bytes.subarray(0, 4).toString("ascii") === "RIFF"
+    && bytes.subarray(8, 12).toString("ascii") === "WEBP"
+  ) {
+    return "image/webp";
+  }
+  return "";
+}
+
 function extractAssets(json, type, fallbackMimeType = "") {
   const data = Array.isArray(json?.data) ? json.data : Array.isArray(json?.output) ? json.output : [];
   const assets = [];
@@ -1662,7 +1707,9 @@ function extractAssets(json, type, fallbackMimeType = "") {
     }
     if (item?.url) assets.push({ type, url: item.url });
     if (item?.b64_json) {
-      const mime = fallbackMimeType || (type === "image" ? "image/png" : "application/octet-stream");
+      const mime = detectInlineImageMimeType(item.b64_json)
+        || fallbackMimeType
+        || (type === "image" ? "image/png" : "application/octet-stream");
       assets.push({ type, url: `data:${mime};base64,${item.b64_json}` });
     }
   }
@@ -2758,21 +2805,11 @@ adminRouter.patch("/settings", asyncRoute(async (req, res) => {
   const requestedUpstream = String(
     nextSettings.upstreamBaseUrl || db.settings.upstreamBaseUrl || DEFAULT_UPSTREAM_BASE_URL
   ).trim();
-  let parsedUpstream;
-  try {
-    parsedUpstream = await assertManagedUpstreamBaseUrl(requestedUpstream, {
-      production: isProduction,
-      allowLocal: String(process.env.ALLOW_LOCAL_UPSTREAM || "").toLowerCase() === "true",
-      rejectOverride: true
-    });
-  } catch {
-    throw httpError(400, "上游 API 域名无效或指向受限制的网络地址");
-  }
-  const upstreamUrl = new URL(parsedUpstream);
-  if (isProduction && upstreamUrl.protocol !== "https:") {
-    throw httpError(400, "生产环境的上游 API 域名必须使用 HTTPS");
-  }
-  nextSettings.upstreamBaseUrl = parsedUpstream;
+  nextSettings.upstreamBaseUrl = await validateManagedUpstreamMutation(
+    requestedUpstream,
+    db.settings.upstreamBaseUrl,
+    "上游 API 域名无效或指向受限制的网络地址"
+  );
   nextSettings.progressSync = normalizeSettings({
     ...db.settings,
     progressSync: nextSettings.progressSync
@@ -3175,15 +3212,11 @@ adminRouter.patch("/metadata-import", asyncRoute(async (req, res) => {
   const nextData = buildMetadataImport(req.body);
   nextData.settings.oneapiSettingsHandoffEnabled = db.settings.oneapiSettingsHandoffEnabled;
   nextData.mcpServers = await validateMcpProfiles(nextData.mcpServers);
-  try {
-    nextData.settings.upstreamBaseUrl = await assertManagedUpstreamBaseUrl(nextData.settings.upstreamBaseUrl, {
-      production: isProduction,
-      allowLocal: String(process.env.ALLOW_LOCAL_UPSTREAM || "").toLowerCase() === "true",
-      rejectOverride: true
-    });
-  } catch {
-    throw httpError(400, "导入数据中的上游 API 域名无效或不被允许");
-  }
+  nextData.settings.upstreamBaseUrl = await validateManagedUpstreamMutation(
+    nextData.settings.upstreamBaseUrl,
+    db.settings.upstreamBaseUrl,
+    "导入数据中的上游 API 域名无效或不被允许"
+  );
   const report = metadataImportReport(nextData);
   if (String(req.query.dryRun || "") === "true") return res.json(report);
   const backupFile = backupCurrentData("metadata-import");
@@ -3225,15 +3258,11 @@ adminRouter.post("/backups/:name/restore", asyncRoute(async (req, res) => {
   restored.settings.oneapiSettingsHandoffEnabled = db.settings.oneapiSettingsHandoffEnabled;
   restored.mcpExecution = liveMcpExecution;
   restored.mcpServers = await validateMcpProfiles(restored.mcpServers);
-  try {
-    restored.settings.upstreamBaseUrl = await assertManagedUpstreamBaseUrl(restored.settings.upstreamBaseUrl, {
-      production: isProduction,
-      allowLocal: String(process.env.ALLOW_LOCAL_UPSTREAM || "").toLowerCase() === "true",
-      rejectOverride: true
-    });
-  } catch {
-    throw httpError(400, "备份中的上游 API 域名无效或不被允许");
-  }
+  restored.settings.upstreamBaseUrl = await validateManagedUpstreamMutation(
+    restored.settings.upstreamBaseUrl,
+    db.settings.upstreamBaseUrl,
+    "备份中的上游 API 域名无效或不被允许"
+  );
   const preRestoreBackup = backupCurrentData("pre-restore");
   db = restored;
   progressSyncService.updateConfig(db.settings.progressSync);
@@ -3984,7 +4013,11 @@ app.post(
         if (mode === "edit" && !entry.capabilities.includes("imageEdit")) {
           throw httpError(400, "所选模型未启用图片编辑能力");
         }
-        const maxReferenceImages = entry.vendor === "botcf" ? 4 : entry.vendor === "openai" ? 16 : 1;
+        const usesOpenAIRelay = entry.requestProfile === "openai-relay";
+        const usesOpenAIImageProtocol = entry.vendor === "openai" || usesOpenAIRelay;
+        const maxReferenceImages = entry.vendor === "botcf"
+          ? usesOpenAIRelay ? 16 : 4
+          : usesOpenAIImageProtocol ? 16 : 1;
         const requestedInputImages = Array.isArray(options.inputImages)
           ? options.inputImages
           : options.inputImage
@@ -3994,10 +4027,10 @@ app.post(
           ? imageInputsFrom(requestedInputImages, "参考图", maxReferenceImages)
           : [];
         const inputImage = inputImages[0];
-        const referenceImageUrls = mode === "edit" && entry.vendor === "botcf"
+        const referenceImageUrls = mode === "edit" && entry.vendor === "botcf" && !usesOpenAIRelay
           ? await referenceImageUrlsFrom(options.referenceImageUrls, 4)
           : [];
-        if (mode === "edit" && entry.vendor !== "botcf" && Array.isArray(options.referenceImageUrls) && options.referenceImageUrls.length) {
+        if (mode === "edit" && (entry.vendor !== "botcf" || usesOpenAIRelay) && Array.isArray(options.referenceImageUrls) && options.referenceImageUrls.length) {
           throw httpError(400, "当前模型不支持参考图链接，请上传本地图片");
         }
         if (inputImages.length && referenceImageUrls.length) {
@@ -4011,10 +4044,10 @@ app.post(
         if (totalUploadBytes > MAX_IMAGE_EDIT_UPLOAD_BYTES) {
           throw httpError(413, "Image edit uploads exceed the total request limit");
         }
-        if (entry.vendor === "openai" && maskImage && maskImage.mimeType !== "image/png") {
+        if (usesOpenAIImageProtocol && maskImage && maskImage.mimeType !== "image/png") {
           throw httpError(400, "OpenAI 图片编辑蒙版必须为 PNG");
         }
-        if (entry.vendor === "openai" && maskImage) {
+        if (usesOpenAIImageProtocol && maskImage) {
           if (inputImage?.mimeType !== "image/png") {
             throw httpError(400, "使用蒙版时，OpenAI 原图与蒙版必须同为 PNG");
           }
@@ -4026,7 +4059,7 @@ app.post(
           }
           if (!maskMetadata.hasAlpha) throw httpError(400, "OpenAI 蒙版必须包含透明通道");
         }
-        const maxImageCount = entry.vendor === "gemini" ? 4 : 10;
+        const maxImageCount = entry.vendor === "gemini" && !usesOpenAIRelay ? 4 : 10;
         const requestedCount = Number.isFinite(Number(options.count))
           ? Math.max(1, Math.min(maxImageCount, Math.trunc(Number(options.count))))
           : 1;

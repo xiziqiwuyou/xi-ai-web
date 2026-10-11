@@ -234,8 +234,10 @@ export function ImageStudio({
   const supportsEdit = imageCapabilities.supportsEdit;
   const supportsMask = imageCapabilities.supportsMask;
   const usesBotcf = selectedModel?.vendor === "botcf";
+  const usesRelay = selectedModel?.requestProfile === "openai-relay";
+  const usesNativeBotcf = usesBotcf && !usesRelay;
   const usesBotcfGemini = Boolean(
-    usesBotcf && /^gemini-[a-z0-9.-]*image(?:$|[-_])/i.test(selectedModel?.model || "")
+    usesNativeBotcf && /^gemini-[a-z0-9.-]*image(?:$|[-_])/i.test(selectedModel?.model || "")
   );
   const resultEditModel = useMemo(
     () => supportsLocalImageEditing(selectedModel)
@@ -348,11 +350,11 @@ export function ImageStudio({
 
   useEffect(() => {
     setInputImages((current) => usesBotcfGemini ? [] : current.slice(0, maxReferenceImages));
-    if (!usesBotcf) {
+    if (!usesNativeBotcf) {
       setReferenceImageUrls([]);
       setReferenceImageUrlDraft("");
     }
-  }, [maxReferenceImages, usesBotcf, usesBotcfGemini]);
+  }, [maxReferenceImages, usesNativeBotcf, usesBotcfGemini]);
 
   useEffect(() => {
     if (imageModelSupportsResolution(selectedModel, selectedSizePreset.resolution)) return;
@@ -521,7 +523,7 @@ export function ImageStudio({
           size: imageRequestSize(selectedSizePreset.aspectRatio, selectedSizePreset.resolution),
           inputImage: mode === "edit" ? inputImage || undefined : undefined,
           inputImages: mode === "edit" ? inputImages : undefined,
-          referenceImageUrls: mode === "edit" && usesBotcf ? referenceImageUrls : undefined,
+          referenceImageUrls: mode === "edit" && usesNativeBotcf ? referenceImageUrls : undefined,
           maskImage: mode === "edit" && supportsMask ? maskImage || undefined : undefined,
           quality: imageCapabilities.supportsQuality ? quality : undefined,
           outputFormat: fixedImageOutputFormat
@@ -673,7 +675,7 @@ export function ImageStudio({
                     ) : null}
                     <button type="button" disabled={busy} onClick={() => inputImageRef.current?.click()}>
                       <FileUp size={15} />
-                      {usesBotcf
+                      {usesBotcf || usesRelay
                         ? inputImages.length ? "添加参考图" : "上传参考图"
                         : inputImages.length ? "更换原图" : "上传原图"}
                     </button>
@@ -682,13 +684,13 @@ export function ImageStudio({
                     ref={inputImageRef}
                     type="file"
                     hidden
-                    multiple={usesBotcf}
+                    multiple={usesBotcf || usesRelay}
                     accept="image/png,image/jpeg,image/webp"
                     onChange={(event) => void selectReferenceImages(event)}
                   />
                 </div>
               ) : null}
-              {usesBotcf ? (
+              {usesNativeBotcf ? (
                 <div className="figma-image-upload-field figma-image-url-field">
                   <span>参考图链接</span>
                   <div className="figma-image-url-control">

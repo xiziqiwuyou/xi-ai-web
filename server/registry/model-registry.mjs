@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { normalizeEndpointProtocol } from "../providers/types.mjs";
+import { normalizeEndpointProtocol, normalizeRequestProfile } from "../providers/types.mjs";
 
 export const vendorKinds = [
   "openai",
@@ -612,6 +612,7 @@ export function defaultModelCatalog() {
       vendorId: entry.vendor,
       vendorLabel: vendorLabel(entry.vendor),
       endpointProtocol: normalizeEndpointProtocol(entry.endpointProtocol, entry.vendor),
+      requestProfile: normalizeRequestProfile(entry.requestProfile),
       order: cleanModelOrder(entry.order, order),
       contextWindowTokens: cleanContextWindowTokens(entry.contextWindowTokens, entry.vendor, entry.model),
       maxOutputTokens: cleanMaxOutputTokens(entry.maxOutputTokens, entry.vendor, entry.model),
@@ -775,6 +776,7 @@ export function normalizeCatalogEntry(entry, fallback = {}) {
       source.endpointProtocol ?? fallback.endpointProtocol,
       vendor
     ),
+    requestProfile: normalizeRequestProfile(source.requestProfile ?? fallback.requestProfile),
     order: cleanModelOrder(source.order, cleanModelOrder(fallback.order)),
     model,
     label,
@@ -977,6 +979,7 @@ export function buildRuntimeProvider(entry, connection) {
     name: entry.label,
     kind: entry.vendor,
     endpointProtocol: normalizeEndpointProtocol(entry.endpointProtocol, entry.vendor),
+    requestProfile: normalizeRequestProfile(entry.requestProfile),
     baseUrl: cleanText(connection.baseUrl).replace(/\/+$/, ""),
     apiKey: cleanText(connection.apiKey),
     defaultModel: entry.model,

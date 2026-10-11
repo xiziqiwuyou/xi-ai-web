@@ -3,6 +3,7 @@ import type {
   ModelCapability,
   ModelDefaultFor,
   ModelEndpointProtocol,
+  ModelRequestProfile,
   ProviderKind
 } from "../../types";
 import { defaultEndpointProtocolForVendor } from "./adminConsoleConfig";
@@ -12,6 +13,7 @@ export type ModelPreset = {
   label: string;
   vendor: ProviderKind;
   endpointProtocol: ModelEndpointProtocol;
+  requestProfile?: ModelRequestProfile;
   model: string;
   capabilities: ModelCapability[];
   defaultFor: ModelDefaultFor[];
@@ -403,6 +405,7 @@ const baseModelCatalogPresets: ModelPresetSource[] = [
 export const modelCatalogPresets: ModelPreset[] = baseModelCatalogPresets.map((preset) => ({
   ...preset,
   endpointProtocol: preset.endpointProtocol || defaultEndpointProtocolForVendor(preset.vendor),
+  requestProfile: preset.requestProfile || "native",
   contextWindowTokens: preset.contextWindowTokens || presetContextWindowTokens(preset),
   maxOutputTokens: preset.maxOutputTokens || presetMaxOutputTokens(preset),
   maxInputCharacters: preset.maxInputCharacters || 100_000,

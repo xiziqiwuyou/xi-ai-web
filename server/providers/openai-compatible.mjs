@@ -1,10 +1,14 @@
 import {
   assertCapability,
+  bufferFromDataUrl,
   consumeSseEvents,
+  extractOpenAICompatibleContentText,
   extractOpenAICompatibleText,
   fetchAsset,
+  fetchMultipartForm,
   fetchMultipartJson,
   fetchJson,
+  formatProviderError,
   hasImageContent,
   normalizeTools,
   parseProviderJsonText,
@@ -14,6 +18,21 @@ import {
 } from "./types.mjs";
 
 const IMAGE_RESPONSE_LIMIT_BYTES = 64 * 1024 * 1024;
+
+function normalizedImageCount(count) {
+  return Number.isFinite(Number(count)) ? Math.max(1, Math.min(10, Math.trunc(Number(count)))) : 1;
+}
+
+function imageFile(input, fieldName, fallbackName) {
+  const payload = bufferFromDataUrl(input?.dataUrl);
+  if (!payload) throw new Error(`${fieldName === "mask" ? "Mask" : "Input image"} is invalid`);
+  return {
+    fieldName,
+    buffer: payload.buffer,
+    fileName: input?.name || fallbackName,
+    mimeType: input?.mimeType || payload.mimeType
+  };
+}
 
 function authHeaders(provider) {
   return provider.apiKey ? { Authorization: `Bearer ${provider.apiKey}` } : {};
@@ -34,7 +53,7 @@ function normalizeMessages(messages = []) {
   return messages.map((message) => ({
     ...message,
     role: message.role,
-    content: mapOpenAICompatibleContent(message.content)
+    content: message.content === null ? null : mapOpenAICompatibleContent(message.content)
   }));
 }
 
@@ -44,6 +63,12 @@ function mapOpenAICompatibleContent(content) {
     .map((part) => {
       if (part?.type === "image" && part.dataUrl) {
         return { type: "image_url", image_url: { url: part.dataUrl } };
+      }
+      if (part?.type === "image_url" && part.image_url?.url) {
+        return { type: "image_url", image_url: { url: String(part.image_url.url) } };
+      }
+      if (part?.type === "input_text" && part.text) {
+        return { type: "text", text: String(part.text) };
       }
       return { type: "text", text: String(part?.text || "") };
     })
@@ -58,7 +83,27 @@ function extractEmbeddings(json) {
     .filter((embedding) => Array.isArray(embedding));
 }
 
-function reasoningOptions(reasoningEffort) {
+function normalizedUsage(json) {
+  const usage = json?.usage;
+  if (!usage || typeof usage !== "object") return null;
+  const normalizeCount = (value, fallback = 0) => {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return fallback;
+    return Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.trunc(numeric)));
+  };
+  const inputTokens = normalizeCount(usage.prompt_tokens ?? usage.input_tokens ?? usage.promptTokens);
+  const outputTokens = normalizeCount(usage.completion_tokens ?? usage.output_tokens ?? usage.completionTokens);
+  const combinedTokens = Math.min(Number.MAX_SAFE_INTEGER, inputTokens + outputTokens);
+  const totalTokens = Math.max(
+    combinedTokens,
+    normalizeCount(usage.total_tokens ?? usage.totalTokens, combinedTokens)
+  );
+  if (![inputTokens, outputTokens, totalTokens].some((value) => value > 0)) return null;
+  return { inputTokens, outputTokens, totalTokens };
+}
+
+function reasoningOptions(reasoningEffort, requestProfile) {
+  if (requestProfile === "openai-relay") return {};
   switch (reasoningEffort) {
     case "off":
       return { reasoning_effort: "none" };
@@ -73,7 +118,7 @@ function reasoningOptions(reasoningEffort) {
 }
 
 function chatRequestBody(
-  { model, messages, temperature, topP, reasoningEffort, maxTokens, stream, tools },
+  { model, messages, temperature, topP, reasoningEffort, maxTokens, stream, tools, requestProfile },
   normalizeChatBody
 ) {
   const body = {
@@ -84,44 +129,65 @@ function chatRequestBody(
     max_tokens: Number.isFinite(Number(maxTokens)) ? Math.max(1, Math.trunc(Number(maxTokens))) : undefined,
     stream,
     tools,
-    ...reasoningOptions(reasoningEffort)
+    ...reasoningOptions(reasoningEffort, requestProfile)
   };
   return normalizeChatBody ? normalizeChatBody(body, { model, reasoningEffort }) : body;
 }
 
-async function streamChat({ provider, model, messages, temperature, topP, reasoningEffort, maxTokens, signal, onToken, normalizeChatBody }) {
+async function streamChat({ provider, model, messages, temperature, topP, reasoningEffort, maxTokens, signal, onToken, onUsage, normalizeChatBody }) {
   assertCapability(provider, "chat");
   if (hasImageContent(messages)) assertCapability(provider, "vision");
   const endpoint = providerUrl(provider, "/chat/completions");
   const response = await fetch(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders(provider) },
-    body: JSON.stringify(chatRequestBody({ model, messages, temperature, topP, reasoningEffort, maxTokens, stream: true }, normalizeChatBody)),
+    body: JSON.stringify(chatRequestBody({
+      model,
+      messages,
+      temperature,
+      topP,
+      reasoningEffort,
+      maxTokens,
+      stream: true,
+      requestProfile: provider.requestProfile
+    }, normalizeChatBody)),
     redirect: "error",
     signal
   });
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`Model service returned ${response.status}: ${errorText.slice(0, 700)}`);
+    throw new Error(formatProviderError(errorText, {
+      status: response.status,
+      contentType: response.headers.get("content-type") || "",
+      url: endpoint
+    }));
   }
 
   const contentType = response.headers.get("content-type") || "";
   if (!contentType.includes("text/event-stream")) {
     const text = await response.text();
     const parsed = parseProviderJsonText(text, { contentType, url: endpoint });
+    const usage = normalizedUsage(parsed);
+    if (usage) onUsage?.(usage);
     const content = extractOpenAICompatibleText(parsed);
     if (content) await onToken(content);
     return;
   }
 
+  let latestUsage = null;
   await consumeSseEvents(response, async ({ data }) => {
     const payload = data.trim();
     if (!payload || payload === "[DONE]") return;
     const json = JSON.parse(payload);
-    const token = json.choices?.[0]?.delta?.content || json.choices?.[0]?.message?.content || "";
+    const usage = normalizedUsage(json);
+    if (usage) latestUsage = usage;
+    const token = extractOpenAICompatibleContentText(
+      json.choices?.[0]?.delta?.content ?? json.choices?.[0]?.message?.content
+    );
     if (token) await onToken(token);
   });
+  if (latestUsage) onUsage?.(latestUsage);
 }
 
 async function completeWithTools({
@@ -136,7 +202,8 @@ async function completeWithTools({
   runTool,
   maxToolRounds = 4,
   signal,
-  normalizeChatBody
+  normalizeChatBody,
+  onUsage
 }) {
   assertCapability(provider, "chat");
   if (hasImageContent(messages)) assertCapability(provider, "vision");
@@ -155,10 +222,13 @@ async function completeWithTools({
         reasoningEffort,
         maxTokens,
         stream: false,
-        tools: mappedTools.length ? mappedTools : undefined
+        tools: mappedTools.length ? mappedTools : undefined,
+        requestProfile: provider.requestProfile
       }, normalizeChatBody),
       signal
     });
+    const usage = normalizedUsage(json);
+    if (usage) onUsage?.(usage);
     const message = json.choices?.[0]?.message;
     const toolCalls = Array.isArray(message?.tool_calls) ? message.tool_calls : [];
     if (!toolCalls.length) return extractOpenAICompatibleText(json);
@@ -191,15 +261,26 @@ async function completeWithTools({
 }
 
 async function completeText(params) {
-  const { provider, model, messages, temperature, topP, reasoningEffort, maxTokens, signal, tools, runTool, normalizeChatBody } = params;
+  const { provider, model, messages, temperature, topP, reasoningEffort, maxTokens, signal, tools, runTool, normalizeChatBody, onUsage } = params;
   if (tools?.length && runTool) return completeWithTools(params);
   assertCapability(provider, "chat");
   if (hasImageContent(messages)) assertCapability(provider, "vision");
   const json = await fetchJson(providerUrl(provider, "/chat/completions"), {
     headers: authHeaders(provider),
-    body: chatRequestBody({ model, messages, temperature, topP, reasoningEffort, maxTokens, stream: false }, normalizeChatBody),
+    body: chatRequestBody({
+      model,
+      messages,
+      temperature,
+      topP,
+      reasoningEffort,
+      maxTokens,
+      stream: false,
+      requestProfile: provider.requestProfile
+    }, normalizeChatBody),
     signal
   });
+  const usage = normalizedUsage(json);
+  if (usage) onUsage?.(usage);
   return extractOpenAICompatibleText(json);
 }
 
@@ -208,6 +289,9 @@ async function generateImage({
   model,
   prompt,
   mode,
+  inputImage,
+  inputImages,
+  maskImage,
   size,
   count,
   quality,
@@ -216,15 +300,52 @@ async function generateImage({
   signal
 }) {
   assertCapability(provider, "image");
-  if (mode === "edit") {
-    throw new Error("通用 OpenAI Compatible 适配器未声明图片编辑协议，请选择 OpenAI 或 Gemini 厂商模型");
+  if (provider.requestProfile === "openai-relay") {
+    const fields = {
+      model,
+      prompt,
+      n: normalizedImageCount(count),
+      size: String(size || "1024x1024"),
+      quality: ["auto", "standard", "hd", "low", "medium", "high"].includes(quality)
+        ? quality
+        : undefined,
+      response_format: "b64_json"
+    };
+    if (mode === "edit") {
+      assertCapability(provider, "imageEdit");
+      const uniqueInputs = [...new Map(
+        [...(Array.isArray(inputImages) ? inputImages : []), inputImage]
+          .filter((item) => item?.dataUrl)
+          .map((item) => [item.dataUrl, item])
+      ).values()];
+      if (!uniqueInputs.length) throw new Error("Image editing requires at least one input image");
+      const files = uniqueInputs.map((item, index) => imageFile(
+        item,
+        index === 0 ? "image" : "image[]",
+        `input-${index + 1}.png`
+      ));
+      if (maskImage?.dataUrl) files.push(imageFile(maskImage, "mask", "mask.png"));
+      return fetchMultipartForm(providerUrl(provider, "/images/edits"), {
+        headers: authHeaders(provider),
+        fields,
+        files,
+        signal,
+        maxResponseBytes: IMAGE_RESPONSE_LIMIT_BYTES
+      });
+    }
+    return fetchJson(providerUrl(provider, "/images/generations"), {
+      headers: authHeaders(provider),
+      body: fields,
+      signal,
+      maxResponseBytes: IMAGE_RESPONSE_LIMIT_BYTES
+    });
   }
   return fetchJson(providerUrl(provider, "/images/generations"), {
     headers: authHeaders(provider),
     body: {
       model,
       prompt,
-      n: Number.isFinite(Number(count)) ? Math.max(1, Math.min(10, Math.trunc(Number(count)))) : 1,
+      n: normalizedImageCount(count),
       size,
       quality,
       output_format: outputFormat,

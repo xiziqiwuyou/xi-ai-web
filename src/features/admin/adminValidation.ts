@@ -70,6 +70,19 @@ const vendorCapabilityHints: Record<ModelCatalogEntry["vendor"], ModelCapability
   ]
 };
 
+const relayCapabilityHints: ModelCapability[] = [
+  "chat",
+  "vision",
+  "image",
+  "imageEdit",
+  "tts",
+  "stt",
+  "audio",
+  "embedding",
+  "video",
+  "toolCalling"
+];
+
 function supportsCapability(entry: ModelCatalogEntry, capability: ModelCapability) {
   if (capability === "tts") return entry.capabilities.includes("tts") || entry.capabilities.includes("audio");
   return entry.capabilities.includes(capability);
@@ -92,7 +105,9 @@ export function validateModelCatalog(entries: ModelCatalogEntry[], menuItems: Me
       }
     });
 
-    const vendorCapabilities = vendorCapabilityHints[entry.vendor];
+    const vendorCapabilities = entry.requestProfile === "openai-relay"
+      ? relayCapabilityHints
+      : vendorCapabilityHints[entry.vendor];
     const unsupportedCapabilities = entry.capabilities.filter((capability) => !vendorCapabilities.includes(capability));
     if (unsupportedCapabilities.length) {
       issues.push(`${entry.label} 标记了 ${entry.vendor} 适配器未声明支持的能力：${unsupportedCapabilities.join("、")}`);

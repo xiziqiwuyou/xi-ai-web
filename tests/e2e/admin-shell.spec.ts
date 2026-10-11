@@ -432,6 +432,7 @@ test("admin model names keep the short label in front of the stable request ID",
   const section = page.locator("#admin-section-models");
   const displayName = section.getByLabel("前台显示名称", { exact: true });
   const requestName = section.getByLabel("实际请求模型名", { exact: true });
+  const requestProfile = section.getByLabel("请求协议模式", { exact: true });
   const endpointProtocol = section.getByLabel("对话请求端点", { exact: true });
   const contextWindow = section.getByLabel("上下文窗口（Token）", { exact: true });
   const maxOutputTokens = section.getByLabel("最大输出 Token 数", { exact: true });
@@ -440,7 +441,13 @@ test("admin model names keep the short label in front of the stable request ID",
   await expect(displayName).toHaveAttribute("required", "");
   await expect(requestName).toHaveValue(mappedRequestModel);
   await expect(requestName).toHaveAttribute("required", "");
+  await expect(requestProfile).toHaveValue("native");
   await expect(endpointProtocol).toHaveValue("openai-responses");
+  await requestProfile.selectOption("openai-relay");
+  await expect(section.getByLabel("中转请求通道", { exact: true })).toContainText("/v1/chat/completions");
+  await expect(section.getByLabel("对话请求端点", { exact: true })).toHaveCount(0);
+  await requestProfile.selectOption("native");
+  await expect(section.getByLabel("对话请求端点", { exact: true })).toHaveValue("openai-responses");
   await endpointProtocol.selectOption("openai-chat");
   await expect(endpointProtocol).toHaveValue("openai-chat");
   await expect(contextWindow).toHaveValue("32768");

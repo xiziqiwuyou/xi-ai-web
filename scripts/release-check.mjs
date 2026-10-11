@@ -246,7 +246,10 @@ const child = spawn("node", ["server/index.mjs", "--production"], {
     ALLOW_LOCAL_UPSTREAM: "true",
     ALLOW_ADMIN_UPSTREAM_OVERRIDE: "false",
     KNOWLEDGE_ENABLED: "false",
-    LANGFLOW_ENABLED: "false"
+    LANGFLOW_ENABLED: "false",
+    // Keep the progressive SSE assertion deterministic across slower CI hosts.
+    SSE_TOKEN_FLUSH_MS: process.env.SSE_TOKEN_FLUSH_MS || "16",
+    SSE_TOKEN_MAX_WAIT_MS: process.env.SSE_TOKEN_MAX_WAIT_MS || "40"
   },
   stdio: "pipe"
 });
@@ -373,11 +376,11 @@ try {
       modelId: imageModel.id,
       connection: { apiKey: testApiKey, baseUrl: "http://127.0.0.1:9" },
       prompt: "A small red square on a white background",
-      options: { count: 2, quality: "low", outputFormat: "png" }
+      options: { count: 2, quality: "low", outputFormat: "webp" }
     })
   });
   assert(imageResult.status === "completed", "Image route did not complete");
-  assert(imageResult.assets?.[0]?.url?.startsWith("data:image/png;base64,"), "Image route did not normalize an image asset");
+  assert(imageResult.assets?.[0]?.url?.startsWith("data:image/png;base64,"), "Image route did not sniff the returned image MIME type");
   assert(imageResult.assets?.length === 2, "Image route did not complete the requested two-image result set");
   assert(imageResult.raw?.requestedCount === 2 && imageResult.raw?.assetCount === 2, "Image result count metadata is inconsistent");
   assert(imageResult.raw?.providerRequestCount === 2, "Image result did not report its supplemental Provider request");

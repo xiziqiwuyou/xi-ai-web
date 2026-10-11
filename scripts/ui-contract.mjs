@@ -515,6 +515,8 @@ for (const imageUiContract of [
   "\u53c2\u8003\u56fe",
   "\u53c2\u8003\u56fe\u94fe\u63a5",
   "usesBotcfGemini",
+  "usesRelay",
+  "usesNativeBotcf",
   "maxReferenceImages",
   'className="figma-image-reference-list"',
   'className="figma-image-upload-field figma-image-url-field"',
@@ -565,7 +567,7 @@ for (const typedImageOption of [
   "size: imageRequestSize(selectedSizePreset.aspectRatio, selectedSizePreset.resolution)",
   'inputImage: mode === "edit"',
   'inputImages: mode === "edit"',
-  'referenceImageUrls: mode === "edit" && usesBotcf',
+  'referenceImageUrls: mode === "edit" && usesNativeBotcf',
   'maskImage: mode === "edit" && supportsMask',
   "quality: imageCapabilities.supportsQuality ? quality : undefined",
   "outputFormat: fixedImageOutputFormat"

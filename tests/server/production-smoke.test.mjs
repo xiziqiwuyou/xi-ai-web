@@ -248,7 +248,8 @@ test("live smoke reports explicit skips and redacts hostile provider errors", as
   const apiKey = "sk-live-smoke-hostile-secret-1357";
   try {
     const skipped = await runLiveProviderSmoke({ baseUrl: fixture.baseUrl, apiKey, timeoutMs: 10_000 });
-    assert.equal(skipped.ok, true);
+    assert.equal(skipped.ok, false);
+    assert.equal(skipped.errorCode, "LIVE_SMOKE_NO_MODEL_IDS");
     assert(skipped.cases.every((item) => item.status === "skipped"));
 
     fixture.state.failChat = true;

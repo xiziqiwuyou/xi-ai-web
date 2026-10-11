@@ -1,3 +1,32 @@
+# xi-ai-web v0.0.16
+
+## Release status
+
+This release adds an OpenAI-compatible relay profile for text, multimodal Chat,
+tools, image generation, and image editing. It is intended for new-api-style
+gateways that expose the standard `/v1` OpenAI-compatible routes.
+
+## Included
+
+- Admin-selectable `openai-relay` request profile with `/v1/chat/completions`,
+  `/v1/images/generations`, and multipart `/v1/images/edits` request shapes.
+- Relay-aware multimodal content, function tools, SSE usage projection, and
+  base64 image response handling.
+- Defensive token-usage normalization so malformed relay counters cannot
+  pollute response usage or billing totals.
+
+## Verification
+
+- `npm run check`
+- `npm run provider-contracts`
+- `npm run test:server`
+- `SSE_TOKEN_FLUSH_MS=16 SSE_TOKEN_MAX_WAIT_MS=40 npm run release-check`
+
+Remote provider smoke still requires an operator-supplied disposable relay
+endpoint and API Key; no live gateway credentials are included in this release.
+
+---
+
 # xi-ai-web v0.0.15
 
 ## Release status

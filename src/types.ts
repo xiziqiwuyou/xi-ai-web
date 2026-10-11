@@ -180,6 +180,8 @@ export type ModelEndpointProtocol =
   | "anthropic-messages"
   | "gemini-generate-content";
 
+export type ModelRequestProfile = "native" | "openai-relay";
+
 export type ModelVendorEntry = {
   id: string;
   label: string;
@@ -195,6 +197,7 @@ export type ModelCatalogEntry = {
   vendor: ProviderKind;
   vendorLabel: string;
   endpointProtocol: ModelEndpointProtocol;
+  requestProfile?: ModelRequestProfile;
   model: string;
   label: string;
   capabilities: ModelCapability[];

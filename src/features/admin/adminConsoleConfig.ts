@@ -22,6 +22,7 @@ import type {
   ModelCatalogEntry,
   ModelDefaultFor,
   ModelEndpointProtocol,
+  ModelRequestProfile,
   McpServerProfile,
   ModuleId,
   PromptPreset,
@@ -32,6 +33,7 @@ export type ModelDraft = {
   vendorId: string;
   vendor: ProviderKind;
   endpointProtocol: ModelEndpointProtocol;
+  requestProfile: ModelRequestProfile;
   model: string;
   label: string;
   capabilities: ModelCapability[];
@@ -288,6 +290,23 @@ export const endpointProtocolOptions: Array<{
   }
 ];
 
+export const requestProfileOptions: Array<{
+  value: ModelRequestProfile;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "native",
+    label: "厂商原生协议",
+    description: "按当前厂商和对话端点发送请求。"
+  },
+  {
+    value: "openai-relay",
+    label: "OpenAI Relay / new-api",
+    description: "文字使用 Chat Completions，图片使用 Images 生成/编辑接口。"
+  }
+];
+
 export function defaultEndpointProtocolForVendor(vendor: ProviderKind): ModelEndpointProtocol {
   if (vendor === "openai") return "openai-responses";
   if (vendor === "anthropic") return "anthropic-messages";
@@ -320,6 +339,7 @@ export const emptyModelDraft: ModelDraft = {
   vendorId: "openai",
   vendor: "openai",
   endpointProtocol: "openai-responses",
+  requestProfile: "native",
   model: "gpt-5.6-luna",
   label: "GPT-5.6 Luna",
   capabilities: ["chat", "vision", "toolCalling"],
@@ -392,6 +412,7 @@ export function modelDraft(entry?: ModelCatalogEntry): ModelDraft {
     vendorId: entry.vendorId || entry.vendor,
     vendor: entry.vendor,
     endpointProtocol: entry.endpointProtocol || defaultEndpointProtocolForVendor(entry.vendor),
+    requestProfile: entry.requestProfile || "native",
     model: entry.model,
     label: entry.label,
     capabilities: entry.capabilities,

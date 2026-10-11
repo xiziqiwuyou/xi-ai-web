@@ -306,6 +306,7 @@ export function AdminConsole({
       vendorId: vendor.id,
       vendor: vendor.adapter,
       endpointProtocol: preset.endpointProtocol,
+      requestProfile: preset.requestProfile || "native",
       model: preset.model,
       label: preset.label,
       capabilities: preset.capabilities,

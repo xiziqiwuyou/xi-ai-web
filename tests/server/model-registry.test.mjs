@@ -54,6 +54,29 @@ test("legacy models migrate to default vendor IDs without changing runtime adapt
   assert.equal(registry.modelCatalog[0].vendor, "anthropic");
   assert.equal(registry.modelCatalog[0].vendorLabel, "Claude");
   assert.equal(registry.modelCatalog[0].maxOutputTokens, 16_384);
+  assert.equal(registry.modelCatalog[0].requestProfile, "native");
+});
+
+test("relay request profiles survive catalog normalization without changing vendor identity", () => {
+  const entry = normalizeCatalogEntry({
+    id: "relay-gemini",
+    vendor: "gemini",
+    model: "relay-image-model",
+    label: "Relay Image Model",
+    requestProfile: "openai-relay",
+    capabilities: ["chat", "vision", "image", "imageEdit"],
+    defaultFor: ["chat", "image"],
+    enabled: true
+  });
+
+  assert.equal(entry.requestProfile, "openai-relay");
+  assert.equal(entry.vendor, "gemini");
+  assert.equal(normalizeCatalogEntry({
+    vendor: "gemini",
+    model: "legacy-native",
+    label: "Legacy Native",
+    capabilities: ["chat"]
+  }).requestProfile, "native");
 });
 
 test("model output limits preserve explicit values and stay within the shared bound", () => {

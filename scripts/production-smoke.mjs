@@ -604,11 +604,12 @@ export async function runLiveProviderSmoke({
   }
 
   const report = {
-    ok: cases.every((item) => item.status !== "failed"),
+    ok: cases.some((item) => item.status === "passed") && cases.every((item) => item.status !== "failed"),
     evidence: "live-api",
     applicationOrigin,
     cases
   };
+  if (!chatModelId && !imageModelId) report.errorCode = "LIVE_SMOKE_NO_MODEL_IDS";
   if (JSON.stringify(report).includes(secret)) throw smokeError("LIVE_SECRET_REPORT_VIOLATION");
   return report;
 }

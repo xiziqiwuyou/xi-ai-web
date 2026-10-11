@@ -17,6 +17,7 @@ import {
   capabilityOptions,
   endpointProtocolDetails,
   endpointProtocolOptions,
+  requestProfileOptions,
   vendorOptions,
   type ModelDraft
 } from "./adminConsoleConfig";
@@ -667,7 +668,33 @@ export function AdminModelsSection({
           </div>
 
           <form className="provider-form admin-model-detail-form" onSubmit={onSubmit} noValidate>
-            {supportsChat ? (
+            <label className="admin-model-endpoint-field" htmlFor="admin-model-request-profile">
+              请求协议模式
+              <select
+                id="admin-model-request-profile"
+                aria-label="请求协议模式"
+                value={form.requestProfile}
+                onChange={(event) => onChange({ requestProfile: event.target.value as ModelDraft["requestProfile"] })}
+              >
+                {requestProfileOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <small>
+                {requestProfileOptions.find((option) => option.value === form.requestProfile)?.description}
+              </small>
+            </label>
+            {form.requestProfile === "openai-relay" ? (
+              <div className="admin-model-dedicated-endpoint" role="note" aria-label="中转请求通道">
+                <span>中转请求通道</span>
+                <strong>OpenAI Chat Completions + Images</strong>
+                <code>/v1/chat/completions · /v1/images/generations · /v1/images/edits</code>
+                <small>该模式按 new-api 兼容格式发送，保存的厂商标签只用于目录展示和统计。</small>
+              </div>
+            ) : null}
+            {form.requestProfile !== "openai-relay" && supportsChat ? (
               <label className="admin-model-endpoint-field" htmlFor="admin-model-endpoint-protocol">
                 对话请求端点
                 <select
@@ -684,14 +711,14 @@ export function AdminModelsSection({
                 </select>
                 <small>仅控制对话请求；图片、音频、视频和向量仍使用各自专用端点。</small>
               </label>
-            ) : (
+            ) : form.requestProfile !== "openai-relay" && !supportsChat ? (
               <div className="admin-model-dedicated-endpoint" role="note" aria-label="专用请求通道">
                 <span>请求通道</span>
                 <strong>{requestChannel.label}</strong>
                 <code>{requestChannel.path}</code>
                 <small>该模型不具备对话能力，不会发送到 Chat、Responses 或 Messages 端点。</small>
               </div>
-            )}
+            ) : null}
             <label htmlFor="admin-model-display-name">
               前台显示名称
               <input

@@ -93,6 +93,7 @@ test("Admin model vendor API enforces contracts and survives metadata round trip
   assert.equal(result.response.status, 200);
   assert.equal(result.body.modelVendors.length, 8);
   assert(result.body.modelCatalog.every((entry) => entry.vendorId && entry.vendorLabel));
+  assert(result.body.modelCatalog.every((entry) => entry.requestProfile === "native"));
   assert(result.body.modelCatalog.every((entry) => Number.isSafeInteger(entry.maxOutputTokens) && entry.maxOutputTokens > 0));
   assert.deepEqual(result.body.modelCatalog.map((entry) => entry.order), result.body.modelCatalog.map((_, index) => index));
 
@@ -194,6 +195,7 @@ test("Admin model vendor API enforces contracts and survives metadata round trip
       model: "claude-acme",
       label: "Claude Acme",
       capabilities: ["chat"],
+      requestProfile: "openai-relay",
       defaultFor: [],
       maxOutputTokens: 32_768,
       enabled: true
@@ -203,6 +205,7 @@ test("Admin model vendor API enforces contracts and survives metadata round trip
   const customModel = result.body;
   assert.equal(customModel.vendor, "anthropic");
   assert.equal(customModel.vendorLabel, "Acme Claude");
+  assert.equal(customModel.requestProfile, "openai-relay");
   assert.equal(customModel.maxOutputTokens, 32_768);
 
   result = await api(runtime.baseUrl, "/api/admin/model-catalog", {
@@ -224,6 +227,7 @@ test("Admin model vendor API enforces contracts and survives metadata round trip
   assert.equal(result.response.status, 200);
   assert.equal(result.body.vendor, "anthropic");
   assert.equal(result.body.vendorLabel, "Acme Claude");
+  assert.equal(result.body.requestProfile, "openai-relay");
   assert.equal(result.body.maxOutputTokens, 65_536);
 
   result = await api(runtime.baseUrl, "/api/admin/model-catalog", {
@@ -243,6 +247,7 @@ test("Admin model vendor API enforces contracts and survives metadata round trip
   assert.equal(Object.hasOwn(result.body, "modelVendors"), false);
   assert.equal(result.body.modelCatalog.find((entry) => entry.id === customModel.id)?.vendorLabel, "Acme Claude");
   assert.equal(result.body.modelCatalog.find((entry) => entry.id === customModel.id)?.maxOutputTokens, 65_536);
+  assert.equal(result.body.modelCatalog.find((entry) => entry.id === customModel.id)?.requestProfile, "openai-relay");
 
   result = await api(runtime.baseUrl, "/api/admin/model-catalog", {
     method: "POST",

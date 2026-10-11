@@ -16,6 +16,8 @@ export const endpointProtocols = new Set([
   "gemini-generate-content"
 ]);
 
+export const requestProfiles = new Set(["native", "openai-relay"]);
+
 const defaultEndpointProtocols = {
   openai: "openai-responses",
   anthropic: "anthropic-messages",
@@ -154,6 +156,10 @@ export function normalizeEndpointProtocol(value, kind) {
   return endpointProtocols.has(value) ? value : defaultEndpointProtocol(kind);
 }
 
+export function normalizeRequestProfile(value) {
+  return requestProfiles.has(value) ? value : "native";
+}
+
 export function defaultCapabilities(kind) {
   return providerCapabilities[normalizeProviderKind(kind)] || providerCapabilities["openai-compatible"];
 }
@@ -235,6 +241,32 @@ export function parseProviderJsonText(raw, { contentType = "", url = "" } = {}) 
     const mediaType = String(contentType || "").split(";", 1)[0].trim() || "unknown";
     throw new Error(`模型服务返回了无法解析的 JSON（Content-Type: ${mediaType}）`);
   }
+}
+
+export function formatProviderError(raw, { status = null, contentType = "", url = "" } = {}) {
+  const statusLabel = Number.isInteger(status) ? `模型服务返回 ${status}` : "模型服务请求失败";
+  if (isHtmlDocument(raw, contentType)) {
+    return `${statusLabel} HTML 页面，请检查上游 API 端点配置`;
+  }
+
+  const text = String(raw ?? "").trim();
+  let parsed = null;
+  if (text) {
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      // Plain-text gateway errors are handled by the bounded fallback below.
+    }
+  }
+  const isParsedObject = parsed && typeof parsed === "object" && !Array.isArray(parsed);
+  const envelope = isParsedObject ? parsed.error ?? parsed : null;
+  const detail = typeof envelope === "string"
+    ? envelope
+    : envelope && typeof envelope === "object"
+      ? envelope.message || envelope.detail || envelope.code || envelope.type
+      : "";
+  const safeDetail = detail || (isParsedObject ? "未知上游错误" : compactText(text)) || "未知上游错误";
+  return `${statusLabel}: ${compactText(safeDetail)}`;
 }
 
 const MAX_PROVIDER_SSE_FRAME_BYTES = 1024 * 1024;
@@ -346,10 +378,7 @@ export async function fetchJson(url, { headers, body, signal, maxResponseBytes }
   const contentType = response.headers.get("content-type") || "";
   const raw = await readResponseText(response, maxResponseBytes);
   if (!response.ok) {
-    if (isHtmlDocument(raw, contentType)) {
-      throw new Error(`模型服务返回 ${response.status} HTML 页面，请检查上游 API 端点配置`);
-    }
-    throw new Error(`模型服务返回 ${response.status}: ${compactText(raw)}`);
+    throw new Error(formatProviderError(raw, { status: response.status, contentType, url }));
   }
   return parseProviderJsonText(raw, { contentType, url });
 }
@@ -366,7 +395,11 @@ export async function fetchAsset(url, { headers, body, signal, maxResponseBytes 
   const normalizedContentType = contentType.toLowerCase();
   if (!response.ok) {
     const errorText = await readResponseText(response, 1024 * 1024);
-    throw new Error(`模型服务返回 ${response.status}: ${compactText(errorText)}`);
+    throw new Error(formatProviderError(errorText, {
+      status: response.status,
+      contentType,
+      url
+    }));
   }
   if (normalizedContentType.includes("json")) {
     const raw = await readResponseText(response, maxResponseBytes);
@@ -414,20 +447,41 @@ export async function fetchMultipartForm(url, { headers, fields, files, signal, 
   });
   const raw = await readResponseText(response, maxResponseBytes);
   if (!response.ok) {
-    throw new Error(`模型服务返回 ${response.status}: ${compactText(raw)}`);
+    throw new Error(formatProviderError(raw, {
+      status: response.status,
+      contentType: response.headers.get("content-type") || "",
+      url
+    }));
   }
   const contentType = response.headers.get("content-type") || "";
   return parseProviderJsonText(raw, { contentType, url });
 }
 
+export function extractOpenAICompatibleContentText(content) {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((part) => {
+      if (typeof part === "string") return part;
+      if (!part || typeof part !== "object") return "";
+      if (part.type === "text" || part.type === "output_text" || typeof part.text === "string") {
+        return String(part.text || "");
+      }
+      return "";
+    })
+    .join("");
+}
+
 export function extractOpenAICompatibleText(json) {
-  return (
-    json.choices?.[0]?.message?.content ||
-    json.choices?.[0]?.text ||
-    json.output_text ||
-    json.text ||
-    compactText(JSON.stringify(json), 1200)
-  );
+  const messageContent = json?.choices?.[0]?.message?.content;
+  const messageText = extractOpenAICompatibleContentText(messageContent);
+  const fallbackText =
+    extractOpenAICompatibleContentText(json?.choices?.[0]?.text) ||
+    extractOpenAICompatibleContentText(json?.output_text) ||
+    extractOpenAICompatibleContentText(json?.text);
+  if (messageText || fallbackText) return messageText || fallbackText;
+  if (typeof messageContent === "string" || Array.isArray(messageContent)) return "";
+  return compactText(JSON.stringify(json), 1200);
 }
 
 export function parseToolArguments(value) {
@@ -457,7 +511,8 @@ export function parseStrictToolArguments(value) {
 
 export function stringifyToolOutput(value) {
   if (typeof value === "string") return value;
-  return JSON.stringify(value);
+  const serialized = JSON.stringify(value);
+  return serialized === undefined ? "null" : serialized;
 }
 
 export function normalizeTools(tools = []) {

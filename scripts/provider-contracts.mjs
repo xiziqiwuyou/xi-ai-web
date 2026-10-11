@@ -641,6 +641,194 @@ async function testModelEndpointProtocolRouting() {
   });
 }
 
+async function testOpenAIRelayProfile() {
+  const relayProvider = {
+    ...provider("gemini", ["chat", "vision", "toolCalling", "image", "imageEdit"], "https://relay.contract.test"),
+    endpointProtocol: "gemini-generate-content",
+    requestProfile: "openai-relay"
+  };
+  const adapter = createProviderAdapter(relayProvider);
+
+  await withMockFetch("OpenAI relay chat", [
+    (request) => {
+      assertEqual(request.url, "https://relay.contract.test/v1/chat/completions", "Relay chat endpoint");
+      assertEqual(headerValue(request.init.headers, "Authorization"), `Bearer ${relayProvider.apiKey}`, "Relay chat auth");
+      const body = parseJsonBody(request);
+      assertEqual(body.model, "relay-chat-model", "Relay chat model");
+      assertEqual(body.messages[1].content[0].type, "text", "Relay text content part");
+      assertEqual(body.messages[1].content[1].type, "image_url", "Relay image content part");
+      assertEqual(body.messages[1].content[1].image_url.url, imageDataUrl, "Relay image data URL");
+      assertAbsent(body, "input", "Relay Chat must not use Responses input");
+      assertAbsent(body, "reasoning", "Relay Chat must not send Responses reasoning fields");
+      assertAbsent(body, "reasoning_effort", "Relay Chat must omit vendor-specific reasoning controls");
+      return jsonResponse({
+        choices: [{ message: { content: [{ type: "text", text: "relay chat" }, { type: "image_url", image_url: { url: imageDataUrl } }] } }],
+        usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 }
+      });
+    }
+  ], async () => {
+    let usage;
+    const text = await adapter.completeText({
+      model: "relay-chat-model",
+      messages: [
+        { role: "system", content: "system" },
+        { role: "user", content: [
+          { type: "text", text: "describe this" },
+          { type: "image", dataUrl: imageDataUrl }
+        ] }
+      ],
+      reasoningEffort: "high",
+      onUsage: (nextUsage) => {
+        usage = nextUsage;
+      }
+    });
+    assertEqual(text, "relay chat", "Relay Chat text extraction");
+    assertEqual(usage?.inputTokens, 3, "Relay Chat usage input tokens");
+    assertEqual(usage?.outputTokens, 2, "Relay Chat usage output tokens");
+    assertEqual(usage?.totalTokens, 5, "Relay Chat usage total tokens");
+  });
+
+  await withMockFetch("OpenAI relay chat stream", [
+    (request) => {
+      assertEqual(request.url, "https://relay.contract.test/v1/chat/completions", "Relay stream endpoint");
+      const body = parseJsonBody(request);
+      assertEqual(body.stream, true, "Relay stream enables streaming");
+      return sseResponse([
+        'data: {"choices":[{"delta":{"content":"relay"}}],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}\n\n',
+        'data: {"choices":[{"delta":{"content":[{"type":"text","text":" stream"},{"type":"image_url","image_url":{"url":"data:image/png;base64,aW1hZ2U="}}]}}],"usage":{"prompt_tokens":4,"completion_tokens":3,"total_tokens":7}}\n\n',
+        "data: [DONE]\n\n"
+      ]);
+    }
+  ], async () => {
+    let text = "";
+    let usage;
+    let usageEvents = 0;
+    await adapter.streamChat({
+      model: "relay-chat-model",
+      messages: sampleMessages(),
+      onToken: (token) => {
+        text += token;
+      },
+      onUsage: (nextUsage) => {
+        usageEvents += 1;
+        usage = nextUsage;
+      }
+    });
+    assertEqual(text, "relay stream", "Relay Chat SSE text");
+    assertEqual(usageEvents, 1, "Relay Chat SSE emits only final usage");
+    assertEqual(usage?.totalTokens, 7, "Relay Chat SSE usage");
+  });
+
+  await withMockFetch("OpenAI relay usage sanitization", [
+    () => jsonResponse({
+      choices: [{ message: { content: "sanitized usage" } }],
+      usage: {
+        prompt_tokens: "-4.9",
+        completion_tokens: "2.8",
+        total_tokens: "not-a-number"
+      }
+    })
+  ], async () => {
+    let usage;
+    await adapter.completeText({
+      model: "relay-chat-model",
+      messages: sampleMessages(),
+      onUsage: (nextUsage) => {
+        usage = nextUsage;
+      }
+    });
+    assertEqual(JSON.stringify(usage), JSON.stringify({
+      inputTokens: 0,
+      outputTokens: 2,
+      totalTokens: 2
+    }), "Relay usage clamps malformed token counts");
+  });
+
+  await withMockFetch("OpenAI relay function tool round", [
+    (request) => {
+      const body = parseJsonBody(request);
+      assertEqual(body.tools[0].function.name, "lookup", "Relay function tool schema");
+      assertAbsent(body, "reasoning_effort", "Relay tool call omits vendor-specific reasoning controls");
+      return jsonResponse({
+        choices: [{
+          message: {
+            content: null,
+            tool_calls: [{
+              id: "relay-tool-call",
+              type: "function",
+              function: { name: "lookup", arguments: "{\"query\":\"relay\"}" }
+            }]
+          }
+        }]
+      });
+    },
+    (request) => {
+      const body = parseJsonBody(request);
+      assertEqual(body.messages.at(-1).role, "tool", "Relay tool response role");
+      assertEqual(body.messages.at(-1).tool_call_id, "relay-tool-call", "Relay tool response id");
+      assertEqual(body.messages.at(-1).content, "null", "Relay undefined tool output is JSON null");
+      return jsonResponse({ choices: [{ message: { content: "relay tool final" } }] });
+    }
+  ], async () => {
+    const text = await adapter.completeText({
+      model: "relay-chat-model",
+      messages: sampleMessages(),
+      reasoningEffort: "high",
+      tools: [toolDefinition()],
+      runTool: async () => undefined
+    });
+    assertEqual(text, "relay tool final", "Relay function tool final text");
+  });
+
+  await withMockFetch("OpenAI relay image generation", [
+    (request) => {
+      assertEqual(request.url, "https://relay.contract.test/v1/images/generations", "Relay image endpoint");
+      assertEqual(headerValue(request.init.headers, "Authorization"), `Bearer ${relayProvider.apiKey}`, "Relay image auth");
+      const body = parseJsonBody(request);
+      assertEqual(body.model, "relay-image-model", "Relay image model");
+      assertEqual(body.prompt, "relay image", "Relay image prompt");
+      assertEqual(body.n, 2, "Relay image count");
+      assertEqual(body.response_format, "b64_json", "Relay image response format");
+      assertAbsent(body, "output_format", "Relay image must omit native output format");
+      return jsonResponse({ data: [{ b64_json: "aW1hZ2U=" }] });
+    }
+  ], async () => {
+    await adapter.generateImage({
+      model: "relay-image-model",
+      prompt: "relay image",
+      mode: "generate",
+      size: "1024x1024",
+      count: 2,
+      outputFormat: "webp"
+    });
+  });
+
+  await withMockFetch("OpenAI relay image edit", [
+    (request) => {
+      assertEqual(request.url, "https://relay.contract.test/v1/images/edits", "Relay image edit endpoint");
+      assertEqual(headerValue(request.init.headers, "Authorization"), `Bearer ${relayProvider.apiKey}`, "Relay edit auth");
+      assert(request.init.body instanceof FormData, "Relay image edit should use FormData");
+      const form = request.init.body;
+      assertEqual(form.get("model"), "relay-image-model", "Relay edit model");
+      assertEqual(form.get("prompt"), "relay edit", "Relay edit prompt");
+      assertEqual(form.get("response_format"), "b64_json", "Relay edit response format");
+      assert(form.get("image") instanceof Blob, "Relay edit input should be a Blob");
+      assert(form.get("mask") instanceof Blob, "Relay edit mask should be a Blob");
+      return jsonResponse({ data: [{ b64_json: "ZWRpdA==" }] });
+    }
+  ], async () => {
+    await adapter.generateImage({
+      model: "relay-image-model",
+      prompt: "relay edit",
+      mode: "edit",
+      inputImage: { dataUrl: imageDataUrl, mimeType: "image/png" },
+      maskImage: { dataUrl: imageDataUrl, mimeType: "image/png" },
+      size: "1024x1024",
+      count: 1
+    });
+  });
+}
+
 async function testOpenAIAdapter() {
   const openai = provider("openai", ["chat", "vision", "toolCalling", "webSearch", "codeExecution", "image", "imageEdit", "tts", "stt", "embedding"]);
   const adapter = createOpenAIAdapter(openai);
@@ -2013,6 +2201,27 @@ async function testFetchHelpers() {
     throw new Error("fetchJson error path should throw");
   });
 
+  await withMockFetch("OpenAI error envelope projection", [
+    () => new Response(JSON.stringify({
+      error: {
+        message: "relay model is unavailable",
+        type: "invalid_request_error",
+        code: "model_unavailable",
+        api_key: "sk-upstream-secret"
+      }
+    }), { status: 400, headers: { "content-type": "application/json" } })
+  ], async () => {
+    let error;
+    try {
+      await adapter.completeText({ model: "helper-chat", messages: sampleMessages() });
+    } catch (nextError) {
+      error = nextError;
+    }
+    assert(error, "OpenAI error envelopes should reject");
+    assert(/400.*relay model is unavailable/u.test(error.message), `OpenAI error envelope message mismatch: ${error.message}`);
+    assert(!error.message.includes("sk-upstream-secret"), "OpenAI error envelopes must not expose upstream credentials");
+  });
+
   await withMockFetch("bounded provider response", [
     () => new Response(JSON.stringify({ data: "x".repeat(2_000) }), {
       status: 200,
@@ -2033,6 +2242,7 @@ async function testFetchHelpers() {
 const tests = [
   ["Catalog model mapping contract", testCatalogModelMapping],
   ["Model endpoint protocol routing", testModelEndpointProtocolRouting],
+  ["OpenAI relay profile contracts", testOpenAIRelayProfile],
   ["OpenAI adapter contracts", testOpenAIAdapter],
   ["Claude adapter contracts", testAnthropicAdapter],
   ["Gemini adapter contracts", testGeminiAdapter],

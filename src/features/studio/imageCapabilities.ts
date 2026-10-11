@@ -40,11 +40,31 @@ export function imageModelCapabilities(model?: ModelCatalogEntry): ImageModelCap
   }
 
   const actual = model.model.toLowerCase();
+  const isRelay = model.requestProfile === "openai-relay";
   const isOpenAiImage = model.vendor === "openai" || model.vendor === "openai-compatible";
   const isGptImage2 = /^gpt-image-2(?:$|-)/i.test(actual);
   const isBotcf = model.vendor === "botcf";
   const isGeminiImage = model.vendor === "gemini" && (model.capabilities.includes("image") || /nano-banana|image/i.test(actual));
   const isAsync = isBotcf && /(?:^|[_-])(?:nano|nana)-banana-2(?:$|[_-])/.test(actual) && !/_sync$/i.test(actual);
+
+  if (isRelay) {
+    return {
+      supportsGenerate: model.capabilities.includes("image"),
+      supportsEdit: model.capabilities.includes("imageEdit"),
+      supportsMask: model.capabilities.includes("imageEdit"),
+      maxReferenceImages: 16,
+      supportsAspectRatio: true,
+      resolutions: ["1K", "2K", "4K"],
+      supportsQuality: true,
+      supportsBackground: false,
+      backgrounds: [],
+      formats: openAiFormats,
+      supportsCompression: false,
+      supportsCustomSize: true,
+      isAsync,
+      note: "OpenAI Relay 按 new-api Images 接口发送请求"
+    };
+  }
 
   if (isGeminiImage) {
     return {
